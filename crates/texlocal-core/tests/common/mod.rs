@@ -376,9 +376,15 @@ pub struct FakePreview {
     revision: AtomicU64,
     /// The offset of the caret last sent, which the session sends once the caret has settled.
     pub caret: Mutex<Option<usize>>,
+    /// Each file as the opens and changes sent make it.
+    texts: Mutex<HashMap<String, String>>,
 }
 
 impl FakePreview {
+    pub fn text(&self, path: &str) -> Option<String> {
+        self.texts.lock().unwrap().get(path).cloned()
+    }
+
     pub fn running(&self) -> bool {
         self.sink.lock().unwrap().is_some()
     }
@@ -405,16 +411,23 @@ impl Preview for Previewing {
     fn start(&self, _: &Project, _: &str, sink: Sink) -> Result<Arc<dyn LiveRun>, CoreError> {
         *self.0.sink.lock().unwrap() = Some(sink);
         self.0.revision.store(0, Ordering::Relaxed);
+        self.0.texts.lock().unwrap().clear();
         Ok(self.0.clone())
     }
 }
 
 impl LiveRun for FakePreview {
-    fn open(&self, _: &str, _: &str) {
+    fn open(&self, path: &str, text: &str) {
+        (self.texts.lock().unwrap()).insert(path.to_owned(), text.to_owned());
         self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn change(&self, _: &str, _: usize, _: usize, _: &str) {
+    fn change(&self, path: &str, offset: usize, remove: usize, text: &str) {
+        let mut texts = self.texts.lock().unwrap();
+        let file = texts
+            .get_mut(path)
+            .expect("a change follows its file's open");
+        file.replace_range(offset..offset + remove, text);
         self.revision.fetch_add(1, Ordering::Relaxed);
     }
 

@@ -915,6 +915,45 @@ async fn revert_takes_the_disks_text() {
     );
 }
 
+/// Edits ch.tex while another app changes it, then answers Revert once main.tex is shown in its place.
+fn revert_once_hidden(rig: &Rig) {
+    let doc = rig.open_document("ch.tex");
+    doc.edit(0, 0, "mine ", None, false);
+    fs::write(rig.root().join("ch.tex"), "theirs\n").unwrap();
+    asked(rig, "ch.tex", "changed");
+    // Answered as a person answers, after Live Preview's 180 ms disk timer has passed over the open document's change.
+    std::thread::sleep(Duration::from_millis(300));
+    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "cancel" }));
+    rig.forget();
+    rig.open_document("main.tex");
+    asked(rig, "ch.tex", "changed");
+    rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revert_for_a_document_no_longer_shown_gives_it_the_disks_text_when_it_opens_again() {
+    let rig = project().await;
+    revert_once_hidden(&rig);
+    let doc = rig.open_document("ch.tex");
+    assert_eq!(doc.with(|d| d.text()), "theirs\n");
+    doc.edit(0, 0, "later ", None, false);
+    assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
+    let saved = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    assert_eq!(saved, "later theirs\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revert_for_a_document_no_longer_shown_gives_live_preview_the_disks_text() {
+    let preview = Arc::new(FakePreview::default());
+    let files = [("main.tex", MAIN), ("ch.tex", CHAPTER)];
+    let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
+    rig.call("StartLive", json!({}));
+    revert_once_hidden(&rig);
+    wait_until("Live Preview takes the disk's text", || {
+        preview.text("ch.tex").as_deref() == Some("theirs\n")
+    });
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn another_apps_files_reach_the_tree() {
     let rig = project().await;

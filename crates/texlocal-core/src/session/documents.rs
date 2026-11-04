@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::ErrorKind;
 use std::ops::Deref;
@@ -444,12 +444,13 @@ impl Docs {
         self.publish(cx);
         match answer {
             Resolution::Save => self.save_edits(cx, true).map(|_| false),
+            // Only the editor showing a document takes a reload, so one not shown closes, to open again from disk.
             Resolution::Revert => Ok(match self.docs[path].disk_text.clone() {
-                Some(text) => {
+                Some(text) if self.open.as_deref() == Some(path) => {
                     self.reload(cx, path, &text);
                     false
                 }
-                None => self.close(cx, path, false),
+                _ => self.close(cx, path, false),
             }),
             _ => Ok(false),
         }
@@ -623,6 +624,9 @@ impl Actor {
 
     pub fn resolve(&mut self, path: &str, answer: Resolution) -> Result<(), CoreError> {
         if self.docs.resolve(&mut self.core, path, answer)? {
+            // Live Preview has the edits let go, having passed over the disk's change while the document was open.
+            let paths = BTreeSet::from([path.to_owned()]);
+            self.live.disk_changed(&mut self.core, &paths);
             self.closed();
         }
         Ok(())
