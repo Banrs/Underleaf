@@ -4,6 +4,7 @@ import gzip
 import json
 import re
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -56,9 +57,30 @@ for case in cases:
                 inverse_differences.append({"line": line, "baseline": before[5:], "upstream": after[5:]})
             if any(abs(float(a) - float(b)) > 0.25 for a, b in zip(before[1:5], after[1:5])):
                 box_differences.append(line)
+    normalized = None
+    if case.parent.name.startswith("live-"):
+        # Test the smallest plausible compatibility fix independently: ignore
+        # TeXpresso's completed-input markers, without repairing its contents.
+        clean = re.sub(rb"(?m)^/\d+\n", b"", data)
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate = Path(temporary) / "main.pdf"
+            candidate.with_suffix(".synctex").write_bytes(clean)
+            normalized = read_probe(upstream, candidate, name, config["lines"])
+        normalized = {
+            **{k: v for k, v in normalized.items() if k not in ("inputs", "forward")},
+            "missing_inputs": sorted(set(old["inputs"]) - set(normalized["inputs"])),
+            "page_differences": sum(
+                before[0] != normalized["forward"].get(line, ["0"])[0]
+                for line, before in old["forward"].items()
+            ),
+        }
     summary = {
         "case": case.parent.name,
         "source_lines": config["lines"],
+        "has_postamble": b"Postamble:" in data,
+        "ends_in_newline": data.endswith(b"\n"),
+        "synctex_tail": data.decode("utf-8").splitlines()[-12:] if new["exit"] else None,
+        "without_input_end_markers": normalized,
         "missing_inputs": missing_inputs,
         "page_differences": len(page_differences),
         "inverse_differences": len(inverse_differences),

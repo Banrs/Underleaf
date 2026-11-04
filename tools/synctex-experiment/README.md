@@ -35,3 +35,10 @@ Adoption requires usable live input mappings, acceptable navigation and cost,
 a small safe adapter, and a maintainable static build. Vendoring would add
 roughly 12,000 third-party C/header lines while removing about 1,200 first-party
 Rust lines. It must not be presented as a reduction in total repository size.
+
+The follow-up diagnostic also removes only TeXpresso's completed-input markers
+from a temporary copy of each live SyncTeX file. This tests whether the simplest
+normalization would resolve compatibility, without introducing a production
+preprocessor. File tails and postamble presence are logged for rejected files.
+Native timings exclude a production Rust adapter and synchronization; treat
+them as an optimistic estimate. Parse timings are single samples.
