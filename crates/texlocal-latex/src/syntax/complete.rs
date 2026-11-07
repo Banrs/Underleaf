@@ -9,7 +9,7 @@ use super::scan::{self, Group, Scanner};
 use super::{INDENT, SourceDocument, Text, catalog, indentation};
 use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
-use crate::{FileKind, file_kind, fold_case, segments};
+use crate::{FileKind, file_kind, same_folded, segments};
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -54,14 +54,11 @@ pub struct Symbols {
 
 impl Symbols {
     pub fn spelt(&self, rel: &str) -> Option<String> {
-        let rel = fold_case(&segments(rel)?.join("/"));
-        let mut files = self.files.iter();
-        // An ASCII name folds to its ASCII lowercase, compared here without allocating.
-        let same = |file: &&String| match file.is_ascii() {
-            true => file.eq_ignore_ascii_case(&rel),
-            false => fold_case(file) == rel,
-        };
-        files.find(same).cloned()
+        let rel = segments(rel)?.join("/");
+        self.files
+            .iter()
+            .find(|file| same_folded(file, &rel))
+            .cloned()
     }
 
     pub fn labels(&self) -> impl Iterator<Item = &Named> {

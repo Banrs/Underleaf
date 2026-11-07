@@ -2,18 +2,18 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::Serialize;
+use texlocal_latex::FileKind;
 use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::message::Message;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
-use texlocal_latex::{FileKind, file_kind};
 
 use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::history::Then;
-use super::scans::{may_name, tex};
+use super::scans::{tex, usages_in};
 use crate::messages;
 use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
@@ -85,13 +85,7 @@ impl Actor {
         if defines(&to) {
             return Err(CoreError::conflict(exists(&to)));
         }
-        let found = move |rel: &str, text: &str| {
-            if !may_name(kind, &from, text) {
-                return Vec::new();
-            }
-            let facts = Facts::read(text, file_kind(rel));
-            syntax::usages(&facts, rel, kind, &from, |_| None)
-        };
+        let found = move |rel: &str, text: &str| usages_in(rel, text, kind, &from, |_| None);
         self.edit_project(tex, found, to)
     }
 
@@ -146,8 +140,8 @@ impl Actor {
         self.edit_project(main, found, line)
     }
 
-    /// The shown document, once every edit is saved and the documents kept open only because they couldn't be are
-    /// closed, so the core's text is the disk's for every other file.
+    /// The shown document's text, after saving every edit and closing documents a failed save had kept open, so every
+    /// other file's text is on disk.
     pub fn text_to_edit(&mut self) -> Result<Option<OpenText>, CoreError> {
         let unsettled = |doc: &&Doc| doc.conflict.is_some();
         if let Some(doc) = self.docs.values().find(unsettled) {

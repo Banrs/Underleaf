@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::facts::Facts;
+use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
 use texlocal_latex::{FileKind, file_kind};
@@ -45,11 +45,7 @@ impl Actor {
             };
             let symbols = doc.symbols();
             let found = |rel: &str, text: &str| {
-                if !may_name(kind, &name, text) {
-                    return Vec::new();
-                }
-                let facts = Facts::read(text, file_kind(rel));
-                syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
+                usages_in(rel, text, kind, &name, |file| symbols.spelt(file))
             };
             let hits = projects::search_project(&project, &texts(&docs), &tex, &found, usize::MAX);
             let name = match kind {
@@ -64,9 +60,19 @@ impl Actor {
     }
 }
 
-/// A label or citation is a slice of the text naming it, so a text without the name needn't be read.
-pub(super) fn may_name(kind: SymbolKind, name: &str, text: &str) -> bool {
-    !matches!(kind, SymbolKind::Label | SymbolKind::Citation) || text.contains(name)
+/// Where a file's text uses the symbol. A label or citation is spelt out where it's used, so a text without its name
+/// isn't parsed.
+pub(super) fn usages_in(
+    rel: &str,
+    text: &str,
+    kind: SymbolKind,
+    name: &str,
+    spelt: impl Fn(&str) -> Option<String>,
+) -> Vec<Place> {
+    if matches!(kind, SymbolKind::Label | SymbolKind::Citation) && !text.contains(name) {
+        return Vec::new();
+    }
+    syntax::usages(&Facts::read(text, file_kind(rel)), rel, kind, name, spelt)
 }
 
 pub(super) fn tex(rel: &str) -> bool {

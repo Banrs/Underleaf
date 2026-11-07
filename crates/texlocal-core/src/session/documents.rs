@@ -591,13 +591,15 @@ impl Actor {
 
     /// Closes documents kept open only because they couldn't be saved when another was shown, once they're saved.
     pub fn close_hidden(&mut self) {
-        let shown = self.docs.open.clone();
-        let hidden = self
+        let shown = self.docs.open.as_ref();
+        let hidden: Vec<String> = self
             .docs
             .keys()
-            .filter(|path| shown.as_ref() != Some(*path));
+            .filter(|path| Some(*path) != shown)
+            .cloned()
+            .collect();
         let mut closed = false;
-        for path in hidden.cloned().collect::<Vec<_>>() {
+        for path in hidden {
             closed |= self.docs.close(&mut self.core, &path, true);
         }
         if closed {

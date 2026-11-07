@@ -64,10 +64,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
         foldCache = nil
-        for edit in sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
-        where folds.edited(edit.range, delta: edit.text.utf16.count - edit.length) {
-            Task { self.relayOutFolds() }
-        }
+        let edits = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
+        if !edits.filter({ folds.edited($0.range, delta: $0.text.utf16.count - $0.length) }).isEmpty { Task { self.relayOutFolds() } }
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }

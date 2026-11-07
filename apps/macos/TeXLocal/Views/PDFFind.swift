@@ -50,8 +50,8 @@ final class PDFFind: NSObject, NSMenuItemValidation {
         _ = restart(&reading) { [weak self] in
             let strings = await pages.read()
             guard let self, !Task.isCancelled else { return }
-            lit = [:]
             guard strings != text.pageStrings else { return highlightMatches() }
+            lit = [:]
             finder.noteClientStringWillChange()
             text.pageStrings = strings
         }

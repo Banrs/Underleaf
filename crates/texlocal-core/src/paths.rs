@@ -3,8 +3,8 @@ use std::{fs, io};
 
 use schemars::JsonSchema;
 use serde::Deserialize;
-pub(crate) use texlocal_latex::fold_case;
 use texlocal_latex::message::Message;
+pub(crate) use texlocal_latex::{fold_case, same_folded};
 
 use crate::error::CoreError;
 use crate::messages;
@@ -163,13 +163,7 @@ pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
             rest = rest.strip_prefix('/')?;
         }
         let end = rest.find('/').unwrap_or(rest.len());
-        let here = &rest[..end];
-        // ASCII names fold to their ASCII lowercase, compared here without allocating.
-        let same = match here.is_ascii() && name.is_ascii() {
-            true => here.eq_ignore_ascii_case(name),
-            false => fold_case(here) == fold_case(name),
-        };
-        if !same {
+        if !same_folded(&rest[..end], name) {
             return None;
         }
         rest = &rest[end..];
@@ -247,12 +241,11 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
     let mut path = root.to_path_buf();
     let mut spelt = Vec::new();
     for name in rel.split('/') {
-        let folded = fold_case(name);
         let found = fs::read_dir(&path)
             .ok()?
             .flatten()
             .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|entry| fold_case(entry) == folded)
+            .filter(|entry| same_folded(entry, name))
             .max_by_key(|entry| entry == name)?;
         path.push(&found);
         spelt.push(found);

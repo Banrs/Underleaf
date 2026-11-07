@@ -10,7 +10,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::skip_unreadable;
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, identity};
+use crate::paths::{Project, identity, same_folded};
 use crate::settings::read_settings;
 
 #[derive(Serialize, JsonSchema)]
@@ -163,7 +163,7 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
                 None
             };
             found.push(TreeNode {
-                main: !entry.dir && fold_case(&entry.rel) == main,
+                main: !entry.dir && same_folded(&entry.rel, main),
                 path: entry.rel,
                 kind: (!entry.dir).then(|| file_kind(&entry.name)),
                 name: entry.name,
@@ -174,7 +174,7 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     }
     let main = read_settings(&project.settings).main_file;
     let walked = &mut walked_from(&project.root);
-    nodes(project, None, walked, &fold_case(&main))
+    nodes(project, None, walked, &main)
 }
 
 #[cfg(test)]

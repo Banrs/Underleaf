@@ -38,6 +38,15 @@ pub fn fold_case(path: &str) -> String {
     path.to_uppercase().to_lowercase()
 }
 
+/// Whether two paths are the same once case-folded, comparing ASCII ones without allocating.
+pub fn same_folded(a: &str, b: &str) -> bool {
+    if a.is_ascii() && b.is_ascii() {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        fold_case(a) == fold_case(b)
+    }
+}
+
 const TEXT_EXTENSIONS: &[&str] = &[
     "ltx", "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist",
     "lco", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",

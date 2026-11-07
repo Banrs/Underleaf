@@ -170,14 +170,8 @@ impl Actor {
     /// case alone names the same file.
     fn main_file_changed(&mut self, was: Option<&String>) -> bool {
         let chosen = settings::read_settings(&self.core.project.settings).main_file;
-        let chosen = paths::fold_case(&chosen);
-        if self
-            .tree
-            .files
-            .iter()
-            .find(|f| paths::fold_case(f) == chosen)
-            == was
-        {
+        let mut files = self.tree.files.iter();
+        if files.find(|file| paths::same_folded(file, &chosen)) == was {
             return false;
         }
         self.live.restart(&mut self.core);

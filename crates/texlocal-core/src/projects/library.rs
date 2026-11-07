@@ -17,7 +17,7 @@ use super::skip_unreadable;
 use super::tree::{listed, shown, walk};
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, sanitize_name, ui_file};
+use crate::paths::{Project, fold_case, same_folded, sanitize_name, ui_file};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
 use crate::{SETTINGS_FILE, atomic, sys};
@@ -186,7 +186,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     };
     let top = tex
         .iter()
-        .find(|name| fold_case(name) == "main.tex")
+        .find(|name| same_folded(name, "main.tex"))
         .or_else(|| tex.iter().find(|name| starts_document(&root.join(name))))
         .or(tex.first());
     if let Some(top) = top {
@@ -198,7 +198,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         let name = rel.rsplit('/').next().unwrap_or(rel);
         if file_kind(name) == FileKind::Tex && !name.starts_with('-') && starts_document(path) {
             let found = (
-                fold_case(name) != "main.tex",
+                !same_folded(name, "main.tex"),
                 rel.matches('/').count(),
                 rel.to_owned(),
             );
