@@ -10,7 +10,7 @@ use texlocal_latex::facts::FilePlace;
 use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::score;
 use texlocal_latex::syntax::catalog::CATALOG;
-use texlocal_latex::syntax::{SymbolKind, sync_lines};
+use texlocal_latex::syntax::{SymbolKind, labelled_lines, sync_lines};
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 use texlocal_latex::{bib, project};
 
@@ -42,9 +42,12 @@ pub(crate) enum QuickOpenKind {
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct QuickHelp {
+    kind: SymbolKind,
     title: String,
     detail: String,
     place: Option<FilePlace>,
+    // Where the shown PDF typeset what a label names.
+    shown: Option<ForwardLoc>,
 }
 
 impl Tree {
@@ -122,10 +125,13 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
-        let settings = settings::read_settings(&self.core.project.settings);
-        let aux = settings.output(&self.core.project.build, "aux");
+        let (project, docs) = (self.core.project.clone(), self.docs.handles());
+        let settings = settings::read_settings(&project.settings);
+        let aux = settings.output(&project.build, "aux");
+        let live = self.live.pdf(&self.core);
+        let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().clone());
         tokio::task::spawn_blocking(move || {
+            let root = &project.root;
             let found = doc.with(|source| {
                 let (kind, name, _) = source.symbol_at(offset)?;
                 let defined = source.defined(kind, &name).into_iter().next();
@@ -139,7 +145,7 @@ impl Actor {
                 match open {
                     Some(doc) => Some(doc.snapshot().0),
                     None => {
-                        let abs = paths::safe_path(&root, file).ok()?;
+                        let abs = paths::safe_path(root, file).ok()?;
                         fs::read(abs).ok().map(|bytes| lf(lossy_string(bytes)))
                     }
                 }
@@ -172,11 +178,26 @@ impl Actor {
                 }
                 _ => None,
             };
+            let shown = match (kind, &defined, live) {
+                (SymbolKind::Label, Some((file, at)), Ok(live)) => text(file).and_then(|text| {
+                    let mut lines = labelled_lines(&text, at.line);
+                    if let Some(typeset) = typeset.as_ref().and_then(|typeset| typeset.get(file)) {
+                        let typeset = |line| map_line(typeset, &text, line);
+                        lines = typeset(*lines.start())..=typeset(*lines.end());
+                    }
+                    synctex::area(&project, file, lines, live.as_deref())
+                        .ok()
+                        .flatten()
+                }),
+                _ => None,
+            };
             let place = defined.map(|(file, at)| at.in_file(file));
             reply.send(Ok(detail.map(|detail| QuickHelp {
+                kind,
                 title: name,
                 detail,
                 place,
+                shown,
             })));
         });
     }

@@ -988,9 +988,11 @@ nonisolated struct PutBackProject: LibraryRequest {
 }
 
 nonisolated struct QuickHelp: Decodable, Hashable, Sendable {
+    var kind: SymbolKind
     var title: String
     var detail: String
     var place: FilePlace?
+    var shown: ForwardLoc?
 }
 
 nonisolated struct QuickOpen: SessionRequest {

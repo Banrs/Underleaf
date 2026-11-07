@@ -28,7 +28,7 @@ pub use complete::{definitions, usages};
 pub use headings::document_class;
 use highlight::Highlight;
 pub use highlight::HighlightKind;
-pub use sync::{SyncLines, sync_lines};
+pub use sync::{SyncLines, labelled_lines, sync_lines};
 
 use crate::utf16;
 

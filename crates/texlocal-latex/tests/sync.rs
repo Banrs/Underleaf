@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde_json::{Value, json};
 use texlocal_latex::synctex::SyncTex;
-use texlocal_latex::syntax::{SourceDocument, SyncLines, sync_lines};
+use texlocal_latex::syntax::{SourceDocument, SyncLines, labelled_lines, sync_lines};
 use texlocal_latex::wordmatch::{PdfPage, find_in_pdf, find_in_source};
 
 const TWO_PAGES: &[u8] = include_bytes!("fixtures/two-pages.synctex");
@@ -234,4 +234,57 @@ fn a_documents_lines_read_on_from_its_checkpoints_match_a_scan_of_its_whole_text
         let edited = doc.text();
         same(&mut doc, &edited);
     }
+}
+
+#[test]
+fn a_label_names_its_innermost_environment_its_item_or_its_heading() {
+    let text = "\\begin{document}\n\\section{Intro}\n\\label{sec:intro}\nText.\n\\begin{figure}\n\\begin{center}\n\\includegraphics{a}\n\\end{center}\n\\caption{A}\\label{fig:a}\n\\end{figure}\n\\begin{equation}\\label{eq:e}\nE = mc^2\n\\end{equation}\n\\begin{enumerate}\n\\item First\\label{it:one}\n\\end{enumerate}\nSee \\label{p:here} this.\n\\end{document}\n";
+    assert_eq!(labelled_lines(text, 3), 2..=3);
+    assert_eq!(labelled_lines(text, 9), 5..=10);
+    assert_eq!(labelled_lines(text, 11), 11..=13);
+    assert_eq!(labelled_lines(text, 15), 15..=15);
+    assert_eq!(labelled_lines(text, 17), 17..=17);
+    assert_eq!(labelled_lines("\\label{x}", 1), 1..=1);
+}
+
+#[test]
+fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
+    let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
+    let one = synctex.area(1, 4..=4).unwrap();
+    let line = synctex.forward(1, &at(4)).remove(0);
+    assert_eq!((one.page, one.h, one.v), (line.page, line.h, line.v));
+    let both = synctex.area(1, 1..=9).unwrap();
+    assert_eq!(both.page, 1);
+    assert!(both.height >= one.height && both.width >= one.width);
+    assert!(synctex.area(1, 900..=901).is_none());
+}
+
+#[test]
+fn a_labels_area_holds_what_it_names_and_not_its_neighbours() {
+    let synctex = SyncTex::read(include_bytes!("fixtures/labels.synctex").to_vec()).unwrap();
+    let text = include_str!("fixtures/labels.tex");
+    let area = |line| synctex.area(1, labelled_lines(text, line)).unwrap();
+    let top = |shown: &texlocal_latex::synctex::Shown| shown.v - shown.height;
+    let paragraph = synctex.forward(1, &at(8)).remove(0);
+    let equation = area(10);
+    assert!(
+        top(&equation) > paragraph.v,
+        "{equation:?} reaches up to the paragraph before it"
+    );
+    assert!(equation.height < 30.0, "{equation:?}");
+    let figure = area(20);
+    assert!(
+        figure.height > 56.0,
+        "{figure:?} misses the rule or the caption"
+    );
+    let theorem = area(22);
+    assert!(
+        top(&theorem) > figure.v,
+        "{theorem:?} reaches up to the figure before it"
+    );
+    let heading = area(6);
+    assert!(
+        heading.v < equation.v && heading.height < 20.0,
+        "{heading:?}"
+    );
 }

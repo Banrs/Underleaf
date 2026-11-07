@@ -576,7 +576,9 @@ async fn usages_and_quick_help_describe_a_label() {
     assert_eq!(usages["groups"][0]["hits"].as_array().unwrap().len(), 2);
     let help = rig.call("LookUp", at);
     assert_eq!(help["title"], "sec:intro");
+    assert_eq!(help["kind"], "label");
     assert_eq!(help["place"]["line"], 3);
+    assert!(help["shown"].is_null(), "nothing is shown before a compile");
 }
 
 #[tokio::test(flavor = "multi_thread")]

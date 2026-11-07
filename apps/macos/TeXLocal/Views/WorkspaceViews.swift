@@ -61,7 +61,7 @@ final class WorkspaceViews: ProjectViews {
             guard let project = self?.project else { return }
             project.session.task { await project.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
         }
-        text.quickHelp = { [weak self] in self?.quickHelp(at: $0) }
+        text.quickHelp = { [weak self] in self?.quickHelp(at: $0, hovering: $1) }
         pdf.onVisiblePages = { [weak self] in self?.project.liveView($0) }
         pdf.view.onInverse = { [weak self] page, point, click, quietly in
             guard let project = self?.project else { return }
@@ -116,7 +116,7 @@ final class WorkspaceViews: ProjectViews {
 
     func perform(_ command: MenuCommand) {
         switch command {
-        case .quickHelp: quickHelp(at: editor.caret)
+        case .quickHelp: quickHelp(at: editor.caret, hovering: false)
         case .filePrint: pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil)
         case .editShiftRight: editor.textView.shiftLines(1)
         case .editShiftLeft: editor.textView.shiftLines(-1)
@@ -189,11 +189,15 @@ final class WorkspaceViews: ProjectViews {
         if apply(edits, named: String(localized: "Reload")) { top.map(editor.textView.scroll(toShownTop:)) }
     }
 
-    private func quickHelp(at offset: Int) {
+    /// Hovering, only a reference or citation has help worth showing unasked.
+    private func quickHelp(at offset: Int, hovering: Bool) {
         guard let path = editor.path else { return }
         project.session.task { [self] in
-            guard let help = await project.quickHelp(in: path, at: offset), editor.path == path else { return }
-            editor.textView.showQuickHelp(help, at: offset)
+            guard let help = await project.quickHelp(in: path, at: offset), editor.path == path,
+                  !hovering || [.label, .citation].contains(help.kind) else { return }
+            let scale = editor.textView.window?.backingScaleFactor ?? 2
+            let picture = help.shown.flatMap { pdf.picture(of: $0, scale: scale) }
+            editor.textView.showQuickHelp(help, picture: picture, at: offset, hovering: hovering)
         }
     }
 }

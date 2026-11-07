@@ -57,6 +57,55 @@ pub fn sync_lines(text: &str, line: u32) -> SyncLines {
     scanned_whole(&Text::new(text), line)
 }
 
+/// Environments that only place what they hold, so a label in one names what's around it.
+const LAYOUT: [&str; 4] = ["document", "center", "flushleft", "flushright"];
+const LISTS: [&str; 3] = ["itemize", "enumerate", "description"];
+
+/// The lines that typeset what a `\label` on `line` names: its innermost environment, an item in a list, or a heading
+/// or paragraph on its own line, with the line before when the label starts its line.
+pub fn labelled_lines(text: &str, line: u32) -> RangeInclusive<u32> {
+    #[derive(Default)]
+    struct Spans(Vec<(String, usize, usize)>);
+    impl Visit for Spans {
+        fn closed(&mut self, group: &Group, close: Range<usize>) {
+            if let Some(name) = group.environment() {
+                self.0.push((name.to_owned(), group.open, close.start));
+            }
+        }
+    }
+    let text = Text::new(text);
+    let (mut spans, mut scanner) = (Spans::default(), Scanner::default());
+    scanner.run(&text.units, text.units.len(), &[], &mut spans);
+    let line_of = |at: usize| text.line_index(at as u32) as u32 + 1;
+    let innermost = (spans.0.iter())
+        .map(|(name, open, close)| {
+            (
+                name.trim_end_matches('*'),
+                *open,
+                line_of(*open)..=line_of(*close),
+            )
+        })
+        .filter(|(name, _, lines)| lines.contains(&line) && !LAYOUT.contains(name))
+        .min_by_key(|(_, open, lines)| (lines.end() - lines.start(), Reverse(*open)));
+    match innermost {
+        Some((name, ..)) if LISTS.contains(&name) => line..=line,
+        Some((.., lines)) => lines,
+        None => {
+            let index = (line as usize)
+                .saturating_sub(1)
+                .min(text.lines.len().saturating_sub(1));
+            let own = text.line(index);
+            let start = own.iter().take_while(|&&u| tex_space(u)).count();
+            let label: Vec<u16> = "\\label".encode_utf16().collect();
+            let before = (0..index).rev().find(|&i| !blank_line(text.line(i)));
+            match before {
+                Some(before) if own[start..].starts_with(&label) => before as u32 + 1..=line,
+                _ => line..=line,
+            }
+        }
+    }
+}
+
 fn scanned_whole(text: &Text, line: u32) -> SyncLines {
     let mut found = Found::default();
     let mut scanner = Scanner::default();

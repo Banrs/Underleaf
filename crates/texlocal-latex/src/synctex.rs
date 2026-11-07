@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::Read;
+use std::ops::RangeInclusive;
 
 use crate::syntax::SyncLines;
 
@@ -61,6 +62,7 @@ struct Node {
     sibling: Option<u32>,
 }
 
+#[derive(Debug)]
 pub struct Shown {
     pub page: i32,
     pub h: f32,
@@ -769,6 +771,47 @@ impl SyncTex {
         }
     }
 
+    /// Everything typeset from `lines` on the page where the first of them shows, as one box. Only lines of type that
+    /// show something count, and only those mostly set from `lines`, unless none is: a line that a paragraph runs into,
+    /// as one before a display does, takes the paragraph's lines along, and an environment's first line can bring an
+    /// empty box from before a float.
+    pub fn area(&self, tag: i32, lines: RangeInclusive<u32>) -> Option<Shown> {
+        let ids: Vec<u32> = (lines.clone())
+            .filter_map(|line| self.hits(tag, line))
+            .flatten()
+            .collect();
+        let held = |id: &&u32| {
+            let node = self.settled(**id);
+            let (line, at) = (self.mean_line(node), self.node(node).at);
+            let shows = at.width != 0 && at.height.saturating_add(at.depth) != 0;
+            shows
+                && self.node(node).kind.is_hbox()
+                && u32::try_from(line).is_ok_and(|line| lines.contains(&line))
+        };
+        let mut boxes: Vec<Shown> = ids.iter().filter(held).map(|&id| self.shown(id)).collect();
+        if boxes.is_empty() {
+            boxes = ids.iter().map(|&id| self.shown(id)).collect();
+        }
+        let mut boxes = boxes.into_iter();
+        let first = boxes.next()?;
+        let edges = |at: &Shown| {
+            let (left, right) = (at.h.min(at.h + at.width), at.h.max(at.h + at.width));
+            (left, at.v - at.height.abs(), right, at.v)
+        };
+        let (mut left, mut top, mut right, mut bottom) = edges(&first);
+        for shown in boxes.filter(|shown| shown.page == first.page) {
+            let (l, t, r, b) = edges(&shown);
+            (left, top, right, bottom) = (left.min(l), top.min(t), right.max(r), bottom.max(b));
+        }
+        Some(Shown {
+            page: first.page,
+            h: left,
+            v: bottom,
+            width: right - left,
+            height: bottom - top,
+        })
+    }
+
     fn hits(&self, tag: i32, line: u32) -> Option<Vec<u32>> {
         let line = i32::try_from(line).ok()?;
         let list = friends_of(tag, line).map(|i| &self.friends[i])?;
@@ -856,6 +899,19 @@ impl SyncTex {
     }
 
     fn shown(&self, id: u32) -> Shown {
+        let node = self.settled(id);
+        let seen = self.node(node).seen;
+        Shown {
+            page: self.node(id).page,
+            h: self.visible_h(seen.h),
+            v: self.visible_v(seen.v) + self.visible_size(seen.depth),
+            width: self.visible_size(seen.width),
+            height: self.visible_size(seen.height) + self.visible_size(seen.depth),
+        }
+    }
+
+    /// The box that shows a node: its own, or the line's it's set in.
+    fn settled(&self, id: u32) -> u32 {
         let mut node = id;
         if !self.node(node).kind.is_box() {
             node = self.node(node).parent.unwrap_or(node);
@@ -877,14 +933,7 @@ impl SyncTex {
                 node = parent;
             }
         }
-        let seen = self.node(node).seen;
-        Shown {
-            page: self.node(id).page,
-            h: self.visible_h(seen.h),
-            v: self.visible_v(seen.v) + self.visible_size(seen.depth),
-            width: self.visible_size(seen.width),
-            height: self.visible_size(seen.height) + self.visible_size(seen.depth),
-        }
+        node
     }
 
     fn mean_line(&self, id: u32) -> i32 {

@@ -1,10 +1,11 @@
 use std::io::{Error, ErrorKind};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::synctex::{Shown, SyncTex};
 use texlocal_latex::syntax::{SyncLines, sync_lines};
 use texlocal_latex::utf16;
 use texlocal_latex::wordmatch::find_in_source;
@@ -78,23 +79,10 @@ pub(crate) fn forward(
     lines: &SyncLines,
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    let sync = sync_for(project, live)?;
-    let tag = sync
-        .inputs()
-        .find(|(_, name)| source_file(project, name).as_deref() == Some(file))
-        .map(|(tag, _)| tag)
-        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
-    let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
+    let (sync, tag) = tagged(project, file, live)?;
     let mut matches: Vec<_> = (sync.forward(tag, lines).into_iter())
         .filter(|shown| shown.page >= 1)
-        .map(|shown| ForwardLoc {
-            page: f64::from(shown.page),
-            h: finite(shown.h),
-            v: finite(shown.v),
-            width: finite(shown.width),
-            height: finite(shown.height),
-            matches: Vec::new(),
-        })
+        .map(located)
         .collect();
     let mut first = matches
         .first()
@@ -109,6 +97,46 @@ pub(crate) fn forward(
     matches.dedup();
     first.matches = matches;
     Ok(first)
+}
+
+/// Where `lines` of `file` were typeset, as one box on the page they start on.
+pub(crate) fn area(
+    project: &Project,
+    file: &str,
+    lines: RangeInclusive<u32>,
+    live: Option<&Path>,
+) -> Result<Option<ForwardLoc>, CoreError> {
+    let (sync, tag) = tagged(project, file, live)?;
+    Ok(sync
+        .area(tag, lines)
+        .filter(|shown| shown.page >= 1)
+        .map(located))
+}
+
+fn tagged(
+    project: &Project,
+    file: &str,
+    live: Option<&Path>,
+) -> Result<(Arc<SyncTex>, i32), CoreError> {
+    let sync = sync_for(project, live)?;
+    let tag = sync
+        .inputs()
+        .find(|(_, name)| source_file(project, name).as_deref() == Some(file))
+        .map(|(tag, _)| tag)
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
+    Ok((sync, tag))
+}
+
+fn located(shown: Shown) -> ForwardLoc {
+    let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
+    ForwardLoc {
+        page: f64::from(shown.page),
+        h: finite(shown.h),
+        v: finite(shown.v),
+        width: finite(shown.width),
+        height: finite(shown.height),
+        matches: Vec::new(),
+    }
 }
 
 pub(crate) fn inverse(
