@@ -147,6 +147,34 @@ struct EditorTests {
         #expect(!text.apply([TextEdit(.caret(0), "x")], named: "Edit") && text.string == "text")
     }
 
+    @Test func spreadsheetCellsPasteAsATabularOnALineOfTheirOwnAtItsIndentationInOneUndoStep() {
+        let (editor, window) = Self.editor("  x\n    ")
+        defer { window.close() }
+        let text = editor.textView, board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setString("Name\tScore\r\nAda\t10\r\n", forType: .string)
+        text.selection = .caret(3)
+        #expect(text.pasteTable(from: board, booktabs: false))
+        let table = { (indent: String, rules: [String]) in
+            ["\\begin{tabular}{lr}", "  \(rules[0])", "  Name & Score \\\\", "  \(rules[1])", "  Ada & 10 \\\\", "  \(rules[2])", "\\end{tabular}"]
+                .joined(separator: "\n" + indent)
+        }
+        let pasted = "  x\n  " + table("  ", ["\\hline", "\\hline", "\\hline"])
+        #expect(text.string == pasted + "\n    " && text.document.text == text.string)
+        #expect(text.selection == .caret((pasted as NSString).length) && text.undo.undoActionName == "Paste as Table")
+        text.undo.undo()
+        #expect(text.string == "  x\n    " && text.document.text == text.string)
+        text.selection = .caret(8)
+        #expect(text.pasteTable(from: board, booktabs: true))
+        #expect(text.string == "  x\n    " + table("    ", ["\\toprule", "\\midrule", "\\bottomrule"]) && text.document.text == text.string)
+        board.clearContents()
+        board.setString("one column\nonly", forType: .string)
+        #expect(!text.pasteTable(from: board, booktabs: false))
+        text.isEditable = false
+        #expect(!text.canPasteTable)
+    }
+
     @Test func theEditorTakesTheFocusARevealAskedForOnlyTheNextTimeItShows() {
         let (editor, window) = Self.editor("text")
         defer { window.close() }

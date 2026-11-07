@@ -28,6 +28,7 @@ nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
     var headingStyles: [HeadingStyle]
+    var packages: [String]
 }
 
 nonisolated enum Answered<Payload: Decodable & Sendable>: Decodable, Sendable {
@@ -1398,6 +1399,15 @@ nonisolated struct SynctexMatch: SessionRequest {
 nonisolated struct Tabbing: Decodable, Hashable, Sendable {
     var field: TextRange?
     var edits: [TextEdit]
+}
+
+nonisolated struct Tabular: SyntaxRequest {
+    typealias Reply = String?
+    static let command = "Tabular"
+
+    var cells: String
+    var indent: String
+    var booktabs: Bool
 }
 
 nonisolated struct Template: Decodable, Hashable, Sendable {

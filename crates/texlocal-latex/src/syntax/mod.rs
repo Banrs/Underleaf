@@ -14,6 +14,7 @@ mod snippet;
 mod stack;
 mod style;
 mod sync;
+mod table;
 mod typing;
 
 use std::sync::Arc;

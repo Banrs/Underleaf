@@ -168,6 +168,27 @@ fn the_outline_nests_headings_across_inputs_and_counts_words() {
 }
 
 #[test]
+fn the_analysis_lists_the_packages_its_files_load_once_each() {
+    let main = "\\documentclass{article}\n\\usepackage{graphicx,booktabs}\n\\input{pre}\n\\begin{document}\n\\end{document}\n";
+    let scan = project(
+        &[
+            ("main.tex", main),
+            (
+                "pre.tex",
+                "\\usepackage{amsmath}\n\\RequirePackage{booktabs}\n",
+            ),
+            ("lone.tex", "\\usepackage{tikz}\n"),
+        ],
+        &[],
+    );
+    let analysis = serde_json::to_value(project::analyze(&scan, Some("main.tex"), None)).unwrap();
+    assert_eq!(
+        analysis["packages"],
+        serde_json::json!(["amsmath", "booktabs", "graphicx"])
+    );
+}
+
+#[test]
 fn a_bib_entry_reads_as_authors_title_year_and_where() {
     let bib = "@book{knuth,\n  author = {Knuth, Donald E. and Lamport, Leslie},\n  title = {The {TeX}book},\n  year = 1984,\n  publisher = {Addison-Wesley}\n}\n";
     let entry = bib::entry(bib, "knuth");
