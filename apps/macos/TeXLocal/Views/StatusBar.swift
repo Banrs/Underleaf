@@ -16,14 +16,16 @@ enum BarMetrics {
     }()
 }
 
-/// Xcode's spacing: 14 pt to the first item, 16 between items and 9 before the divider; an icon 4 pt from its text, as
-/// in an AppKit button.
+/// Xcode's spacing between texts: 14 pt to the first item, 16 between items and 9 before the divider; an icon 4 pt from
+/// its text, as in an AppKit button. Each item reaches `overhang` past its text either side, as far as the accessory bar
+/// style's hover capsule reaches past a small AppKit label, and the items are spaced by what's left.
 private enum Spacing {
     static let lead: CGFloat = 14
     static let items: CGFloat = 16
     static let group: CGFloat = 8
     static let divider: CGFloat = 9
     static let icon: CGFloat = 4
+    static let overhang: CGFloat = 5
 }
 
 private struct BarLabelStyle: LabelStyle {
@@ -37,27 +39,6 @@ private struct BarLabelStyle: LabelStyle {
 
 private extension LabelStyle where Self == BarLabelStyle {
     static var bar: BarLabelStyle { BarLabelStyle() }
-}
-
-/// The hover of Xcode's debug-bar buttons: a 20 pt capsule reaching 5 pt past the label at each end, filled like the
-/// path control's highlight. It's drawn outside the button's frame, so the labels keep Xcode's spacing.
-private struct BarHover: ViewModifier {
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, Self.overhang)
-            .background {
-                if isEnabled, hovering {
-                    Capsule().fill(.primary.opacity(0.05)).frame(height: BarMetrics.target)
-                }
-            }
-            .onHover { hovering = $0 }
-            .padding(.horizontal, -Self.overhang)
-    }
-
-    private static let overhang: CGFloat = 5
 }
 
 struct StatusBar: View {
@@ -75,7 +56,8 @@ struct StatusBar: View {
         .barEdge()
         .contentShape(.rect)
         .monospacedDigit()
-        .buttonStyle(.borderless)
+        .buttonStyle(.accessoryBar)
+        .buttonBorderShape(.capsule)
         .contextMenu { Button(window.title(.viewToggleWordCount, on: project)) { window.perform(.viewToggleWordCount, on: project) } }
     }
 
@@ -83,25 +65,25 @@ struct StatusBar: View {
 
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: 0) {
-            HStack(spacing: Spacing.items) {
+            HStack(spacing: Spacing.items - 2 * Spacing.overhang) {
                 BuildStatus(project: project, detail: detail)
                 LiveStatus(project: project)
                 SaveStatus(project: project)
-                if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
+                if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary).barText() }
             }
-            Spacer(minLength: Spacing.items)
-            HStack(spacing: Spacing.items) {
+            Spacer(minLength: Spacing.items - 2 * Spacing.overhang)
+            HStack(spacing: Spacing.items - 2 * Spacing.overhang) {
                 CaretPlace(project: project, detail: detail)
                 WordCount(project: project, detail: detail)
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
             if window.showSource && project.editsText || PagePlace.shows(project, window) {
-                Divider().frame(height: 12).padding(.leading, Spacing.divider)
+                Divider().frame(height: 12).padding(.leading, Spacing.divider - Spacing.overhang)
             }
             PanelToggle(project: project)
         }
-        .padding(.leading, Spacing.lead - BarMetrics.inset)
+        .padding(.leading, Spacing.lead - Spacing.overhang - BarMetrics.inset)
     }
 }
 
@@ -112,10 +94,8 @@ private struct BuildStatus: View {
 
     var body: some View {
         Button { project.showNavigator(.issues) } label: {
-            // Leading, so the bar's first item starts at its lead however short its label.
-            label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget(alignment: .leading)
+            label.fixedSize(horizontal: detail != .short, vertical: true).barItem()
         }
-        .barHover()
         .help("Show issues")
     }
 
@@ -184,9 +164,8 @@ private struct LiveStatus: View {
                 } icon: {
                     Image(systemName: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                 }
-                .hitTarget()
+                .barItem()
             }
-            .barHover()
             .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }
                   ?? "Show the Live Preview log")
         }
@@ -201,9 +180,8 @@ private struct SaveStatus: View {
             Button { Task { await project.save() } } label: {
                 Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.multicolor)
-                    .hitTarget()
+                    .barItem()
             }
-            .barHover()
             .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
         }
     }
@@ -221,7 +199,6 @@ private struct CaretPlace: View {
                       short: "\(project.cursorLine):\(project.shownColumn)",
                       spoken: "Line \(project.cursorLine), Column \(project.shownColumn)")
             }
-            .barHover()
             .help("Go to a line")
         }
     }
@@ -244,6 +221,7 @@ private struct WordCount: View {
                 }
             }
             .foregroundStyle(.secondary)
+            .barText()
             .layoutPriority(-1)
             .task(id: views.changes) {
                 let selection = views.selection
@@ -270,7 +248,6 @@ private struct PagePlace: View {
                 let (page, count) = (views.pdf.page, views.pdf.pageCount)
                 place(detail, "Page \(String(page)) of \(String(count))", short: "\(page)/\(count)", spoken: "Page \(page) of \(count)")
             }
-            .barHover()
             .help("Go to a page")
         }
     }
@@ -278,15 +255,13 @@ private struct PagePlace: View {
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.showNavigator(.issues) } label: {
-                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
+                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").barItem()
             }
-            .barHover()
             .help("The latest build failed, so this is the last PDF that built")
         } else if project.outdated, !project.livePDF, !window.app.autoCompile {
             Button { window.perform(.compileRun, on: project) } label: {
-                Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
+                Label("PDF Out of Date", systemImage: "arrow.clockwise").barItem()
             }
-            .barHover()
             .help("The PDF is older than the source; compile to refresh it")
             .disabled(!window.app.isEnabled(.compileRun, on: project))
         }
@@ -307,6 +282,7 @@ private struct PanelToggle: View {
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
+        .buttonStyle(.borderless)
         .help(window.title(.viewToggleLogs, on: project))
     }
 }
@@ -314,7 +290,7 @@ private struct PanelToggle: View {
 private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
     Group { if detail == .short { Text(verbatim: short) } else { Text(full) } }
     .accessibilityLabel(spoken)
-    .hitTarget()
+    .barItem()
 }
 
 extension View {
@@ -325,10 +301,14 @@ extension View {
 
     func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
 
-    fileprivate func barHover() -> some View { modifier(BarHover()) }
+    /// A button's label, which SwiftUI's accessory bar style pads 10 pt either side, where AppKit's pads a small one 5.
+    fileprivate func barItem() -> some View { padding(.horizontal, Spacing.overhang - 10) }
 
-    fileprivate func hitTarget(alignment: Alignment = .center) -> some View {
-        frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target, alignment: alignment).contentShape(.rect)
+    /// Text between the buttons, given the room their capsules take.
+    fileprivate func barText() -> some View { padding(.horizontal, Spacing.overhang) }
+
+    fileprivate func hitTarget() -> some View {
+        frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect)
     }
 }
 
