@@ -7,6 +7,7 @@ use super::preview::MathPreview;
 use super::render::{MathSvg, math_svg};
 use super::snippet::Tabbing;
 use super::style::TextStyles;
+use super::table::tabular;
 use super::typing::Keystroke;
 use super::{Checker, Insertion, SourceDocument, TextEdit, TextRange};
 use crate::cite::{CitationSource, citation_source};
@@ -50,6 +51,7 @@ calls! {
         ListMenus {} -> Menus = menus();
         HeadingStyles {} -> Vec<HeadingStyle> = heading_styles(None);
         IncludeGraphics { path: String, into: String } -> Option<String> = include_graphics(&path, &into);
+        Tabular { cells: String, indent: String, booktabs: bool } -> Option<String> = tabular(&cells, &indent, booktabs);
         LogKinds { log: String } -> Vec<LogKind> = log_kinds(&log);
         LocateCitation { text: String } -> Option<CitationSource> = citation_source(&text);
     }

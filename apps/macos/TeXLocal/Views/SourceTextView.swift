@@ -12,6 +12,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.textStorage?.delegate = view
         (view.textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = view
         view.installColouring()
+        // Services, which Continuity Camera's items come through, return only types the app registered.
+        NSApp.registerServicesMenuSendTypes([], returnTypes: imported)
         view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
             of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.needsDisplay = true }
         return view
@@ -588,11 +590,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
               let png = board.data(forType: .png)
                 ?? board.data(forType: .tiff).flatMap(NSBitmapImageRep.init(data:))?.representation(using: .png, properties: [:])
         else { return nil }
+        return figure(png, as: "png")
+    }
+
+    private func figure(_ data: Data, as type: String) -> FileDrop? {
         let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        let file = folder.appending(path: String(localized: "Pasted Graphic") + ".png")
+        let file = folder.appending(path: String(localized: "Pasted Graphic") + "." + type)
         let gone = { try? FileManager.default.removeItem(at: folder) }
         guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
-              (try? png.write(to: file)) != nil, case .copy(let copy) = fileDrop(file) else {
+              (try? data.write(to: file)) != nil, case .copy(let copy) = fileDrop(file) else {
             gone()
             return nil
         }
@@ -600,6 +606,25 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             defer { gone() }
             return await copy()
         }
+    }
+
+    private static let jpeg = NSPasteboard.PasteboardType("public.jpeg")
+    private static let imported: [NSPasteboard.PasteboardType] = [.pdf, jpeg, .png, .tiff]
+
+    // Continuity Camera offers Take Photo, Scan Documents and Add Sketch to a requestor for images.
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {
+        if sendType == nil, let returnType, isEditable, Self.imported.contains(returnType) { return self }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    /// A scan's PDF and a photo's JPEG stay as they come, since LaTeX includes both.
+    override func readSelection(from board: NSPasteboard) -> Bool {
+        guard isEditable, board.string(forType: .string) == nil,
+              let drop = board.data(forType: .pdf).flatMap({ figure($0, as: "pdf") })
+                ?? board.data(forType: Self.jpeg).flatMap({ figure($0, as: "jpg") }) ?? pastedImage(board)
+        else { return super.readSelection(from: board) }
+        Task.immediate { await insertFigure(drop) }
+        return true
     }
 
     func insertFigure(_ drop: FileDrop) async {

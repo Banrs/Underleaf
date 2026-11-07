@@ -129,6 +129,8 @@ final class WorkspaceViews: ProjectViews {
         case .findUsages:
             if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
         case .editRename: project.window?.prompt = renamable.map(Prompt.rename)
+        case .editPasteTable:
+            if !editor.textView.pasteTable(booktabs: project.store.outline?.packages.contains("booktabs") == true) { beep() }
         case .openQuickly: OpenQuickly.show(for: project)
         case .pdfOpen: if let url = project.buildPDF { NSWorkspace.shared.open(url) }
         case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
@@ -139,6 +141,7 @@ final class WorkspaceViews: ProjectViews {
     func validates(_ command: MenuCommand) -> Bool {
         switch command {
         case .editRename: renamable != nil
+        case .editPasteTable: pastesTable
         case .viewZoomIn: pdf.canZoomIn
         case .viewZoomOut: pdf.canZoomOut
         default: true
@@ -167,6 +170,7 @@ final class WorkspaceViews: ProjectViews {
     var lineCount: Int { editor.textView.document.lineCount }
     var textStyles: TextStyles { _ = changes; return editor.textStyles }
     private var renamable: SymbolName? { _ = changes; return editor.renamable }
+    private var pastesTable: Bool { _ = changes; return editor.textView.canPasteTable }
     func words(in selection: NSRange) -> Int { editor.textView.document.words(in: selection) }
     func focusEditor() { editor.focus() }
 

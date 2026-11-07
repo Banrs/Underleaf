@@ -1,5 +1,5 @@
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -94,6 +94,7 @@ pub struct Analysis {
     tree: Vec<OutlineNode>,
     words: usize,
     heading_styles: Vec<headings::HeadingStyle>,
+    packages: Vec<String>,
 }
 
 pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis {
@@ -104,10 +105,12 @@ pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis
         walk = Walk::from(scan, shown);
     }
     let class = main.and_then(|main| scan.facts.get(main)?.class.as_deref());
+    let packages: BTreeSet<&String> = walk.files.iter().flat_map(|(_, f)| &f.packages).collect();
     Analysis {
         tree: outline_tree(&walk.outline),
         words: walk.words,
         heading_styles: headings::heading_styles(class),
+        packages: packages.into_iter().cloned().collect(),
         files: walk
             .files
             .iter()
