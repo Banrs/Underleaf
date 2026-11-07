@@ -403,6 +403,7 @@ final class ProjectModel {
     /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
     func addCitation(_ source: CitationSource) async throws {
         guard let url = URL(string: source.url) else { throw AppFailure(String(localized: "“\(source.id)” isn’t a DOI or arXiv ID.")) }
+        let citing = openPath
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue(source.accept, forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -419,7 +420,8 @@ final class ProjectModel {
             }
             throw Self.unchanged
         }
-        views?.perform(.cite(added.key))
+        // Only where it was asked for: the person may have moved to another file while it was fetched.
+        if openPath == citing { views?.perform(.cite(added.key)) }
         notices.note(added.edits == nil ? String(localized: "Cited “\(added.key)” from “\(added.file)”")
                      : String(localized: "Added “\(added.key)” to “\(added.file)”"))
     }

@@ -204,8 +204,9 @@ final class WorkspaceViews: ProjectViews {
         guard let document = pdf.view.document else { return }
         markedBadBoxes = badBoxes
         if badBoxes.isEmpty { return pdf.view.clearBadBoxes() }
+        // A PDF that started loading meanwhile is the build's own, and is marked once it has loaded.
         guard let areas = try? await project.session.call(BadBoxAreas()),
-              pdf.view.document === document, markedBadBoxes == badBoxes else { return }
+              pdf.view.document === document, !pdf.isLoading, markedBadBoxes == badBoxes else { return }
         pdf.view.mark(Dictionary(grouping: areas) { Int($0.area.page) - 1 }) { [weak self] badBox in
             guard let project = self?.project else { return }
             project.session.task { await project.open(badBox.file, line: Int(badBox.line), jump: true) }

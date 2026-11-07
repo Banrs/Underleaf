@@ -75,6 +75,8 @@ final class HoverHelp {
         popover.behavior = .applicationDefined
     }
 
+    isolated deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+
     var isShown: Bool { popover.isShown }
 
     func moved(to point: NSPoint) {

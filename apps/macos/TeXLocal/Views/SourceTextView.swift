@@ -12,8 +12,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.textStorage?.delegate = view
         (view.textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = view
         view.installColouring()
-        // Services, which Continuity Camera's items come through, return only types the app registered.
-        NSApp.registerServicesMenuSendTypes([], returnTypes: imported)
         view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
             of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.needsDisplay = true }
         return view
@@ -220,7 +218,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         keyWatches = []
-        guard let window else { return }
+        guard let window else { return hoverHelp.close() }
         keyWatches = [
             NotificationCenter.default.addObserver(of: window, for: .didBecomeKey) { [weak self] _ in self?.keyChanged() },
             NotificationCenter.default.addObserver(of: window, for: .didResignKey) { [weak self] _ in self?.keyChanged() },
@@ -609,7 +607,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     private static let jpeg = NSPasteboard.PasteboardType("public.jpeg")
-    private static let imported: [NSPasteboard.PasteboardType] = [.pdf, jpeg, .png, .tiff]
+    /// What Continuity Camera's items can come as; Services return only types the app registered at launch.
+    static let imported: [NSPasteboard.PasteboardType] = [.pdf, jpeg, .png, .tiff]
 
     // Continuity Camera offers Take Photo, Scan Documents and Add Sketch to a requestor for images.
     override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {

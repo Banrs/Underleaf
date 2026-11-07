@@ -154,13 +154,18 @@ impl Actor {
     /// `references.bib`, unless one of them has an entry with its DOI or arXiv identifier already.
     pub fn add_citation(&mut self, fetched: String, reply: Pending<AddedCitation>) {
         let added = self.citation(&fetched);
-        let (key, file, add) = match added {
+        let (key, file, new, add) = match added {
             Ok(Ok(found)) => return reply.send(Ok(found)),
             Ok(Err(add)) => add,
             Err(err) => return reply.send(Err(err)),
         };
         let then = add.map(|add| -> Then<AddedCitation> {
+            // Made only once the version before is taken and the edit goes ahead.
             Box::new(move |actor, snapshot| {
+                let root = &actor.core.project.root;
+                if new && paths::safe_path(root, &file).is_ok_and(|path| !path.exists()) {
+                    actor.create_entry("", &file, false)?;
+                }
                 add(actor, snapshot).map(|edits| AddedCitation {
                     key,
                     file,
@@ -176,7 +181,7 @@ impl Actor {
         &mut self,
         fetched: &str,
     ) -> Result<
-        Result<AddedCitation, (String, String, Result<Then<ProjectEdits>, CoreError>)>,
+        Result<AddedCitation, (String, String, bool, Result<Then<ProjectEdits>, CoreError>)>,
         CoreError,
     > {
         self.text_to_edit()?;
@@ -226,10 +231,11 @@ impl Actor {
                 }));
             }
         }
-        let file = match bibs.into_iter().next() {
-            Some(bib) => bib,
-            None => self.create_entry("", "references.bib", false)?,
-        };
+        let new = bibs.is_empty();
+        let file = bibs
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "references.bib".to_owned());
         let before = text(&file).unwrap_or_default();
         let gap = match () {
             () if before.is_empty() || before.ends_with("\n\n") => "",
@@ -252,7 +258,7 @@ impl Actor {
             end,
             format!("{gap}{}", tidied.entry),
         );
-        Ok(Err((tidied.key, file, add)))
+        Ok(Err((tidied.key, file, new, add)))
     }
 
     /// The shown document's text, after saving every edit and closing documents a failed save had kept open, so every

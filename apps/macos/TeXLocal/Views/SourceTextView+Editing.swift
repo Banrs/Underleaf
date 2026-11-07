@@ -30,7 +30,10 @@ extension SourceTextView {
         guard isEditable, let cells = board.string(forType: .string),
               let table = Syntax.call(Tabular(cells: cells, indent: indent, booktabs: booktabs)) ?? nil else { return false }
         let before = source.substring(with: NSRange(location: line.location, length: at.location - line.location))
-        let text = before.allSatisfy { $0 == " " || $0 == "\t" } ? table : "\n\(indent)\(table)"
+        let after = source.substring(with: NSRange(location: NSMaxRange(at), length: max(0, NSMaxRange(line) - NSMaxRange(at))))
+        let blank = { (text: String) in text.allSatisfy { $0 == " " || $0 == "\t" || $0.isNewline } }
+        // On lines of its own, the text either side of it keeping theirs.
+        let text = (blank(before) ? "" : "\n\(indent)") + table + (blank(after) ? "" : "\n\(indent)")
         return apply([TextEdit(at, text)], named: String(localized: "Paste as Table"),
                      selecting: [.caret(at.location + (text as NSString).length)])
     }

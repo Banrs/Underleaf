@@ -165,6 +165,11 @@ struct EditorTests {
         #expect(text.selection == .caret((pasted as NSString).length) && text.undo.undoActionName == "Paste as Table")
         text.undo.undo()
         #expect(text.string == "  x\n    " && text.document.text == text.string)
+        // Text after the caret goes on to a line of its own.
+        text.selection = .caret(2)
+        #expect(text.pasteTable(from: board, booktabs: false))
+        #expect(text.string == "  " + table("  ", ["\\hline", "\\hline", "\\hline"]) + "\n  x\n    ")
+        text.undo.undo()
         text.selection = .caret(8)
         #expect(text.pasteTable(from: board, booktabs: true))
         #expect(text.string == "  x\n    " + table("    ", ["\\toprule", "\\midrule", "\\bottomrule"]) && text.document.text == text.string)
