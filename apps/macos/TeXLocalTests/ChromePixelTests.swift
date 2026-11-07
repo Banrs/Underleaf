@@ -54,8 +54,12 @@ struct ChromePixelTests {
         let suffix = dark ? "dark" : "light"
         if let screen {
             try await settle()
-            // A click in the title bar makes the test host active, with this window key.
-            try await screen.ask("click", at: NSPoint(x: window.frame.midX, y: window.frame.maxY - 12))
+            // A click in the title bar makes the test host active, with this window key; another app can take it back.
+            for _ in 0..<5 where !(NSApp.isActive && window.isKeyWindow) {
+                try await screen.ask("click", at: NSPoint(x: window.frame.midX, y: window.frame.maxY - 12))
+                try await settle()
+            }
+            try #require(NSApp.isActive && window.isKeyWindow)
         }
 
         project.store.apply(.tree(Self.tree))
@@ -66,7 +70,10 @@ struct ChromePixelTests {
         try await settle()
 
         func capture(_ name: String) async throws {
-            try await screen?.ask("shot screen-\(name)-\(suffix) \(window.windowNumber)")
+            guard let screen else { return }
+            // Every capture shows the active window, so before and after compare like for like.
+            try #require(NSApp.isActive && window.isKeyWindow, "\(name) would show an inactive window")
+            try await screen.ask("shot screen-\(name)-\(suffix) \(window.windowNumber)")
         }
         func hover(_ view: NSView, _ point: NSPoint) async throws {
             guard let screen else { return }
