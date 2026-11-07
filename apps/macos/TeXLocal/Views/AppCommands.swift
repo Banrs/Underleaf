@@ -89,6 +89,7 @@ struct AppCommands: Commands {
             }
             Divider()
             InsertMenuItems(project: project)
+            items(.insertCitation)
         }
         CommandMenu("Compile") {
             items(.compileRun, .compileStop, .compileClean)

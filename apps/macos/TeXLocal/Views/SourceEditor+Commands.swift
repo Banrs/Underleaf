@@ -48,9 +48,22 @@ extension SourceEditor {
         case .block(let id, let title):
             let block = document.insertBlock(id, replacing: selection)
             guard textView.insert(block, named: Self.insertion(titled: title)) else { return false }
+        case .cite(let key):
+            let start = document.lineStart(document.line(at: selection.location))
+            let before = textView.source.substring(with: NSRange(location: start, length: selection.location - start))
+            let text = Self.citing(key, after: before)
+            textView.apply([TextEdit(selection, text)], named: String(localized: "Insert Citation"),
+                           selecting: [.caret(selection.location + (text as NSString).length)])
         }
         focus()
         return true
+    }
+
+    /// The key alone inside a citation's braces, after a comma unless one is there; a `\cite` of it elsewhere.
+    static func citing(_ key: String, after before: String) -> String {
+        guard let open = before.firstMatch(of: /\\[A-Za-z]*cite[A-Za-z]*\*?(?:\[[^\]]*\])*\{([^{}]*)$/) else { return "\\cite{\(key)}" }
+        let keys = open.1.trimmingCharacters(in: .whitespaces)
+        return keys.isEmpty || keys.hasSuffix(",") ? key : ",\(key)"
     }
 
     private static func insertion(titled title: String?) -> String {

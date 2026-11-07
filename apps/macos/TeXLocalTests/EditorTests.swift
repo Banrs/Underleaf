@@ -439,3 +439,16 @@ struct EditorTests {
         return found
     }
 }
+
+@MainActor
+struct CitingTests {
+    @Test func aKeyJoinsTheCitationTheCaretIsInElseGetsItsOwn() {
+        let cite = { SourceEditor.citing("k", after: $0) }
+        #expect(cite("as shown ") == "\\cite{k}")
+        #expect(cite("\\cite{") == "k")
+        #expect(cite("\\citep[p.~3]{a") == ",k")
+        #expect(cite("\\parencite{a, ") == "k")
+        #expect(cite("\\textcite*{a,") == "k")
+        #expect(cite("\\cite{a} and ") == "\\cite{k}")
+    }
+}

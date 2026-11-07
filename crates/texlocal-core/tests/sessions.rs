@@ -1951,3 +1951,63 @@ async fn linked_sources_reload_after_external_edits_and_retargeting_the_folder()
     take_reload(&rig, &doc);
     assert_eq!(doc.with(|source| source.text()), "second edited\n");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fetched_citation_is_added_to_the_named_bibliography_once() {
+    let rig = Rig::open(&[
+        ("main.tex", "\\cite{x}\n\\bibliography{refs}\n"),
+        ("refs.bib", "@book{knuth1984, title = {The TeXbook}}"),
+        ("other.bib", ""),
+    ])
+    .await;
+    rig.open_document("main.tex");
+    rig.section("outline", |o| !o.is_null());
+    let fetched = "@article{Abbott_2016, title={Observation of Gravitational Waves}, \
+                   DOI={10.1103/PhysRevLett.116.061102}, author={Abbott, B. P.}, year={2016}}";
+    let added = rig.call("AddCitation", json!({ "entry": fetched }));
+    assert_eq!(added["key"], "abbott2016observation");
+    assert_eq!(added["file"], "refs.bib");
+    assert!(!added["edits"].is_null());
+    let bib = fs::read_to_string(rig.root().join("refs.bib")).unwrap();
+    assert!(
+        bib.starts_with(
+            "@book{knuth1984, title = {The TeXbook}}\n\n@article{abbott2016observation,\n  author"
+        ),
+        "{bib}"
+    );
+    let again = rig.call(
+        "AddCitation",
+        json!({ "entry": fetched.replace("PhysRevLett", "physrevlett") }),
+    );
+    assert_eq!(
+        (again["key"].as_str(), again["edits"].is_null()),
+        (Some("abbott2016observation"), true)
+    );
+    assert_eq!(
+        fs::read_to_string(rig.root().join("refs.bib")).unwrap(),
+        bib
+    );
+    assert_eq!(
+        rig.refuse("AddCitation", json!({ "entry": "<html>" })),
+        ErrorKind::Invalid
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_without_a_bibliography_gets_one_for_a_fetched_citation() {
+    let rig = Rig::open(&[("main.tex", "Text.\n")]).await;
+    rig.open_document("main.tex");
+    let added = rig.call(
+        "AddCitation",
+        json!({ "entry": "@misc{k, author={Ada Lovelace}, title={Notes}, year={1843}}" }),
+    );
+    assert_eq!(
+        (added["key"].as_str(), added["file"].as_str()),
+        (Some("lovelace1843notes"), Some("references.bib"))
+    );
+    let bib = fs::read_to_string(rig.root().join("references.bib")).unwrap();
+    assert_eq!(
+        bib,
+        "@misc{lovelace1843notes,\n  author = {Ada Lovelace},\n  title = {Notes},\n  year = {1843}\n}\n"
+    );
+}

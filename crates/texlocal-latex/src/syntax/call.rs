@@ -9,6 +9,7 @@ use super::snippet::Tabbing;
 use super::style::TextStyles;
 use super::typing::Keystroke;
 use super::{Checker, Insertion, SourceDocument, TextEdit, TextRange};
+use crate::cite::{CitationSource, citation_source};
 use crate::logparse::{LogKind, log_kinds};
 use crate::protocol::calls;
 
@@ -50,5 +51,6 @@ calls! {
         HeadingStyles {} -> Vec<HeadingStyle> = heading_styles(None);
         IncludeGraphics { path: String, into: String } -> Option<String> = include_graphics(&path, &into);
         LogKinds { log: String } -> Vec<LogKind> = log_kinds(&log);
+        LocateCitation { text: String } -> Option<CitationSource> = citation_source(&text);
     }
 }

@@ -400,6 +400,30 @@ final class ProjectModel {
         try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), named: String(localized: "Rename"))
     }
 
+    /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
+    func addCitation(_ source: CitationSource) async throws {
+        guard let url = URL(string: source.url) else { throw AppFailure(String(localized: "“\(source.id)” isn’t a DOI or arXiv ID.")) }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue(source.accept, forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status), let fetched = String(data: data, encoding: .utf8) else {
+            throw AppFailure(status == 404 ? String(localized: "No record of “\(source.id)” was found at \(url.host() ?? "").")
+                             : String(localized: "\(url.host() ?? "") couldn’t be reached (HTTP \(status)). Try again later."))
+        }
+        let added = try await session.call(AddCitation(entry: fetched))
+        let name = String(localized: "Add Citation")
+        if let edits = added.edits, !apply(edits.edits, named: name) {
+            if let snapshot = edits.snapshot, !edits.written.isEmpty {
+                try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
+            }
+            throw Self.unchanged
+        }
+        views?.perform(.cite(added.key))
+        notices.note(added.edits == nil ? String(localized: "Cited “\(added.key)” from “\(added.file)”")
+                     : String(localized: "Added “\(added.key)” to “\(added.file)”"))
+    }
+
     func saveVersion(named name: String) async throws {
         if let saved = try await session.call(SaveVersion(name: name)) { notices.note(String(localized: "Saved Version “\(saved.title)”")) }
     }

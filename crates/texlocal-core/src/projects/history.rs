@@ -43,6 +43,8 @@ pub enum Reason {
     #[serde(alias = "Before Restore")]
     #[schemars(title = "Before Restore")]
     Restore,
+    #[schemars(title = "Before Adding a Citation")]
+    AddCitation,
 }
 
 #[derive(Serialize, Deserialize)]

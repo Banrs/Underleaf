@@ -82,6 +82,8 @@ struct WorkspaceModals: ViewModifier {
                     SaveVersionSheet(project: project)
                 case .versionHistory:
                     VersionHistorySheet(project: project)
+                case .addCitation:
+                    CitationSheet(project: project)
                 }
             }
     }
@@ -105,6 +107,28 @@ private struct GoToSheet: View {
             if let number { go(number) }
         } fields: {
             DialogField(label: noun, text: $text, prompt: limit().map { "1–\($0)" } ?? "\(noun) number", focus: $focused)
+        }
+        .defaultFocus($focused, true)
+    }
+}
+
+private struct CitationSheet: View {
+    let project: ProjectModel
+    @State private var text = Self.pasted ?? ""
+    @FocusState private var focused: Bool
+
+    private static var pasted: String? {
+        NSPasteboard.general.string(forType: .string).flatMap { Syntax.call(LocateCitation(text: $0)) ?? nil }?.id
+    }
+
+    var body: some View {
+        let source = Syntax.call(LocateCitation(text: text)) ?? nil
+        DialogSheet(title: "Add Citation",
+                    message: "TeXLocal fetches the BibTeX from doi.org or arxiv.org, adds it to the project’s bibliography and cites it where the cursor is.",
+                    action: "Add", enabled: source != nil) {
+            if let source { try await project.addCitation(source) }
+        } fields: {
+            DialogField(label: "DOI or arXiv ID", text: $text, prompt: "10.1103/PhysRevLett.116.061102", focus: $focused)
         }
         .defaultFocus($focused, true)
     }
