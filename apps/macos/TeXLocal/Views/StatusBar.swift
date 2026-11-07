@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum BarMetrics {
@@ -5,6 +6,58 @@ enum BarMetrics {
     static let target: CGFloat = 20
     static let inset: CGFloat = 8
     static let symbolWidth: CGFloat = 30
+
+    /// The bar's top edge uses the thin split divider's colour and thickness, which follow Increase Contrast, so it
+    /// matches the dividers it meets.
+    static let edge: (color: NSColor, thickness: CGFloat) = {
+        let split = NSSplitView()
+        split.dividerStyle = .thin
+        return (split.dividerColor, split.dividerThickness)
+    }()
+}
+
+/// Xcode's spacing: 14 pt to the first item, 16 between items and 9 before the divider; an icon 4 pt from its text, as
+/// in an AppKit button.
+private enum Spacing {
+    static let lead: CGFloat = 14
+    static let items: CGFloat = 16
+    static let group: CGFloat = 8
+    static let divider: CGFloat = 9
+    static let icon: CGFloat = 4
+}
+
+private struct BarLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Spacing.icon) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
+private extension LabelStyle where Self == BarLabelStyle {
+    static var bar: BarLabelStyle { BarLabelStyle() }
+}
+
+/// The hover of Xcode's debug-bar buttons: a 20 pt capsule reaching 5 pt past the label at each end, filled like the
+/// path control's highlight. It's drawn outside the button's frame, so the labels keep Xcode's spacing.
+private struct BarHover: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, Self.overhang)
+            .background {
+                if isEnabled, hovering {
+                    Capsule().fill(.primary.opacity(0.05)).frame(height: BarMetrics.target)
+                }
+            }
+            .onHover { hovering = $0 }
+            .padding(.horizontal, -Self.overhang)
+    }
+
+    private static let overhang: CGFloat = 5
 }
 
 struct StatusBar: View {
@@ -13,11 +66,13 @@ struct StatusBar: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            content(.full).labelStyle(.titleAndIcon)
+            content(.full).labelStyle(.bar)
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
         .barRow()
+        .padding(.top, BarMetrics.edge.thickness)
+        .barEdge()
         .contentShape(.rect)
         .monospacedDigit()
         .buttonStyle(.borderless)
@@ -27,23 +82,26 @@ struct StatusBar: View {
     fileprivate enum Detail { case full, symbols, short }
 
     private func content(_ detail: Detail) -> some View {
-        HStack(spacing: 9) {
-            BuildStatus(project: project, detail: detail)
-            LiveStatus(project: project)
-            SaveStatus(project: project)
-            if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
-            Spacer(minLength: 0)
-            HStack(spacing: 16) {
+        HStack(spacing: 0) {
+            HStack(spacing: Spacing.items) {
+                BuildStatus(project: project, detail: detail)
+                LiveStatus(project: project)
+                SaveStatus(project: project)
+                if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: Spacing.items)
+            HStack(spacing: Spacing.items) {
                 CaretPlace(project: project, detail: detail)
                 WordCount(project: project, detail: detail)
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            HStack(spacing: 0) {
-                if window.showSource && project.editsText || PagePlace.shows(project, window) { Divider().frame(height: 12) }
-                PanelToggle(project: project)
+            if window.showSource && project.editsText || PagePlace.shows(project, window) {
+                Divider().frame(height: 12).padding(.leading, Spacing.divider)
             }
+            PanelToggle(project: project)
         }
+        .padding(.leading, Spacing.lead - BarMetrics.inset)
     }
 }
 
@@ -54,8 +112,10 @@ private struct BuildStatus: View {
 
     var body: some View {
         Button { project.showNavigator(.issues) } label: {
-            label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget()
+            // Leading, so the bar's first item starts at its lead however short its label.
+            label.fixedSize(horizontal: detail != .short, vertical: true).hitTarget(alignment: .leading)
         }
+        .barHover()
         .help("Show issues")
     }
 
@@ -69,7 +129,7 @@ private struct BuildStatus: View {
     }
 
     private var label: some View {
-        HStack {
+        HStack(spacing: Spacing.group) {
             if let state {
                 if let symbol = state.symbol {
                     badge(state.title, symbol, state.color)
@@ -104,7 +164,7 @@ private struct BuildStatus: View {
                 .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)
         }
-        .labelStyle(.titleAndIcon)
+        .labelStyle(.bar)
     }
 }
 
@@ -126,6 +186,7 @@ private struct LiveStatus: View {
                 }
                 .hitTarget()
             }
+            .barHover()
             .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }
                   ?? "Show the Live Preview log")
         }
@@ -142,6 +203,7 @@ private struct SaveStatus: View {
                     .symbolRenderingMode(.multicolor)
                     .hitTarget()
             }
+            .barHover()
             .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
         }
     }
@@ -159,6 +221,7 @@ private struct CaretPlace: View {
                       short: "\(project.cursorLine):\(project.shownColumn)",
                       spoken: "Line \(project.cursorLine), Column \(project.shownColumn)")
             }
+            .barHover()
             .help("Go to a line")
         }
     }
@@ -207,6 +270,7 @@ private struct PagePlace: View {
                 let (page, count) = (views.pdf.page, views.pdf.pageCount)
                 place(detail, "Page \(String(page)) of \(String(count))", short: "\(page)/\(count)", spoken: "Page \(page) of \(count)")
             }
+            .barHover()
             .help("Go to a page")
         }
     }
@@ -216,11 +280,13 @@ private struct PagePlace: View {
             Button { project.showNavigator(.issues) } label: {
                 Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").hitTarget()
             }
+            .barHover()
             .help("The latest build failed, so this is the last PDF that built")
         } else if project.outdated, !project.livePDF, !window.app.autoCompile {
             Button { window.perform(.compileRun, on: project) } label: {
                 Label("PDF Out of Date", systemImage: "arrow.clockwise").hitTarget()
             }
+            .barHover()
             .help("The PDF is older than the source; compile to refresh it")
             .disabled(!window.app.isEnabled(.compileRun, on: project))
         }
@@ -259,11 +325,19 @@ extension View {
 
     func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
 
-    fileprivate func hitTarget() -> some View { frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect) }
+    fileprivate func barHover() -> some View { modifier(BarHover()) }
+
+    fileprivate func hitTarget(alignment: Alignment = .center) -> some View {
+        frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target, alignment: alignment).contentShape(.rect)
+    }
 }
 
+/// The divider colour is translucent, so it's drawn over the window background, as split view dividers are. Over the
+/// scroll edge's line it came out a step lighter than the dividers it meets.
 private struct Hairline: View {
-    @Environment(\.displayScale) private var scale
-
-    var body: some View { Rectangle().fill(.separator).frame(height: 1 / scale) }
+    var body: some View {
+        Rectangle().fill(Color(nsColor: BarMetrics.edge.color))
+            .background(Color(nsColor: .untintedTextBackground))
+            .frame(height: BarMetrics.edge.thickness)
+    }
 }

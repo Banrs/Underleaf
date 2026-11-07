@@ -16,8 +16,8 @@ nonisolated struct LivePages {
 }
 
 extension PDFController {
-    /// Measured on 392 pages, a swap takes 7–15 ms on the main thread and replacing a page 1–2 ms, so beyond this many
-    /// changed pages the whole document is shown instead.
+    /// Past this many changed pages, showing the whole new document is cheaper: a swap costs 7–15 ms on the main thread
+    /// and replacing a page 1–2 ms.
     static let changedInPlace = 8
 
     var liveReading: Task<Void, Never>? { feed.reading }

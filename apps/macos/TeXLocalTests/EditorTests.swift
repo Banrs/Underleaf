@@ -36,7 +36,7 @@ struct EditorTests {
         #expect(document.text == "one\n2")
         #expect(document.lineCount == 2)
         #expect(document.line(at: 4) == 2)
-        #expect(document.version == nil)
+        #expect(document.version == 1)
     }
 
     @Test func aRefusedCallReloadsTheCoresCopyFromTheEditorsTextAndANullAnswerDoesNot() {
@@ -114,6 +114,16 @@ struct EditorTests {
         Self.type("ab", in: text)
         #expect(text.string == "\\begin{xab}\n\\end{xab}" && text.document.text == text.string)
         #expect(text.selection == .caret(20))
+    }
+
+    @Test func aPairTypedInAnEndsNamePutsTheCaretInsideItOnceItsBeginIsMirrored() {
+        let (editor, window) = Self.editor("\\begin{x}\n\\end{x}")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(16)
+        Self.type("(", in: text)
+        #expect(text.string == "\\begin{x()}\n\\end{x()}" && text.document.text == text.string)
+        #expect(text.selection == .caret(19))
     }
 
     @Test func acceptingACompletionInAnEndsNameLeavesTheCaretAfterItOnceItsBeginIsMirrored() throws {
@@ -245,6 +255,39 @@ struct EditorTests {
         #expect(text.string == "xy b xy b" && text.document.text == text.string)
         text.undo.undo()
         #expect(text.string == "a b a b" && text.document.text == text.string)
+    }
+
+    @Test func aChangeOfSeveralEditsKeepsAFoldBetweenThemAndTheCoresCopyThroughUndoAndRedo() {
+        let source = "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter"
+        let (editor, window) = Self.editor(source)
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(21)
+        text.foldAtCaret()
+        #expect(text.folds.ranges == [NSRange(location: 16, length: 16)])
+        text.selection = .caret(0)
+        text.apply([TextEdit(.caret(0), "% "), TextEdit(.caret(46), "% ")], named: "Comment")
+        #expect(text.string == "% " + source.replacingOccurrences(of: "\nafter", with: "\n% after") && text.document.text == text.string)
+        #expect(text.folds.ranges == [NSRange(location: 18, length: 16)] && text.undo.undoActionName == "Comment")
+        text.undo.undo()
+        #expect(text.string == source && text.document.text == source && text.folds.ranges == [NSRange(location: 16, length: 16)])
+        #expect(text.selection == .caret(0))
+        text.undo.redo()
+        #expect(text.string.hasPrefix("% ") && text.document.text == text.string && text.folds.ranges == [NSRange(location: 18, length: 16)])
+    }
+
+    @Test func typingOnAfterAChangeOfSeveralEditsUndoesApartFromIt() {
+        let (editor, window) = Self.editor("\nz")
+        defer { window.close() }
+        let text = editor.textView
+        Self.type("ab", in: text)
+        text.apply([TextEdit(.caret(3), "% ")], named: "Comment")
+        Self.type("c", in: text)
+        #expect(text.string == "abc\n% z")
+        text.undo.undo()
+        #expect(text.string == "ab\n% z" && text.document.text == text.string)
+        text.undo.undo()
+        #expect(text.string == "ab\nz" && text.document.text == text.string)
     }
 
     @Test func aWrappedLineContinuesUnderItsIndentation() throws {

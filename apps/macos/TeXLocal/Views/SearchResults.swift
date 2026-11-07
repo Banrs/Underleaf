@@ -32,9 +32,10 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         matchCase.setAccessibilityLabel(String(localized: "Match Case"))
         (matchCase.target, matchCase.action) = (self, #selector(toggleCase))
 
+        // Small fields with 11 pt text, as in Xcode's Find navigator.
         for field in [query, replacement] {
-            field.controlSize = .regular
-            field.font = .systemFont(ofSize: NSFont.systemFontSize)
+            field.controlSize = .small
+            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             field.sendsSearchStringImmediately = true
             field.delegate = self
             (field.target, field.action) = (self, #selector(edited(_:)))
@@ -73,11 +74,12 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
             (query, replacement, usages) = (search.query, search.replacement, search.usages?.name)
             (replacing, matchCase, wholeWords) = (search.replacing && usages == nil, search.asked.matchCase, search.asked.wholeWords)
             (hits, files, total) = (groups.reduce(0) { $0 + $1.hits.count }, groups.count, search.hitCount)
-            (chosen, filtered, visible) = (search.chosen != nil, !project.navigator.searchFilter.isEmpty, project.navigator.shown == .search)
+            chosen = search.chosen.map { chosen in groups.contains { $0.hits.contains { $0.id == chosen } } } ?? false
+            (filtered, visible) = (!project.navigator.searchFilter.isEmpty, project.navigator.shown == .search)
         }
     }
 
-    /// Shows the model now, rather than when the watch next runs, so SwiftUI measures the rows it shows.
+    /// Shows the model now, not on the watch's next run, so SwiftUI measures the rows it shows.
     func refresh() { show(Shown(project)) }
 
     private func show(_ shown: Shown) {
@@ -125,10 +127,11 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
         matchCase.frame = NSRect(x: width - 8 - 21, y: crumb.frame.minY + 2, width: 21, height: 16)
         var y = Self.row + 2
-        query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field)
+        // 22 pt fields, 1 pt inside each 24 pt row, as in Xcode.
+        query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
         y += Self.field
         if shown?.replacing == true {
-            replacement.frame = NSRect(x: 6, y: y + 6, width: width - 12, height: Self.field)
+            replacement.frame = NSRect(x: 6, y: y + 6, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
             y += 6 + Self.field + 6
             let all = replaceAll.intrinsicContentSize.width, one = replace.intrinsicContentSize.width
             replaceAll.frame = NSRect(x: width - 6 - all, y: y, width: all, height: Self.button)
@@ -205,6 +208,8 @@ struct SearchResults: View {
                                            description: Text(failure))
                 } else if project.search.groups?.isEmpty == true {
                     ContentUnavailableView.search(text: project.search.searched.query)
+                } else if groups.isEmpty, project.search.groups != nil {
+                    NoFilterResults()
                 }
             }
             .onChange(of: project.search.searched) { folded = [] }

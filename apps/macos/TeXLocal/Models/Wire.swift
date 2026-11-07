@@ -16,24 +16,6 @@ nonisolated struct Done: Decodable, Hashable, Sendable {
     }
 }
 
-nonisolated struct WireKey: CodingKey {
-    let stringValue: String
-    var intValue: Int? { nil }
-
-    init(stringValue: String) { self.stringValue = stringValue }
-    init?(intValue: Int) { nil }
-}
-
-nonisolated extension Decoder {
-    func strict<Key: CodingKey & CaseIterable>(_: Key.Type) throws -> KeyedDecodingContainer<Key> {
-        let known = Set(Key.allCases.map(\.stringValue))
-        if let unknown = try container(keyedBy: WireKey.self).allKeys.first(where: { !known.contains($0.stringValue) }) {
-            throw DecodingError.dataCorrupted(.init(codingPath: codingPath + [unknown], debugDescription: "Unknown key"))
-        }
-        return try container(keyedBy: Key.self)
-    }
-}
-
 nonisolated protocol LibraryRequest: WireRequest {}
 
 nonisolated protocol SessionRequest: WireRequest {}
@@ -46,29 +28,18 @@ nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
     var headingStyles: [HeadingStyle]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case tree, words, headingStyles }
-}
-
-nonisolated extension Analysis {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        tree = try wire.decode([OutlineNode].self, forKey: .tree)
-        words = try wire.decode(Int.self, forKey: .words)
-        headingStyles = try wire.decode([HeadingStyle].self, forKey: .headingStyles)
-    }
 }
 
 nonisolated enum Answered<Payload: Decodable & Sendable>: Decodable, Sendable {
     case ok(Payload)
     case error(CoreError)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension Answered {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "ok": self = .ok(try wire.decode(Payload.self, forKey: .value))
         case "error": self = .error(try wire.decode(CoreError.self, forKey: .value))
@@ -87,16 +58,6 @@ nonisolated struct ApplyFix: SessionRequest {
 nonisolated struct BuildFinished: Decodable, Hashable, Sendable {
     var auto: Bool
     var announce: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case auto, announce }
-}
-
-nonisolated extension BuildFinished {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        auto = try wire.decode(Bool.self, forKey: .auto)
-        announce = try wire.decode(Bool.self, forKey: .announce)
-    }
 }
 
 nonisolated struct BuildState: Decodable, Hashable, Sendable {
@@ -106,35 +67,11 @@ nonisolated struct BuildState: Decodable, Hashable, Sendable {
     var result: CompileResult?
     var issues: [LogItem]
     var lines: [String: [IssueLine]]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case compiling, auto, outdated, result, issues, lines }
-}
-
-nonisolated extension BuildState {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        compiling = try wire.decode(Bool.self, forKey: .compiling)
-        auto = try wire.decode(Bool.self, forKey: .auto)
-        outdated = try wire.decode(Bool.self, forKey: .outdated)
-        result = try wire.decode(CompileResult?.self, forKey: .result)
-        issues = try wire.decode([LogItem].self, forKey: .issues)
-        lines = try wire.decode([String: [IssueLine]].self, forKey: .lines)
-    }
 }
 
 nonisolated struct Change: Decodable, Hashable, Sendable {
     var edits: [TextEdit]
     var selections: [TextRange]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case edits, selections }
-}
-
-nonisolated extension Change {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        edits = try wire.decode([TextEdit].self, forKey: .edits)
-        selections = try wire.decode([TextRange].self, forKey: .selections)
-    }
 }
 
 nonisolated enum ChangeKind: String, Decodable, CaseIterable, Hashable, Sendable {
@@ -144,16 +81,6 @@ nonisolated enum ChangeKind: String, Decodable, CaseIterable, Hashable, Sendable
 nonisolated struct ChangedFile: Decodable, Hashable, Sendable {
     var path: String
     var change: ChangeKind
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, change }
-}
-
-nonisolated extension ChangedFile {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        change = try wire.decode(ChangeKind.self, forKey: .change)
-    }
 }
 
 nonisolated struct CheckTex: LibraryRequest {
@@ -168,16 +95,6 @@ nonisolated enum Checker: String, Encodable, CaseIterable, Hashable, Sendable {
 nonisolated struct Clash: Decodable, Hashable, Sendable {
     var path: String
     var keepBoth: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, keepBoth }
-}
-
-nonisolated extension Clash {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        keepBoth = try wire.decode(String.self, forKey: .keepBoth)
-    }
 }
 
 nonisolated struct Clean: SessionRequest {
@@ -188,6 +105,8 @@ nonisolated struct Clean: SessionRequest {
 nonisolated struct CloseProject: SessionRequest {
     typealias Reply = Bool
     static let command = "CloseProject"
+
+    var discard: Bool?
 }
 
 nonisolated struct CodeRanges: SourceRequest {
@@ -219,19 +138,6 @@ nonisolated struct CompileResult: Decodable, Hashable, Sendable {
     var durationMs: UInt64
     var pdf: String?
     var badBoxes: [LogItem]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case ok, stopped, durationMs, pdf, badBoxes }
-}
-
-nonisolated extension CompileResult {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        ok = try wire.decode(Bool.self, forKey: .ok)
-        stopped = try wire.decode(Bool.self, forKey: .stopped)
-        durationMs = try wire.decode(UInt64.self, forKey: .durationMs)
-        pdf = try wire.decode(String?.self, forKey: .pdf)
-        badBoxes = try wire.decode([LogItem].self, forKey: .badBoxes)
-    }
 }
 
 nonisolated struct Complete: SourceRequest {
@@ -251,50 +157,17 @@ nonisolated struct Completion: Decodable, Hashable, Sendable {
     var text: String
     var fields: [SnippetField]
     var detail: String?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case label, text, fields, detail }
-}
-
-nonisolated extension Completion {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        label = try wire.decode(String.self, forKey: .label)
-        text = try wire.decode(String.self, forKey: .text)
-        fields = try wire.decode([SnippetField].self, forKey: .fields)
-        detail = try wire.decodeIfPresent(String.self, forKey: .detail)
-    }
 }
 
 nonisolated struct Completions: Decodable, Hashable, Sendable {
     var start: Int
     var kind: SymbolKind
     var items: [Completion]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case start, kind, items }
-}
-
-nonisolated extension Completions {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        start = try wire.decode(Int.self, forKey: .start)
-        kind = try wire.decode(SymbolKind.self, forKey: .kind)
-        items = try wire.decode([Completion].self, forKey: .items)
-    }
 }
 
 nonisolated struct CoreError: Decodable, Hashable, Sendable {
     var kind: ErrorKind
     var message: Message
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case kind, message }
-}
-
-nonisolated extension CoreError {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        kind = try wire.decode(ErrorKind.self, forKey: .kind)
-        message = try wire.decode(Message.self, forKey: .message)
-    }
 }
 
 nonisolated struct CreateEntry: SessionRequest {
@@ -319,17 +192,6 @@ nonisolated struct Definition: Decodable, Hashable, Sendable {
     var kind: SymbolKind
     var name: String
     var places: [FilePlace]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case kind, name, places }
-}
-
-nonisolated extension Definition {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        kind = try wire.decode(SymbolKind.self, forKey: .kind)
-        name = try wire.decode(String.self, forKey: .name)
-        places = try wire.decode([FilePlace].self, forKey: .places)
-    }
 }
 
 nonisolated struct DefinitionAt: SourceRequest {
@@ -360,12 +222,12 @@ nonisolated enum DiffLine: Decodable, Hashable, Sendable {
     case added(String)
     case skipped(Int)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension DiffLine {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "same": self = .same(try wire.decode(String.self, forKey: .value))
         case "removed": self = .removed(try wire.decode(String.self, forKey: .value))
@@ -384,17 +246,6 @@ nonisolated struct DocumentEdits: Decodable, Hashable, Sendable {
     var path: String
     var version: UInt64
     var edits: [TextEdit]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, version, edits }
-}
-
-nonisolated extension DocumentEdits {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        version = try wire.decode(UInt64.self, forKey: .version)
-        edits = try wire.decode([TextEdit].self, forKey: .edits)
-    }
 }
 
 nonisolated struct DocumentState: Decodable, Hashable, Sendable {
@@ -402,18 +253,6 @@ nonisolated struct DocumentState: Decodable, Hashable, Sendable {
     var error: Message?
     var conflict: DiskConflict?
     var asking: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, error, conflict, asking }
-}
-
-nonisolated extension DocumentState {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        error = try wire.decode(Message?.self, forKey: .error)
-        conflict = try wire.decode(DiskConflict?.self, forKey: .conflict)
-        asking = try wire.decode(Bool.self, forKey: .asking)
-    }
 }
 
 nonisolated struct DuplicateLines: SourceRequest {
@@ -463,12 +302,12 @@ nonisolated enum Event: Decodable, Hashable, Sendable {
     case liveDocument(LiveDocument)
     case liveFollow(ForwardLoc)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension Event {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "section": self = .section(try wire.decode(SessionSection.self, forKey: .value))
         case "reload": self = .reload(try wire.decode(DocumentEdits.self, forKey: .value))
@@ -501,18 +340,6 @@ nonisolated struct FilePlace: Decodable, Hashable, Sendable {
     var line: Int
     var column: Int
     var length: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case file, line, column, length }
-}
-
-nonisolated extension FilePlace {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        file = try wire.decode(String.self, forKey: .file)
-        line = try wire.decode(Int.self, forKey: .line)
-        column = try wire.decode(Int.self, forKey: .column)
-        length = try wire.decode(Int.self, forKey: .length)
-    }
 }
 
 nonisolated struct FindUsages: SessionRequest {
@@ -528,46 +355,15 @@ nonisolated struct Fix: Decodable, Hashable, Sendable {
     var title: Message
     var help: Message
     var confirm: Message?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case id, title, help, confirm }
-}
-
-nonisolated extension Fix {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        id = try wire.decode(String.self, forKey: .id)
-        title = try wire.decode(Message.self, forKey: .title)
-        help = try wire.decode(Message.self, forKey: .help)
-        confirm = try wire.decodeIfPresent(Message.self, forKey: .confirm)
-    }
 }
 
 nonisolated struct Fixed: Decodable, Hashable, Sendable {
     var edits: DocumentEdits?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case edits }
-}
-
-nonisolated extension Fixed {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        edits = try wire.decode(DocumentEdits?.self, forKey: .edits)
-    }
 }
 
 nonisolated struct Fold: Decodable, Hashable, Sendable {
     var line: Int
     var end: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case line, end }
-}
-
-nonisolated extension Fold {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        line = try wire.decode(Int.self, forKey: .line)
-        end = try wire.decode(Int.self, forKey: .end)
-    }
 }
 
 nonisolated struct Folds: SourceRequest {
@@ -589,20 +385,6 @@ nonisolated struct ForwardLoc: Decodable, Hashable, Sendable {
     var width: Double?
     var height: Double?
     var matches: [ForwardLoc]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case page, h, v, width, height, matches }
-}
-
-nonisolated extension ForwardLoc {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        page = try wire.decode(Double.self, forKey: .page)
-        h = try wire.decode(Double?.self, forKey: .h)
-        v = try wire.decode(Double?.self, forKey: .v)
-        width = try wire.decode(Double?.self, forKey: .width)
-        height = try wire.decode(Double?.self, forKey: .height)
-        matches = try wire.decode([ForwardLoc].self, forKey: .matches)
-    }
 }
 
 nonisolated struct FreeProjectName: LibraryRequest {
@@ -617,35 +399,11 @@ nonisolated struct Heading: Decodable, Hashable, Sendable {
     var untitled: Bool
     var line: Int
     var file: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case command, level, title, untitled, line, file }
-}
-
-nonisolated extension Heading {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        command = try wire.decode(String.self, forKey: .command)
-        level = try wire.decode(String.self, forKey: .level)
-        title = try wire.decode(String.self, forKey: .title)
-        untitled = try wire.decode(Bool.self, forKey: .untitled)
-        line = try wire.decode(Int.self, forKey: .line)
-        file = try wire.decode(String.self, forKey: .file)
-    }
 }
 
 nonisolated struct HeadingStyle: Decodable, Hashable, Sendable {
     var title: String
     var command: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case title, command }
-}
-
-nonisolated extension HeadingStyle {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        title = try wire.decode(String.self, forKey: .title)
-        command = try wire.decode(String.self, forKey: .command)
-    }
 }
 
 nonisolated struct HeadingStyles: SyntaxRequest {
@@ -676,15 +434,6 @@ nonisolated struct ImportFiles: SessionRequest {
 
 nonisolated struct Imported: Decodable, Hashable, Sendable {
     var existing: [Clash]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case existing }
-}
-
-nonisolated extension Imported {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        existing = try wire.decode([Clash].self, forKey: .existing)
-    }
 }
 
 nonisolated struct IncludeGraphics: SyntaxRequest {
@@ -730,17 +479,6 @@ nonisolated struct Insertion: Decodable, Hashable, Sendable {
     var edit: TextEdit
     var caret: Int
     var fields: [SnippetField]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case edit, caret, fields }
-}
-
-nonisolated extension Insertion {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        edit = try wire.decode(TextEdit.self, forKey: .edit)
-        caret = try wire.decode(Int.self, forKey: .caret)
-        fields = try wire.decode([SnippetField].self, forKey: .fields)
-    }
 }
 
 nonisolated struct InstallTex: LibraryRequest {
@@ -752,17 +490,6 @@ nonisolated struct InverseLoc: Decodable, Hashable, Sendable {
     var file: String
     var line: Int
     var column: Int?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case file, line, column }
-}
-
-nonisolated extension InverseLoc {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        file = try wire.decode(String.self, forKey: .file)
-        line = try wire.decode(Int.self, forKey: .line)
-        column = try wire.decode(Int?.self, forKey: .column)
-    }
 }
 
 nonisolated struct IssueLine: Decodable, Hashable, Sendable {
@@ -774,22 +501,6 @@ nonisolated struct IssueLine: Decodable, Hashable, Sendable {
     var tokens: [TextRange]
     var others: [Message]
     var index: Int?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case line, error, message, short, compact, tokens, others, index }
-}
-
-nonisolated extension IssueLine {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        line = try wire.decode(Int.self, forKey: .line)
-        error = try wire.decode(Bool.self, forKey: .error)
-        message = try wire.decode(Message.self, forKey: .message)
-        short = try wire.decode(Message.self, forKey: .short)
-        compact = try wire.decode(Message?.self, forKey: .compact)
-        tokens = try wire.decode([TextRange].self, forKey: .tokens)
-        others = try wire.decode([Message].self, forKey: .others)
-        index = try wire.decode(Int?.self, forKey: .index)
-    }
 }
 
 nonisolated struct Keystroke: Decodable, Hashable, Sendable {
@@ -797,18 +508,6 @@ nonisolated struct Keystroke: Decodable, Hashable, Sendable {
     var selection: TextRange?
     var partner: Int?
     var completions: Completing
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case edit, selection, partner, completions }
-}
-
-nonisolated extension Keystroke {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        edit = try wire.decode(TextEdit?.self, forKey: .edit)
-        selection = try wire.decode(TextRange?.self, forKey: .selection)
-        partner = try wire.decode(Int?.self, forKey: .partner)
-        completions = try wire.decode(Completing.self, forKey: .completions)
-    }
 }
 
 nonisolated struct KillAll: LibraryRequest {
@@ -820,12 +519,12 @@ nonisolated enum LibrarySection: Decodable, Hashable, Sendable {
     case projects([ProjectInfo])
     case tex(TexStatus)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension LibrarySection {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "projects": self = .projects(try wire.decode([ProjectInfo].self, forKey: .value))
         case "tex": self = .tex(try wire.decode(TexStatus.self, forKey: .value))
@@ -840,12 +539,12 @@ nonisolated enum Lifecycle: Decodable, Hashable, Sendable {
     case closed
     case stopped(Stopped)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension Lifecycle {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "open": self = .open
         case "closing": self = .closing
@@ -869,16 +568,6 @@ nonisolated struct ListVersions: SessionRequest {
 nonisolated struct LiveDocument: Decodable, Hashable, Sendable {
     var path: String
     var changed: [PageRange]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, changed }
-}
-
-nonisolated extension LiveDocument {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        changed = try wire.decode([PageRange].self, forKey: .changed)
-    }
 }
 
 nonisolated struct LiveLog: SessionRequest {
@@ -891,16 +580,6 @@ nonisolated struct LiveLog: SessionRequest {
 nonisolated struct LivePage: Decodable, Hashable, Sendable {
     var page: Int
     var pdf: Data
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case page, pdf }
-}
-
-nonisolated extension LivePage {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        page = try wire.decode(Int.self, forKey: .page)
-        pdf = try wire.decode(Data.self, forKey: .pdf)
-    }
 }
 
 nonisolated enum LivePhase: String, Decodable, CaseIterable, Hashable, Sendable {
@@ -914,20 +593,6 @@ nonisolated struct LiveState: Decodable, Hashable, Sendable {
     var attention: Bool
     var failures: [Message]
     var lines: [String: [IssueLine]]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case phase, engine, halted, attention, failures, lines }
-}
-
-nonisolated extension LiveState {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        phase = try wire.decode(LivePhase.self, forKey: .phase)
-        engine = try wire.decode(Engine.self, forKey: .engine)
-        halted = try wire.decode(Bool.self, forKey: .halted)
-        attention = try wire.decode(Bool.self, forKey: .attention)
-        failures = try wire.decode([Message].self, forKey: .failures)
-        lines = try wire.decode([String: [IssueLine]].self, forKey: .lines)
-    }
 }
 
 nonisolated struct LiveView: SessionRequest {
@@ -941,16 +606,6 @@ nonisolated struct LiveView: SessionRequest {
 nonisolated struct Log: Decodable, Hashable, Sendable {
     var level: LogLevel
     var text: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case level, text }
-}
-
-nonisolated extension Log {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        level = try wire.decode(LogLevel.self, forKey: .level)
-        text = try wire.decode(String.self, forKey: .text)
-    }
 }
 
 nonisolated struct LogItem: Decodable, Hashable, Sendable {
@@ -960,20 +615,18 @@ nonisolated struct LogItem: Decodable, Hashable, Sendable {
     var message: Message
     var explain: Message?
     var fix: Fix?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case kind, file, line, message, explain, fix }
+    var topic: Topic?
 }
 
-nonisolated extension LogItem {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        kind = try wire.decode(Severity.self, forKey: .kind)
-        file = try wire.decode(String?.self, forKey: .file)
-        line = try wire.decode(Int?.self, forKey: .line)
-        message = try wire.decode(Message.self, forKey: .message)
-        explain = try wire.decodeIfPresent(Message.self, forKey: .explain)
-        fix = try wire.decodeIfPresent(Fix.self, forKey: .fix)
-    }
+nonisolated enum LogKind: String, Decodable, CaseIterable, Hashable, Sendable {
+    case error, warning, badBox, info
+}
+
+nonisolated struct LogKinds: SyntaxRequest {
+    typealias Reply = [LogKind]
+    static let command = "LogKinds"
+
+    var log: String
 }
 
 nonisolated enum LogLevel: String, Decodable, CaseIterable, Hashable, Sendable {
@@ -1007,66 +660,23 @@ nonisolated struct MathPreview: Decodable, Hashable, Sendable {
     var start: Int
     var tex: String
     var display: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case start, tex, display }
-}
-
-nonisolated extension MathPreview {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        start = try wire.decode(Int.self, forKey: .start)
-        tex = try wire.decode(String.self, forKey: .tex)
-        display = try wire.decode(Bool.self, forKey: .display)
-    }
 }
 
 nonisolated struct MathSvg: Decodable, Hashable, Sendable {
     var svg: String
     var width: Double
     var height: Double
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case svg, width, height }
-}
-
-nonisolated extension MathSvg {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        svg = try wire.decode(String.self, forKey: .svg)
-        width = try wire.decode(Double.self, forKey: .width)
-        height = try wire.decode(Double.self, forKey: .height)
-    }
 }
 
 nonisolated struct Menus: Decodable, Hashable, Sendable {
     var templates: Templates
     var symbolGroups: [SymbolGroup]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case templates, symbolGroups }
-}
-
-nonisolated extension Menus {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        templates = try wire.decode(Templates.self, forKey: .templates)
-        symbolGroups = try wire.decode([SymbolGroup].self, forKey: .symbolGroups)
-    }
 }
 
 nonisolated struct Message: Decodable, Hashable, Sendable {
     var id: MessageID
     var args: [String: String]
     var text: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case id, args, text }
-}
-
-nonisolated extension Message {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        id = try wire.decode(MessageID.self, forKey: .id)
-        args = try wire.decode([String: String].self, forKey: .args)
-        text = try wire.decode(String.self, forKey: .text)
-    }
 }
 
 nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable {
@@ -1177,7 +787,6 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case answerUnfit = "answer_unfit"
     case changedOnDisk = "changed_on_disk"
     case editsUnsaved = "edits_unsaved"
-    case oneDocument = "one_document"
     case notUtf8Name = "not_utf8_name"
     case notUtf8File = "not_utf8_file"
     case tooLargeToKeep = "too_large_to_keep"
@@ -1191,6 +800,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case versionGone = "version_gone"
     case badVersionId = "bad_version_id"
     case mainFileMissing = "main_file_missing"
+    case mainFileShellName = "main_file_shell_name"
     case timedOut = "timed_out"
     case latexmkUnstarted = "latexmk_unstarted"
     case noPdfMade = "no_pdf_made"
@@ -1253,16 +863,6 @@ nonisolated struct Open: SessionRequest {
 nonisolated struct OpenFile: Decodable, Hashable, Sendable {
     var path: String
     var kind: FileKind
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, kind }
-}
-
-nonisolated extension OpenFile {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String.self, forKey: .path)
-        kind = try wire.decode(FileKind.self, forKey: .kind)
-    }
 }
 
 nonisolated struct OpenPath: LibraryRequest {
@@ -1283,16 +883,6 @@ nonisolated struct OpenProject: SessionRequest {
 nonisolated struct Opening: Decodable, Hashable, Sendable {
     var project: ProjectInfo
     var file: String?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case project, file }
-}
-
-nonisolated extension Opening {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        project = try wire.decode(ProjectInfo.self, forKey: .project)
-        file = try wire.decode(String?.self, forKey: .file)
-    }
 }
 
 nonisolated struct OutlineNode: Decodable, Hashable, Sendable {
@@ -1300,18 +890,6 @@ nonisolated struct OutlineNode: Decodable, Hashable, Sendable {
     var heading: Heading
     var foldKey: String
     var children: [OutlineNode]?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case index, heading, foldKey, children }
-}
-
-nonisolated extension OutlineNode {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        index = try wire.decode(Int.self, forKey: .index)
-        heading = try wire.decode(Heading.self, forKey: .heading)
-        foldKey = try wire.decode(String.self, forKey: .foldKey)
-        children = try wire.decodeIfPresent([OutlineNode].self, forKey: .children)
-    }
 }
 
 nonisolated struct PageClick: Encodable, Hashable, Sendable {
@@ -1322,16 +900,6 @@ nonisolated struct PageClick: Encodable, Hashable, Sendable {
 nonisolated struct PageRange: Decodable, Hashable, Sendable {
     var first: Int
     var last: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case first, last }
-}
-
-nonisolated extension PageRange {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        first = try wire.decode(Int.self, forKey: .first)
-        last = try wire.decode(Int.self, forKey: .last)
-    }
 }
 
 nonisolated struct Partner: SourceRequest {
@@ -1345,17 +913,6 @@ nonisolated struct PdfHit: Decodable, Hashable, Sendable {
     var page: Int
     var start: Int
     var end: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case page, start, end }
-}
-
-nonisolated extension PdfHit {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        page = try wire.decode(Int.self, forKey: .page)
-        start = try wire.decode(Int.self, forKey: .start)
-        end = try wire.decode(Int.self, forKey: .end)
-    }
 }
 
 nonisolated struct PdfPage: Encodable, Hashable, Sendable {
@@ -1368,41 +925,12 @@ nonisolated struct PdfPlace: Codable, Hashable, Sendable {
     var page: Int
     var x: Double
     var y: Double
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case page, x, y }
-}
-
-nonisolated extension PdfPlace {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        page = try wire.decode(Int.self, forKey: .page)
-        x = try wire.decode(Double.self, forKey: .x)
-        y = try wire.decode(Double.self, forKey: .y)
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var wire = encoder.container(keyedBy: CodingKeys.self)
-        try wire.encode(page, forKey: .page)
-        try wire.encode(x, forKey: .x)
-        try wire.encode(y, forKey: .y)
-    }
 }
 
 nonisolated struct ProjectEdits: Decodable, Hashable, Sendable {
     var edits: DocumentEdits?
     var written: [Written]
     var snapshot: String?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case edits, written, snapshot }
-}
-
-nonisolated extension ProjectEdits {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        edits = try wire.decode(DocumentEdits?.self, forKey: .edits)
-        written = try wire.decode([Written].self, forKey: .written)
-        snapshot = try wire.decode(String?.self, forKey: .snapshot)
-    }
 }
 
 nonisolated struct ProjectInfo: Decodable, Hashable, Sendable {
@@ -1414,22 +942,6 @@ nonisolated struct ProjectInfo: Decodable, Hashable, Sendable {
     var opened: Bool
     var missing: Bool
     var pdf: String?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case id, name, mtime, mainFile, path, opened, missing, pdf }
-}
-
-nonisolated extension ProjectInfo {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        id = try wire.decode(String.self, forKey: .id)
-        name = try wire.decode(String.self, forKey: .name)
-        mtime = try wire.decode(UInt64.self, forKey: .mtime)
-        mainFile = try wire.decode(String.self, forKey: .mainFile)
-        path = try wire.decode(String.self, forKey: .path)
-        opened = try wire.decode(Bool.self, forKey: .opened)
-        missing = try wire.decode(Bool.self, forKey: .missing)
-        pdf = try wire.decode(String?.self, forKey: .pdf)
-    }
 }
 
 nonisolated struct ProjectSettings: Decodable, Hashable, Sendable {
@@ -1437,18 +949,6 @@ nonisolated struct ProjectSettings: Decodable, Hashable, Sendable {
     var engine: Engine
     var stopOnFirstError: Bool
     var shellEscape: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case mainFile, engine, stopOnFirstError, shellEscape }
-}
-
-nonisolated extension ProjectSettings {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        mainFile = try wire.decode(String.self, forKey: .mainFile)
-        engine = try wire.decode(Engine.self, forKey: .engine)
-        stopOnFirstError = try wire.decode(Bool.self, forKey: .stopOnFirstError)
-        shellEscape = try wire.decode(Bool.self, forKey: .shellEscape)
-    }
 }
 
 nonisolated struct ProjectState: Decodable, Hashable, Sendable {
@@ -1456,18 +956,6 @@ nonisolated struct ProjectState: Decodable, Hashable, Sendable {
     var root: String
     var settings: ProjectSettings
     var problem: Message?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case name, root, settings, problem }
-}
-
-nonisolated extension ProjectState {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        name = try wire.decode(String.self, forKey: .name)
-        root = try wire.decode(String.self, forKey: .root)
-        settings = try wire.decode(ProjectSettings.self, forKey: .settings)
-        problem = try wire.decode(Message?.self, forKey: .problem)
-    }
 }
 
 nonisolated enum ProjectTemplate: String, Encodable, CaseIterable, Hashable, Sendable {
@@ -1503,17 +991,6 @@ nonisolated struct QuickHelp: Decodable, Hashable, Sendable {
     var title: String
     var detail: String
     var place: FilePlace?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case title, detail, place }
-}
-
-nonisolated extension QuickHelp {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        title = try wire.decode(String.self, forKey: .title)
-        detail = try wire.decode(String.self, forKey: .detail)
-        place = try wire.decode(FilePlace?.self, forKey: .place)
-    }
 }
 
 nonisolated struct QuickOpen: SessionRequest {
@@ -1529,19 +1006,6 @@ nonisolated struct QuickOpenItem: Decodable, Hashable, Sendable {
     var detail: String
     var path: String
     var line: Int?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case kind, title, detail, path, line }
-}
-
-nonisolated extension QuickOpenItem {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        kind = try wire.decode(QuickOpenKind.self, forKey: .kind)
-        title = try wire.decode(String.self, forKey: .title)
-        detail = try wire.decode(String.self, forKey: .detail)
-        path = try wire.decode(String.self, forKey: .path)
-        line = try wire.decode(Int?.self, forKey: .line)
-    }
 }
 
 nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Sendable {
@@ -1590,16 +1054,6 @@ nonisolated struct RenameProject: LibraryRequest {
 nonisolated struct RenameResult: Decodable, Hashable, Sendable {
     var from: String
     var to: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case from, to }
-}
-
-nonisolated extension RenameResult {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        from = try wire.decode(String.self, forKey: .from)
-        to = try wire.decode(String.self, forKey: .to)
-    }
 }
 
 nonisolated struct RenameSymbol: SessionRequest {
@@ -1614,16 +1068,6 @@ nonisolated struct RenameSymbol: SessionRequest {
 nonisolated struct Renamed: Decodable, Hashable, Sendable {
     var from: String
     var to: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case from, to }
-}
-
-nonisolated extension Renamed {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        from = try wire.decode(String.self, forKey: .from)
-        to = try wire.decode(String.self, forKey: .to)
-    }
 }
 
 nonisolated struct RenderMath: SyntaxRequest {
@@ -1648,16 +1092,6 @@ nonisolated struct Replace: SessionRequest {
 nonisolated struct Replied<Payload: Decodable & Sendable>: Decodable, Sendable {
     var id: UInt64
     var answer: Answered<Payload>
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case id, answer }
-}
-
-nonisolated extension Replied {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        id = try wire.decode(UInt64.self, forKey: .id)
-        answer = try wire.decode(Answered<Payload>.self, forKey: .answer)
-    }
 }
 
 nonisolated enum Resolution: String, Encodable, CaseIterable, Hashable, Sendable {
@@ -1686,12 +1120,12 @@ nonisolated enum Said<Payload: Decodable & Sendable>: Decodable, Sendable {
     case library(LibrarySection)
     case log(Log)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension Said {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "reply": self = .reply(try wire.decode(Replied<Payload>.self, forKey: .value))
         case "event": self = .event(try wire.decode(SessionEvent.self, forKey: .value))
@@ -1728,16 +1162,6 @@ nonisolated struct Search: SessionRequest {
 nonisolated struct SearchGroup: Decodable, Hashable, Sendable {
     var file: String
     var hits: [SearchHit]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case file, hits }
-}
-
-nonisolated extension SearchGroup {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        file = try wire.decode(String.self, forKey: .file)
-        hits = try wire.decode([SearchHit].self, forKey: .hits)
-    }
 }
 
 nonisolated struct SearchHit: Decodable, Hashable, Sendable {
@@ -1748,21 +1172,6 @@ nonisolated struct SearchHit: Decodable, Hashable, Sendable {
     var before: String
     var match: String
     var after: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case file, line, column, length, before, match, after }
-}
-
-nonisolated extension SearchHit {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        file = try wire.decode(String.self, forKey: .file)
-        line = try wire.decode(Int.self, forKey: .line)
-        column = try wire.decode(Int.self, forKey: .column)
-        length = try wire.decode(Int.self, forKey: .length)
-        before = try wire.decode(String.self, forKey: .before)
-        match = try wire.decode(String.self, forKey: .match)
-        after = try wire.decode(String.self, forKey: .after)
-    }
 }
 
 nonisolated struct SelectsCommand: SourceRequest {
@@ -1775,16 +1184,6 @@ nonisolated struct SelectsCommand: SourceRequest {
 nonisolated struct SessionEvent: Decodable, Hashable, Sendable {
     var session: UInt64
     var event: Event
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case session, event }
-}
-
-nonisolated extension SessionEvent {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        session = try wire.decode(UInt64.self, forKey: .session)
-        event = try wire.decode(Event.self, forKey: .event)
-    }
 }
 
 nonisolated enum SessionSection: Decodable, Hashable, Sendable {
@@ -1800,12 +1199,12 @@ nonisolated enum SessionSection: Decodable, Hashable, Sendable {
     case live(LiveState)
     case liveLog(String)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension SessionSection {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "lifecycle": self = .lifecycle(try wire.decode(Lifecycle.self, forKey: .value))
         case "project": self = .project(try wire.decode(ProjectState.self, forKey: .value))
@@ -1881,17 +1280,6 @@ nonisolated struct ShownPdf: Decodable, Hashable, Sendable {
     var path: String?
     var version: UInt64
     var live: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case path, version, live }
-}
-
-nonisolated extension ShownPdf {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        path = try wire.decode(String?.self, forKey: .path)
-        version = try wire.decode(UInt64.self, forKey: .version)
-        live = try wire.decode(Bool.self, forKey: .live)
-    }
 }
 
 nonisolated struct Snapshot: Decodable, Hashable, Sendable {
@@ -1900,43 +1288,12 @@ nonisolated struct Snapshot: Decodable, Hashable, Sendable {
     var name: String?
     var reason: Reason?
     var changed: [ChangedFile]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case id, time, name, reason, changed }
-}
-
-nonisolated extension Snapshot {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        id = try wire.decode(String.self, forKey: .id)
-        time = try wire.decode(Int.self, forKey: .time)
-        name = try wire.decode(String?.self, forKey: .name)
-        reason = try wire.decode(Reason?.self, forKey: .reason)
-        changed = try wire.decode([ChangedFile].self, forKey: .changed)
-    }
 }
 
 nonisolated struct SnippetField: Codable, Hashable, Sendable {
     var start: Int
     var length: Int
     var index: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case start, length, index }
-}
-
-nonisolated extension SnippetField {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        start = try wire.decode(Int.self, forKey: .start)
-        length = try wire.decode(Int.self, forKey: .length)
-        index = try wire.decode(Int.self, forKey: .index)
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var wire = encoder.container(keyedBy: CodingKeys.self)
-        try wire.encode(start, forKey: .start)
-        try wire.encode(length, forKey: .length)
-        try wire.encode(index, forKey: .index)
-    }
 }
 
 nonisolated struct StartLive: SessionRequest {
@@ -1964,15 +1321,6 @@ nonisolated struct StopLive: SessionRequest {
 
 nonisolated struct Stopped: Decodable, Hashable, Sendable {
     var unsaved: [String]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case unsaved }
-}
-
-nonisolated extension Stopped {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        unsaved = try wire.decode([String].self, forKey: .unsaved)
-    }
 }
 
 nonisolated struct StylesAt: SourceRequest {
@@ -1985,16 +1333,6 @@ nonisolated struct StylesAt: SourceRequest {
 nonisolated struct Symbol: Decodable, Hashable, Sendable {
     var glyph: String
     var command: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case glyph, command }
-}
-
-nonisolated extension Symbol {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        glyph = try wire.decode(String.self, forKey: .glyph)
-        command = try wire.decode(String.self, forKey: .command)
-    }
 }
 
 nonisolated struct SymbolAt: SourceRequest {
@@ -2007,16 +1345,6 @@ nonisolated struct SymbolAt: SourceRequest {
 nonisolated struct SymbolGroup: Decodable, Hashable, Sendable {
     var title: String
     var symbols: [Symbol]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case title, symbols }
-}
-
-nonisolated extension SymbolGroup {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        title = try wire.decode(String.self, forKey: .title)
-        symbols = try wire.decode([Symbol].self, forKey: .symbols)
-    }
 }
 
 nonisolated enum SymbolKind: String, Codable, CaseIterable, Hashable, Sendable {
@@ -2037,16 +1365,6 @@ nonisolated enum SymbolKind: String, Codable, CaseIterable, Hashable, Sendable {
 nonisolated struct SymbolName: Decodable, Hashable, Sendable {
     var kind: SymbolKind
     var name: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case kind, name }
-}
-
-nonisolated extension SymbolName {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        kind = try wire.decode(SymbolKind.self, forKey: .kind)
-        name = try wire.decode(String.self, forKey: .name)
-    }
 }
 
 nonisolated struct SynctexForward: SessionRequest {
@@ -2080,16 +1398,6 @@ nonisolated struct SynctexMatch: SessionRequest {
 nonisolated struct Tabbing: Decodable, Hashable, Sendable {
     var field: TextRange?
     var edits: [TextEdit]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case field, edits }
-}
-
-nonisolated extension Tabbing {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        field = try wire.decode(TextRange?.self, forKey: .field)
-        edits = try wire.decode([TextEdit].self, forKey: .edits)
-    }
 }
 
 nonisolated struct Template: Decodable, Hashable, Sendable {
@@ -2097,18 +1405,6 @@ nonisolated struct Template: Decodable, Hashable, Sendable {
     var body: String
     var symbol: String?
     var inline: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case title, body, symbol, inline }
-}
-
-nonisolated extension Template {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        title = try wire.decode(String.self, forKey: .title)
-        body = try wire.decode(String.self, forKey: .body)
-        symbol = try wire.decodeIfPresent(String.self, forKey: .symbol)
-        inline = try wire.decode(Bool.self, forKey: .inline)
-    }
 }
 
 nonisolated struct Templates: Decodable, Hashable, Sendable {
@@ -2116,18 +1412,6 @@ nonisolated struct Templates: Decodable, Hashable, Sendable {
     var insert: [Template]
     var list: [Template]
     var references: [Template]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case math, insert, list, references }
-}
-
-nonisolated extension Templates {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        math = try wire.decode([Template].self, forKey: .math)
-        insert = try wire.decode([Template].self, forKey: .insert)
-        list = try wire.decode([Template].self, forKey: .list)
-        references = try wire.decode([Template].self, forKey: .references)
-    }
 }
 
 nonisolated struct TexStatus: Decodable, Hashable, Sendable {
@@ -2137,65 +1421,17 @@ nonisolated struct TexStatus: Decodable, Hashable, Sendable {
     var found: String?
     var texpresso: String?
     var texpressoDir: String?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case available, latexmkVersion, texDir, found, texpresso, texpressoDir }
-}
-
-nonisolated extension TexStatus {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        available = try wire.decode(Bool.self, forKey: .available)
-        latexmkVersion = try wire.decode(String?.self, forKey: .latexmkVersion)
-        texDir = try wire.decode(String?.self, forKey: .texDir)
-        found = try wire.decode(String?.self, forKey: .found)
-        texpresso = try wire.decode(String?.self, forKey: .texpresso)
-        texpressoDir = try wire.decode(String?.self, forKey: .texpressoDir)
-    }
 }
 
 nonisolated struct TextEdit: Codable, Hashable, Sendable {
     var start: Int
     var length: Int
     var text: String
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case start, length, text }
-}
-
-nonisolated extension TextEdit {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        start = try wire.decode(Int.self, forKey: .start)
-        length = try wire.decode(Int.self, forKey: .length)
-        text = try wire.decode(String.self, forKey: .text)
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var wire = encoder.container(keyedBy: CodingKeys.self)
-        try wire.encode(start, forKey: .start)
-        try wire.encode(length, forKey: .length)
-        try wire.encode(text, forKey: .text)
-    }
 }
 
 nonisolated struct TextRange: Codable, Hashable, Sendable {
     var start: Int
     var length: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case start, length }
-}
-
-nonisolated extension TextRange {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        start = try wire.decode(Int.self, forKey: .start)
-        length = try wire.decode(Int.self, forKey: .length)
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var wire = encoder.container(keyedBy: CodingKeys.self)
-        try wire.encode(start, forKey: .start)
-        try wire.encode(length, forKey: .length)
-    }
 }
 
 nonisolated enum TextStyle: String, Encodable, CaseIterable, Hashable, Sendable {
@@ -2206,17 +1442,6 @@ nonisolated struct TextStyles: Decodable, Hashable, Sendable {
     var bold: [TextEdit]?
     var italic: [TextEdit]?
     var underline: [TextEdit]?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case bold, italic, underline }
-}
-
-nonisolated extension TextStyles {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        bold = try wire.decode([TextEdit]?.self, forKey: .bold)
-        italic = try wire.decode([TextEdit]?.self, forKey: .italic)
-        underline = try wire.decode([TextEdit]?.self, forKey: .underline)
-    }
 }
 
 nonisolated struct ToggleComment: SourceRequest {
@@ -2232,6 +1457,10 @@ nonisolated struct ToggleStyle: SourceRequest {
 
     var selections: [TextRange]
     var style: TextStyle
+}
+
+nonisolated enum Topic: String, Decodable, CaseIterable, Hashable, Sendable {
+    case badBox, undefinedReference
 }
 
 nonisolated struct Trash: SessionRequest {
@@ -2254,19 +1483,6 @@ nonisolated struct TreeNode: Decodable, Hashable, Sendable {
     var kind: FileKind?
     var children: [TreeNode]?
     var main: Bool
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case name, path, kind, children, main }
-}
-
-nonisolated extension TreeNode {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        name = try wire.decode(String.self, forKey: .name)
-        path = try wire.decode(String.self, forKey: .path)
-        kind = try wire.decodeIfPresent(FileKind.self, forKey: .kind)
-        children = try wire.decodeIfPresent([TreeNode].self, forKey: .children)
-        main = try wire.decode(Bool.self, forKey: .main)
-    }
 }
 
 nonisolated struct TypeText: SourceRequest {
@@ -2298,35 +1514,11 @@ nonisolated struct UiState: Decodable, Hashable, Sendable {
     var line: Int?
     var zoom: Zoom?
     var pdfPlace: PdfPlace?
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case expandedFolders, foldedHeadings, file, line, zoom, pdfPlace }
-}
-
-nonisolated extension UiState {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        expandedFolders = try wire.decode([String].self, forKey: .expandedFolders)
-        foldedHeadings = try wire.decode([String].self, forKey: .foldedHeadings)
-        file = try wire.decode(String?.self, forKey: .file)
-        line = try wire.decode(Int?.self, forKey: .line)
-        zoom = try wire.decode(Zoom?.self, forKey: .zoom)
-        pdfPlace = try wire.decode(PdfPlace?.self, forKey: .pdfPlace)
-    }
 }
 
 nonisolated struct Usages: Decodable, Hashable, Sendable {
     var name: String
     var groups: [SearchGroup]
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case name, groups }
-}
-
-nonisolated extension Usages {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        name = try wire.decode(String.self, forKey: .name)
-        groups = try wire.decode([SearchGroup].self, forKey: .groups)
-    }
 }
 
 nonisolated struct Words: SourceRequest {
@@ -2347,16 +1539,6 @@ nonisolated struct Wrap: SourceRequest {
 nonisolated struct Written: Decodable, Hashable, Sendable {
     var file: String
     var count: Int
-
-    enum CodingKeys: String, CodingKey, CaseIterable { case file, count }
-}
-
-nonisolated extension Written {
-    init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
-        file = try wire.decode(String.self, forKey: .file)
-        count = try wire.decode(Int.self, forKey: .count)
-    }
 }
 
 nonisolated enum Zoom: Codable, Hashable, Sendable {
@@ -2364,12 +1546,12 @@ nonisolated enum Zoom: Codable, Hashable, Sendable {
     case fitPage
     case scale(Double)
 
-    enum CodingKeys: String, CodingKey, CaseIterable { case type, value }
+    enum CodingKeys: String, CodingKey { case type, value }
 }
 
 nonisolated extension Zoom {
     init(from decoder: any Decoder) throws {
-        let wire = try decoder.strict(CodingKeys.self)
+        let wire = try decoder.container(keyedBy: CodingKeys.self)
         switch try wire.decode(String.self, forKey: .type) {
         case "fitWidth": self = .fitWidth
         case "fitPage": self = .fitPage

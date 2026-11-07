@@ -55,8 +55,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     var coverPages: CoverPages {
         let shown = shownRect
-        // Every page from the top of the shown area to its foot, as at a low zoom many show; not `visiblePages`, which
-        // lags a zoom or scroll (it held the first of the 7 pages in view right after a zoom to 10%).
+        // Every page from the top of the shown area to its foot; `visiblePages` lags behind a zoom or scroll.
         guard let document, hasShownArea, !UserDefaults.standard.bool(forKey: "PDFCoversOff"),
               let top = page(for: CGPoint(x: shown.midX, y: shown.maxY - 1), nearest: true),
               let foot = page(for: CGPoint(x: shown.midX, y: shown.minY + 1), nearest: true) else { return CoverPages() }
@@ -65,9 +64,9 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                           space: window?.colorSpace?.cgColorSpace ?? CoverPages().space)
     }
 
-    /// Whole pages drawn off the main thread, on a document no other thread touches, to stand in for its pages while
-    /// PDFKit draws their tiles after a swap. Whole pages, rather than the parts in view, still fit if the view scrolls
-    /// before the swap and need no rotation maths; together they're capped at 24 megapixels.
+    /// Whole pages drawn off the main thread, from a document no other thread touches, standing in for the real pages
+    /// while PDFKit draws their tiles after a swap. Whole pages still fit if the view scrolls before the swap and need no
+    /// rotation maths; together they're capped at 24 megapixels.
     nonisolated static func covers(_ wanted: CoverPages, of document: PDFDocument) -> [Int: CGImage] {
         signposts.withIntervalSignpost("covers") {
             let pages = wanted.indices.compactMap { index in document.page(ifAt: index).map { (index, $0) } }
@@ -98,8 +97,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         change()
         CATransaction.commit()
         self.covers = [:]
-        // PDFKit drew the last tile in view 7–13 ms after a swap and 12–18 ms after a live page (392-page test PDF, a 700 ×
-        // 900 pt pane at fit width and at 25%, the Mac otherwise idle), so 400 ms leaves room for a busy one.
+        // PDFKit draws the last tile in view 7–18 ms after a swap, so 400 ms leaves room for a busy Mac.
         restart(&uncovering, after: .milliseconds(400)) { [weak self] in
             for case let overlay as PageOverlay in self?.overlays.objectEnumerator()?.allObjects ?? [] { overlay.uncover() }
         }
@@ -242,9 +240,8 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 nonisolated struct CoverPages: Sendable {
     var indices: [Int] = []
     var scale: CGFloat = 0
-    /// The window's, as the commit that shows a cover drawn in another converts it on the main thread: a live page's
-    /// replace took 20 ms with its cover in sRGB and 8 ms in the window's (400-page test PDF, a 700 × 900 pt pane on the
-    /// built-in display), and 38 ms in Display P3.
+    /// The window's colour space: a cover in any other is converted on the main thread when shown, which took a live
+    /// page's replace from 8 ms to 20 ms (sRGB) or 38 ms (Display P3).
     var space = CGColorSpace(name: CGColorSpace.sRGB)!
 }
 
@@ -270,8 +267,8 @@ final class PageOverlay: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// The cover is the whole page, so it follows the overlay, which PDFKit trims by a fraction of a point after a page is
-    /// inserted in place (612 × 792 to 611.94 × 791.74 for a Letter page), rather than going.
+    /// The cover is the whole page, so it keeps to the overlay, which PDFKit trims by a fraction of a point after a page is
+    /// replaced in place.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         drawing.frame = bounds

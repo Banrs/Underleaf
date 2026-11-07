@@ -9,10 +9,10 @@ TeXLocal is a LaTeX editor for the Mac that works offline, and Underleaf is its 
 - Start from a template (blank, article, report or Beamer), or open a folder, a `.tex` file or a
   `.zip`. A folder opens where it is, and TeXLocal keeps its own settings and build files
   elsewhere, so a git repository is left as it was.
-- See the source and the PDF side by side, or either one alone. A project opens again on the same
-  file and line, at the same zoom.
-- Open several projects at once, each in its own window, from the Projects window (Window ▸ Projects).
-  A project opens in one window at a time, and opening it again brings its window forward.
+- See the source and the PDF side by side, or either one alone. A project reopens at the same file,
+  line and zoom.
+- Open several projects at once, each in its own window, from Window ▸ Projects. Opening a project
+  that's already open brings its window forward.
 - Completion for commands, environments, installed packages, `\cite` keys and `\ref` labels.
   Brackets, dollar signs and environments close as you type, and the maths under the cursor shows
   in a small preview.
@@ -27,11 +27,12 @@ TeXLocal is a LaTeX editor for the Mac that works offline, and Underleaf is its 
   label or citation everywhere, open any file or section by typing part of its name, and see an
   outline with word counts.
 - Export to a ZIP, or to a ZIP ready for arXiv.
-- A version history on your Mac. A version is saved as you work and before changes across files;
-  all of the last day's are kept, then one an hour for a week and one a day for 90 days. Versions
-  you name are kept for good.
-- Live Preview, which is experimental, updates the PDF as you type, using
-  [TeXpresso](https://github.com/let-def/texpresso).
+- Version history, kept on your Mac. TeXLocal saves a version as you work and before a change that
+  spans files, and keeps every version from the last day, one an hour for a week and one a day for
+  90 days. Versions you name are kept for good.
+- Live Preview (experimental) updates the PDF as you type, using
+  [TeXpresso](https://github.com/let-def/texpresso). Turn it on from the Compile menu or the
+  project's inspector.
 
 ## Requirements
 
@@ -43,7 +44,7 @@ For the full distribution, install [MacTeX](https://tug.org/mactex/) or run
 
 TeXLocal looks for TeX on your `PATH` and in the usual places: `/Library/TeX/texbin`, Homebrew,
 `/usr/local/texlive/<year>` and TinyTeX's folder. If yours is somewhere else, choose its folder in
-Settings › Compiling.
+Settings ▸ Compiling.
 
 ## Installing
 
@@ -61,13 +62,8 @@ zsh tools/install-mac.sh
 
 The first builds TeXpresso with Underleaf's patch, for Live Preview. The second builds TeXLocal with that
 TeXpresso inside, copies it to `/Applications` and opens it. To update, pull and run both again. You can also
-open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run.
-
-## Live Preview
-
-Live Preview, which is experimental, typesets as you type with the TeXpresso inside TeXLocal. Turn it on from
-the Compile menu or the project's inspector. To use another TeXpresso, choose its folder in Settings › Live
-Preview.
+open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run. To use another TeXpresso for Live Preview, choose
+its folder in Settings ▸ Live Preview.
 
 ## Projects and security
 

@@ -185,8 +185,8 @@ final class Core {
         let type: String, value: Reply
     }
 
-    /// A reply goes to its caller by its id alone, which decodes its body, so one the app can't read fails the caller
-    /// rather than leaving it waiting.
+    /// Only a reply's id is read here and its caller decodes the body, so a reply the app can't read fails the caller
+    /// instead of leaving it waiting.
     nonisolated static func heard(_ said: Data) throws -> Heard {
         let decoder = JSONDecoder()
         if let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" { return .reply(replying.value.id) }
@@ -268,16 +268,16 @@ final class SessionClient {
         }
     }
 
-    func close() async throws -> Bool {
+    func close(discarding: Bool = false) async throws -> Bool {
         do {
-            guard try await call(CloseProject()) else { return false }
+            guard try await call(CloseProject(discard: discarding ? true : nil)) else { return false }
         } catch let error where error is CancellationError || lifecycle?.stopped != nil {}
         end()
         return true
     }
 
     func discard() {
-        send(CloseProject())
+        send(CloseProject(discard: true))
         end()
     }
 

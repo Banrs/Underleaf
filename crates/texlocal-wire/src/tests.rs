@@ -1,10 +1,11 @@
 use std::panic::catch_unwind;
 
 use schemars::JsonSchema;
+use schemars::generate::SchemaSettings;
 use serde_json::Value;
 
-use crate::fixtures::{fixtures, round_trip};
-use crate::{read, stale};
+use crate::ir::{Ir, Way};
+use crate::stale;
 
 #[test]
 fn the_generated_files_are_current() {
@@ -15,17 +16,18 @@ fn the_generated_files_are_current() {
     );
 }
 
-#[test]
-fn the_fixtures_round_trip_and_their_rejects_are_refused() {
-    let fixtures = fixtures();
-    for sample in &fixtures.samples {
-        let sent = round_trip(&sample.ty, &sample.value).unwrap();
-        assert_eq!(sent, sample.value, "{}", sample.ty);
+fn read<T: JsonSchema>() -> Ir {
+    let mut ir = Ir::default();
+    for (way, settings) in [
+        (Way::Out, SchemaSettings::draft2020_12().for_serialize()),
+        (Way::In, SchemaSettings::draft2020_12().for_deserialize()),
+    ] {
+        let mut generator = settings.into_generator();
+        generator.subschema_for::<T>();
+        ir.add(generator.definitions(), way);
     }
-    for reject in &fixtures.rejects {
-        let read = round_trip(&reject.ty, &reject.value);
-        assert!(read.is_err(), "{} {}", reject.ty, reject.value);
-    }
+    ir.check();
+    ir
 }
 
 fn refused<T: JsonSchema>() -> String {
@@ -65,10 +67,6 @@ fn the_generator_refuses_what_swift_would_read_differently() {
     enum Untagged {
         A(u32),
         B(String),
-    }
-    #[derive(JsonSchema)]
-    struct Text {
-        text: String,
     }
     mod one {
         #[derive(schemars::JsonSchema)]
@@ -125,7 +123,6 @@ fn the_generator_refuses_what_swift_would_read_differently() {
         (refused::<Snake>(), "camelCase"),
         (refused::<Internal>(), "adjacently tagged"),
         (refused::<Untagged>(), "untagged"),
-        (refused::<Text>(), "SwiftUI"),
         (refused::<Both>(), "two types are named Same"),
         (refused::<Open>(), "deny_unknown_fields"),
         (refused::<Defaulted>(), "left out"),

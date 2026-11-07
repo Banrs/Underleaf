@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 extension NSToolbarItem.Identifier {
+    static let navigation = Self("navigation")
     static let format = Self("format")
     static let math = Self("math")
     static let insert = Self("insert")
@@ -14,7 +15,7 @@ extension NSToolbarItem.Identifier {
 }
 
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate, NSMenuItemValidation {
-    let toolbar = NSToolbar(identifier: "Workspace 7")
+    let toolbar = NSToolbar(identifier: "Workspace 8")
     private(set) var compactCompile = false
     weak var workspace: WorkspaceController?
     private let window: WindowModel
@@ -46,7 +47,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .format, .math, .insert,
+        [.toggleSidebar, .sidebarTrackingSeparator, .navigation, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
          .inspectorTrackingSeparator, .flexibleSpace, .layout, .inspector]
     }
@@ -56,7 +57,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .navigation, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .inspector]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
@@ -69,6 +70,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
                  willBeInsertedIntoToolbar inserted: Bool) -> NSToolbarItem? {
         let item: NSToolbarItem
         switch id {
+        case .navigation:
+            item = navigationItem()
         case .format:
             item = menuItem(id, "Format", "textformat", Group { [window, views] in
                 ControlGroup {
@@ -120,9 +123,38 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         default: return nil
         }
         item.autovalidates = false
-        item.visibilityPriority = id == .compile ? compilePriority : [.layout, .inspector].contains(id) ? .high : .low
+        // Back and Forward stay in their menus and their keys, so they give way before a compact Compile in a narrow window.
+        item.visibilityPriority = id == .compile ? compilePriority : id == .navigation ? .standard
+            : [.layout, .inspector].contains(id) ? .high : .low
         if inserted { configure(item, state) }
         return item
+    }
+
+    /// Xcode's ‹ › before the title, with its tooltips: a momentary pair, marked navigational so AppKit puts it before the
+    /// title, that runs Navigate ▸ Go Back and Go Forward.
+    private func navigationItem() -> NSToolbarItem {
+        let commands = [MenuCommand.goBack, .goForward]
+        let images = zip(commands, ["chevron.left", "chevron.right"]).compactMap { command, symbol in
+            NSImage(systemSymbolName: symbol, accessibilityDescription: command.title)
+        }
+        let group = NSToolbarItemGroup(itemIdentifier: .navigation, images: images, selectionMode: .momentary,
+                                       labels: commands.map(\.title), target: self, action: #selector(retrace(_:)))
+        group.isNavigational = true
+        group.label = String(localized: "Back/Forward")
+        group.controlRepresentation = .expanded
+        for (subitem, help) in zip(group.subitems, [String(localized: "Show Previous Location in History"),
+                                                    String(localized: "Show Next Location in History")]) {
+            subitem.toolTip = help
+            subitem.autovalidates = false
+        }
+        let form = NSMenuItem(title: group.label, action: nil, keyEquivalent: "")
+        let menu = NSMenu()
+        for (command, action) in zip(commands, [#selector(goBack), #selector(goForward)]) {
+            menu.addItem(withTitle: command.title, action: action, keyEquivalent: "").target = self
+        }
+        form.submenu = menu
+        group.menuFormRepresentation = form
+        return group
     }
 
     private func zoomItem() -> NSToolbarItem {
@@ -174,13 +206,14 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         let sourceTools, hasPDF, canShare, compiling, canCompile, open: Bool
         let layout: WorkspaceLayout
         let zoomLabel: String
-        let canZoomIn, canZoomOut: Bool
+        let canZoomIn, canZoomOut, canGoBack, canGoForward: Bool
     }
 
     private var state: State {
         State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, canShare: project.buildPDF != nil, compiling: project.compiling,
               canCompile: project.compiling || window.app.isEnabled(.compileRun, on: project), open: project.isOpen, layout: window.layout,
-              zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut)
+              zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
+              canGoBack: window.app.isEnabled(.goBack, on: project), canGoForward: window.app.isEnabled(.goForward, on: project))
     }
 
     private func apply(_ state: State) {
@@ -224,6 +257,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             if let root, root[keyPath: key] != value { root[keyPath: key] = value }
         }
         switch item.itemIdentifier {
+        case .navigation:
+            update(item, \.isEnabled, state.open)
+            guard let group = item as? NSToolbarItemGroup else { return }
+            for (subitem, enabled) in zip(group.subitems, [state.canGoBack, state.canGoForward]) {
+                update(subitem, \.isEnabled, state.open && enabled)
+            }
         case .format, .math, .insert:
             update(item, \.isHidden, state.layout == .pdf)
             update(item, \.isEnabled, state.open && state.sourceTools)
@@ -261,7 +300,17 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         }
     }
 
-    func validateMenuItem(_ item: NSMenuItem) -> Bool { project.isOpen && (item.action != #selector(compile) || state.canCompile) }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(compile): project.isOpen && state.canCompile
+        case #selector(goBack): project.isOpen && state.canGoBack
+        case #selector(goForward): project.isOpen && state.canGoForward
+        default: project.isOpen
+        }
+    }
+    @objc private func retrace(_ group: NSToolbarItemGroup) { window.perform(group.selectedIndex == 0 ? .goBack : .goForward, on: project) }
+    @objc private func goBack() { window.perform(.goBack, on: project) }
+    @objc private func goForward() { window.perform(.goForward, on: project) }
     func items(for pickerToolbarItem: NSSharingServicePickerToolbarItem) -> [Any] { project.buildPDF.map { [$0] } ?? [] }
     @objc private func zoom(_ control: NSSegmentedControl) {
         if [0, 2].contains(control.selectedSegment) { pdf.zoom(in: control.selectedSegment == 2) }

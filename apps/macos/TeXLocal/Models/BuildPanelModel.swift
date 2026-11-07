@@ -12,6 +12,7 @@ final class BuildPanelModel {
     var shown = false
     var tab: PanelTab = .log
     var logFilter = ""
+    var hiddenLogKinds: Set<LogKind> = []
 
     var showsLiveLog: Bool { shown && tab == .texpresso }
 
@@ -38,7 +39,24 @@ final class NavigatorModel {
     var outlineFilter = ""
     var searchFilter = ""
     var issueFilter = ""
-    var showsWarnings = true
+    var showsOnlyRecentFiles = false
+    var showsOnlyRecentIssues = false
+    var hiddenIssueKinds: Set<IssueKind> = []
+    /// The Only errors toggle, on while the filter's menu hides every kind but errors.
+    var showsOnlyErrors: Bool {
+        get { hiddenIssueKinds.isSuperset(of: IssueKind.warnings) }
+        set { if newValue { hiddenIssueKinds.formUnion(IssueKind.warnings) } else { hiddenIssueKinds.subtract(IssueKind.warnings) } }
+    }
+    /// Files opened in this window, latest first, for the Recent files toggle.
+    private(set) var recentFiles: [String] = []
+
+    func opened(_ path: String) {
+        recentFiles.removeAll { $0 == path }
+        recentFiles.insert(path, at: 0)
+        if recentFiles.count > 10 { recentFiles.removeLast() }
+    }
+
+    func renamed(_ remap: (String) -> String) { recentFiles = recentFiles.map(remap) }
     @ObservationIgnored private var beforeFailedBuild: Navigator?
     @ObservationIgnored private let project: String
     @ObservationIgnored private let defaults: UserDefaults
@@ -72,6 +90,11 @@ final class NavigatorModel {
     }
 
     func rows(of listed: [LogItem]) -> [(offset: Int, element: LogItem)] {
-        listed.enumerated().filter { (showsWarnings || $0.element.isError) && matches($0.element) }
+        listed.enumerated().filter { shows($0.element) && matches($0.element) }
+    }
+
+    /// Whether the toggles and the filter's menu leave an issue in the list.
+    func shows(_ item: LogItem) -> Bool {
+        !hiddenIssueKinds.contains(item.issueKind) && (!showsOnlyRecentIssues || item.file.map(recentFiles.contains) == true)
     }
 }

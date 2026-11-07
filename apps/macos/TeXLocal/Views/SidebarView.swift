@@ -13,13 +13,35 @@ struct FilesList: View {
         nonmutating set { project.navigator.fileSelection = newValue }
     }
 
+    private var shownNodes: [TreeNode] {
+        let nodes = filtered(project.tree.nodes, \.children, by: project.navigator.fileFilter) { $0.name }
+        guard project.navigator.showsOnlyRecentFiles else { return nodes }
+        let recent = Set(project.navigator.recentFiles)
+        return filtered(nodes, \.children) { !$0.isDirectory && recent.contains($0.path) }
+    }
+
+    @ViewBuilder private func emptyState(_ empty: Bool, filter: String, recentOnly: Bool) -> some View {
+        if empty, !filter.isEmpty || recentOnly, !project.tree.nodes.isEmpty {
+            NoFilterResults()
+        } else if project.initialLoadComplete, project.tree.nodes.isEmpty {
+            ContentUnavailableView {
+                Label("No Files", systemImage: "text.document")
+            } description: {
+                Text("Create a file, or drag files here from the Finder.")
+            } actions: {
+                Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
+                Button(MenuCommand.fileUpload.title) { window.perform(.fileUpload, on: project) }
+            }
+        }
+    }
+
     var body: some View {
-        let filter = project.navigator.fileFilter
-        let nodes = filtered(project.tree.nodes, \.children, by: filter) { $0.name }
+        let (filter, recentOnly) = (project.navigator.fileFilter, project.navigator.showsOnlyRecentFiles)
+        let nodes = shownNodes, folds = filter.isEmpty && !recentOnly
         ScrollViewReader { proxy in
             List(selection: Bindable(project.navigator).fileSelection) {
                 TreeRows(nodes: nodes, children: \.children, isExpanded: { node in
-                    filter.isEmpty ? disclosure(\.expandedFolders, of: project, key: node.path,
+                    folds ? disclosure(\.expandedFolders, of: project, key: node.path,
                                                 subtree: node.children?.flattened.filter(\.isDirectory).map(\.path) ?? []) : .constant(true)
                 }, insert: { urls in Task { await project.dropFiles(urls, into: "") } }) { node in
                     row(node).tag(node.path)
@@ -30,20 +52,7 @@ struct FilesList: View {
             .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
                 Task { await project.dropFiles(urls, into: "") }
             }
-            .overlay {
-                if !filter.isEmpty, nodes.isEmpty {
-                    ContentUnavailableView.search(text: filter)
-                } else if project.initialLoadComplete, project.tree.nodes.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Files", systemImage: "text.document")
-                    } description: {
-                        Text("Create a file, or drag files here from the Finder.")
-                    } actions: {
-                        Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: "")) }
-                        Button(MenuCommand.fileUpload.title) { window.perform(.fileUpload, on: project) }
-                    }
-                }
-            }
+            .overlay { emptyState(nodes.isEmpty, filter: filter, recentOnly: recentOnly) }
             .contextMenu(forSelectionType: String.self) { paths in
                 if let path = paths.first, let node = project.tree.node(at: path) {
                     if node.isDirectory {
@@ -106,7 +115,7 @@ struct FilesList: View {
 
     private func create(_ entry: NewEntry) {
         let folder = entry.folder ?? chosenFolder
-        project.navigator.fileFilter = ""
+        (project.navigator.fileFilter, project.navigator.showsOnlyRecentFiles) = ("", false)
         Task {
             guard let path = await project.createEntry(in: folder, directory: entry.directory) else { return }
             showRow(path)
@@ -238,8 +247,8 @@ struct OutlineList: View {
             .listStyle(.sidebar)
             .accessibilityLabel("Outline")
             .overlay {
-                if !filter.isEmpty, nodes.isEmpty {
-                    ContentUnavailableView.search(text: filter)
+                if !filter.isEmpty, nodes.isEmpty, !outline.isEmpty {
+                    NoFilterResults()
                 } else if outline.isEmpty {
                     ContentUnavailableView("No Sections", systemImage: "list.bullet.indent")
                 }

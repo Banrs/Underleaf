@@ -655,3 +655,29 @@ struct ViewsTests {
         func validates(_ command: MenuCommand) -> Bool { false }
     }
 }
+
+struct FilterKindTests {
+    private let defaults = TestDefaults()
+
+    private func item(_ kind: Severity, _ text: String, _ topic: Topic? = nil) -> LogItem {
+        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), explain: nil, fix: nil,
+                topic: topic)
+    }
+
+    @Test func aKindTheMenuHidesLeavesTheIssueListAndComesBackWhenShownAgain() {
+        let navigator = ProjectModel(id: "P", window: defaults.window()).navigator
+        let (error, reference) = (item(.error, "Missing $ inserted."), item(.warning, "There were undefined references.", .undefinedReference))
+        navigator.hiddenIssueKinds = [.undefinedReference]
+        #expect(navigator.rows(of: [error, reference]).map(\.element) == [error])
+        navigator.hiddenIssueKinds = []
+        navigator.showsOnlyErrors = true
+        #expect(navigator.rows(of: [error, reference]).map(\.element) == [error])
+        #expect(navigator.hiddenIssueKinds == IssueKind.warnings)
+        navigator.hiddenIssueKinds.insert(.error)
+        #expect(navigator.rows(of: [error, reference]).isEmpty)
+        navigator.showsOnlyErrors = false
+        #expect(navigator.hiddenIssueKinds == [.error])
+        navigator.hiddenIssueKinds = []
+        #expect(navigator.rows(of: [error, reference]).map(\.element) == [error, reference])
+    }
+}

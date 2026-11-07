@@ -44,6 +44,12 @@ impl Document {
         Self(Arc::new(Cell { id, text, tx, scan }))
     }
 
+    // A document of no session: nothing receives what it would tell one.
+    pub fn detached(text: &str) -> Self {
+        let (tx, _) = mpsc::unbounded_channel();
+        Self::new(0, "", text, tx, Arc::default())
+    }
+
     pub fn edit(
         &self,
         start: u32,
@@ -163,5 +169,14 @@ mod tests {
         assert!(document.edit(0, 0, "late ", None, false).is_none());
         document.restore("late");
         assert_eq!(document.snapshot(), ("typed text".into(), 1));
+    }
+
+    #[test]
+    fn a_restore_to_the_text_already_held_is_no_edit() {
+        let document = Document::detached("text");
+        document.restore("text");
+        assert_eq!(document.version(), 0);
+        document.restore("restored");
+        assert_eq!(document.snapshot(), ("restored".into(), 1));
     }
 }

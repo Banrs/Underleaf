@@ -10,7 +10,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::skip_unreadable;
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, identity, relative};
+use crate::paths::{Project, identity, same_folded};
 use crate::settings::read_settings;
 
 #[derive(Serialize, JsonSchema)]
@@ -62,7 +62,7 @@ fn entries(
             continue;
         };
         let path = entry.path();
-        let Some(rel) = relative(root, &path) else {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             if whole {
                 return Err(CoreError::bad_request(messages::not_utf8_name(
                     path.display(),
@@ -70,13 +70,14 @@ fn entries(
             }
             continue;
         };
+        // What `relative` would make of the path, without walking the root's components for every entry.
+        let rel = folder.map_or_else(|| name.clone(), |f| format!("{}/{name}", f.rel));
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };
         let symlink = kind.is_symlink();
         let dir = kind.is_dir() || symlink && path.is_dir();
         if keep(&rel) && (dir || kind.is_file() || symlink && path.is_file()) {
-            let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
             out.push(Entry {
                 path,
                 rel,
@@ -162,7 +163,7 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
                 None
             };
             found.push(TreeNode {
-                main: !entry.dir && fold_case(&entry.rel) == main,
+                main: !entry.dir && same_folded(&entry.rel, main),
                 path: entry.rel,
                 kind: (!entry.dir).then(|| file_kind(&entry.name)),
                 name: entry.name,
@@ -173,7 +174,7 @@ pub fn file_tree(project: &Project) -> Result<Vec<TreeNode>, CoreError> {
     }
     let main = read_settings(&project.settings).main_file;
     let walked = &mut walked_from(&project.root);
-    nodes(project, None, walked, &fold_case(&main))
+    nodes(project, None, walked, &main)
 }
 
 #[cfg(test)]

@@ -84,6 +84,24 @@ struct PaneTests {
         #expect(!inFind())
     }
 
+    @Test func aFilterToggleFillsWithTheAccentColourWhileOnAndTheFiltersSymbolStaysItselfWhenPressed() throws {
+        let defaults = TestDefaults()
+        let (window, workspace) = open(defaults.window())
+        defer { workspace.close(); window.close() }
+        let bar = try #require(workspace.splitViewItems[0].bottomAlignedAccessoryViewControllers.first?.view as? NavigatorFilterBar)
+        bar.layoutSubtreeIfNeeded()
+        let button = try #require((bar.descendants(of: NSSearchField.self).first?.cell as? NSSearchFieldCell)?.searchButtonCell)
+        #expect(button.image != nil && button.alternateImage === button.image)
+
+        let toggle = try #require(bar.descendants(of: FilterToggle.self).first { !$0.isHidden })
+        #expect(!toggle.isOn && toggle.contentTintColor == nil)
+        toggle.performClick(nil)
+        #expect(toggle.isOn && toggle.contentTintColor == .controlAccentColor)
+        #expect(workspace.project.navigator.showsOnlyRecentFiles)
+        toggle.performClick(nil)
+        #expect(!toggle.isOn && toggle.contentTintColor == nil && !workspace.project.navigator.showsOnlyRecentFiles)
+    }
+
     @Test func theStandardActionsCollapseAndRestoreTheSidebarAndTheInspectorFromAnywhereInTheWindow() async throws {
         let defaults = TestDefaults()
         let model = defaults.window()

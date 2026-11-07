@@ -9,7 +9,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, relative, safe_rel_file};
+use crate::paths::{Project, fold_case, relative, safe_rel_file, same_folded};
 use crate::projects::{is_litter, walk};
 use crate::settings::{Engine, granted, read_settings};
 use crate::{SETTINGS_FILE, atomic};
@@ -21,11 +21,7 @@ pub(crate) fn export_zip(project: &Project, dest: &Path, for_arxiv: bool) -> Res
     };
     let folder = dest.parent().unwrap_or(Path::new("."));
     let (file, temp) = atomic::create_temp(folder).map_err(CoreError::at(dest))?;
-    let replaced = |rel: &str| {
-        added
-            .iter()
-            .any(|(path, _)| fold_case(path) == fold_case(rel))
-    };
+    let replaced = |rel: &str| added.iter().any(|(path, _)| same_folded(path, rel));
     let own = relative(&project.root, dest);
     let mut writer = ZipWriter::new(file);
     walk(

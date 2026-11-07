@@ -14,10 +14,14 @@ use crate::{lock, sys};
 const MAX_OUTPUT: u64 = 1_000_000;
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
-type Held = Mutex<Option<sys::Group>>;
+#[derive(Default)]
+struct Held {
+    group: Option<sys::Group>,
+    killed: bool,
+}
 
 #[derive(Clone, Default)]
-pub(crate) struct Tree(Arc<Held>);
+pub struct Tree(Arc<Mutex<Held>>);
 
 #[derive(Default)]
 pub(crate) struct Processes(Mutex<Registry>);
@@ -27,7 +31,7 @@ struct Registry {
     quit: bool,
     last: u64,
     owners: HashSet<u64>,
-    trees: Vec<(Option<u64>, Weak<Held>)>,
+    trees: Vec<(Option<u64>, Weak<Mutex<Held>>)>,
 }
 
 impl Processes {
@@ -86,21 +90,27 @@ impl Registry {
 impl Tree {
     fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
         let (child, group) = sys::spawn_group(command)?;
-        Ok((child, Self(Arc::new(Mutex::new(Some(group))))))
+        let tree = Self::default();
+        lock(&tree.0).group = Some(group);
+        Ok((child, tree))
     }
 
-    pub(crate) fn kill(&self) -> bool {
-        let held = lock(&self.0);
-        if let Some(group) = &*held {
+    pub(crate) fn kill(&self) {
+        let mut held = lock(&self.0);
+        if let Some(group) = &held.group {
             sys::kill_group(group);
+            held.killed = true;
         }
-        held.is_some()
+    }
+
+    pub(crate) fn killed(&self) -> bool {
+        lock(&self.0).killed
     }
 
     pub(crate) async fn ended(&self, child: &mut Child) -> io::Result<ExitStatus> {
         let pid = child.id().expect("not reaped yet");
         let _ = tokio::task::spawn_blocking(move || sys::wait_exited(pid)).await;
-        if let Some(group) = lock(&self.0).take() {
+        if let Some(group) = lock(&self.0).group.take() {
             sys::kill_group(&group);
         }
         child.wait().await

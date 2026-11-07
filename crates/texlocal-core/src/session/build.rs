@@ -1,5 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -9,35 +9,34 @@ use texlocal_latex::logparse::{Fix, LogItem, Severity};
 use texlocal_latex::message::Message;
 use texlocal_latex::syntax::TextRange;
 
-use super::actor::{Actor, Core, Later, Timer};
+use super::actor::{Actor, Core, Later};
 use super::documents::Docs;
 use super::state::SessionSection;
 use super::{Document, Msg, Pending};
 use crate::CoreError;
-use crate::compile::{CompileManager, CompileResult};
+use crate::compile::{CompileManager, CompileResult, Started};
 use crate::events::{BuildFinished, Event};
 use crate::messages;
 use crate::paths::{Project, disk_spelling};
+use crate::process::Tree;
 use crate::service::Service;
 use crate::{settings, synctex};
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+pub(crate) type Compiling = (Tree, Fut<Result<CompileResult, CoreError>>);
 
 pub trait Compiler: Send + Sync {
-    fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>>;
-    fn stop_compile(&self, root: &Path);
+    fn compile(&self, project: Project, auto: bool) -> Compiling;
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>>;
 }
 
 impl Compiler for Arc<Service> {
-    fn compile(&self, project: Project, auto: bool) -> Fut<Result<CompileResult, CoreError>> {
+    fn compile(&self, project: Project, auto: bool) -> Compiling {
         let started = self.compile.start(&project, &self.tool_paths().0);
+        let tree = started.as_ref().map(Started::tree).unwrap_or_default();
         let service = Self::clone(self);
-        Box::pin(async move { service.compile.wait(started?, auto).await })
-    }
-
-    fn stop_compile(&self, root: &Path) {
-        self.compile.stop(root);
+        let build = async move { service.compile.wait(started?, auto).await };
+        (tree, Box::pin(build))
     }
 
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>> {
@@ -104,6 +103,7 @@ pub(crate) struct Builds {
     pub clock: u64,
     edited_at: HashMap<String, u64>,
     compiling: bool,
+    compile: Tree,
     queued: Option<bool>,
     auto: bool,
     built: u64,
@@ -115,30 +115,17 @@ pub(crate) struct Builds {
     checked: u64,
     marked: BTreeSet<String>,
     cleaners: Vec<Pending<()>>,
-    cleaning: Option<(bool, u64)>,
+    cleaning: bool,
 }
 
 impl Builds {
     pub fn busy(&self) -> bool {
-        self.compiling || self.cleaning.is_some()
+        self.compiling || self.cleaning
     }
 
     fn built(&self) -> impl Iterator<Item = &LogItem> {
         let result = self.result.iter();
         result.flat_map(|result| result.errors.iter().chain(&result.warnings))
-    }
-
-    fn covered(&self, check: &LogItem) -> bool {
-        let same = |issue: &LogItem| issue.file == check.file && issue.line == check.line;
-        self.built().any(same)
-    }
-
-    fn checks(&self) -> impl Iterator<Item = &LogItem> {
-        self.checks.iter().filter(|check| !self.covered(check))
-    }
-
-    fn listed(&self) -> impl Iterator<Item = &LogItem> {
-        self.built().chain(self.checks())
     }
 
     pub fn waits(&mut self, cx: &Core, auto: bool) -> bool {
@@ -156,17 +143,17 @@ impl Builds {
         (self.compiling, self.auto) = (true, auto);
         self.built = self.clock;
         self.publish(cx, docs);
-        let (build, tx) = (cx.compiler.compile(cx.project.clone(), auto), cx.tx.clone());
+        let (compile, build) = cx.compiler.compile(cx.project.clone(), auto);
+        let tx = cx.tx.clone();
+        self.compile = compile;
         tokio::spawn(async move {
             let _ = tx.send(Msg::BuildDone(build.await));
         });
     }
 
-    pub fn stop(&mut self, cx: &Core) {
+    pub fn stop(&mut self) {
         self.queued = None;
-        if self.compiling {
-            cx.compiler.stop_compile(&cx.project.root);
-        }
+        self.compile.kill();
     }
 
     pub fn tex_found(&mut self, cx: &mut Core) {
@@ -180,7 +167,6 @@ impl Builds {
         &mut self,
         cx: &mut Core,
         result: Result<CompileResult, CoreError>,
-        live: (bool, u64),
     ) -> (Option<bool>, Built) {
         let mut result = result.unwrap_or_else(|err| CompileResult {
             errors: vec![LogItem::error(err.message)],
@@ -212,7 +198,7 @@ impl Builds {
         (self.result, self.result_edits) = (Some(result), self.built);
         self.compiling = false;
         if !self.cleaners.is_empty() {
-            self.start_clean(cx, live);
+            self.start_clean(cx);
         }
         let built = Built(log, BuildFinished { auto, announce });
         (self.queued.take(), built)
@@ -226,6 +212,16 @@ impl Builds {
     }
 
     pub fn publish(&mut self, cx: &mut Core, docs: &Docs) {
+        let place = |issue: &LogItem| (issue.file.clone(), issue.line);
+        let built: HashSet<_> = self.built().map(place).collect();
+        // A check on a line the build already flagged is left out.
+        let covered = |check: &LogItem| built.contains(&place(check));
+        let checks = self.checks.iter().filter(|check| !covered(check));
+        let listed: Vec<LogItem> = self.built().chain(checks).cloned().collect();
+        let mut first = HashMap::new();
+        for (index, issue) in listed.iter().enumerate() {
+            first.entry(place(issue)).or_insert(index);
+        }
         let lines = docs.iter().filter_map(|(path, doc)| {
             let edits = self.edited_at.get(path).copied().unwrap_or(0);
             let shown = edits <= self.result_edits;
@@ -233,12 +229,8 @@ impl Builds {
             let checks = self
                 .checks
                 .iter()
-                .filter(|check| edits <= self.checked && !(shown && self.covered(check)));
-            let index = |line| {
-                let on =
-                    |item: &LogItem| item.file.as_ref() == Some(path) && item.line == Some(line);
-                self.listed().position(on)
-            };
+                .filter(|check| edits <= self.checked && !(shown && covered(check)));
+            let index = |line| first.get(&(Some(path.clone()), Some(line))).copied();
             let lines = issue_lines(built.chain(checks), path, &doc.doc, index);
             (!lines.is_empty()).then(|| (path.clone(), lines))
         });
@@ -247,8 +239,8 @@ impl Builds {
             auto: self.compiling && self.auto,
             outdated: self.outdated,
             result: self.result.clone(),
-            issues: self.listed().cloned().collect(),
             lines: lines.collect(),
+            issues: listed,
         };
         self.marked = build.lines.keys().cloned().collect();
         cx.publish(SessionSection::Build(build));
@@ -276,22 +268,22 @@ impl Builds {
         cx.pdf.built = built_pdf(&cx.project);
         cx.publish_pdf();
         let building = self.compiling;
-        self.stop(cx);
+        self.stop();
         if cx.auto_compile || building {
             cx.later.push_back(Later::Compile(cx.auto_compile));
         }
     }
 
-    pub fn clean(&mut self, cx: &Core, live: (bool, u64), reply: Pending<()>) {
-        self.stop(cx);
+    pub fn clean(&mut self, cx: &Core, reply: Pending<()>) {
+        self.stop();
         self.cleaners.push(reply);
-        if !self.compiling && self.cleaning.is_none() {
-            self.start_clean(cx, live);
+        if !self.compiling && !self.cleaning {
+            self.start_clean(cx);
         }
     }
 
-    fn start_clean(&mut self, cx: &Core, live: (bool, u64)) {
-        self.cleaning = Some(live);
+    fn start_clean(&mut self, cx: &Core) {
+        self.cleaning = true;
         let (clean, tx) = (cx.compiler.clean(cx.project.build.clone()), cx.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Msg::Cleaned(clean.await));
@@ -303,9 +295,10 @@ impl Builds {
         cx: &mut Core,
         docs: &Docs,
         result: Result<(), CoreError>,
-        (_, asked): (bool, u64),
     ) -> Option<bool> {
-        let (live, intent) = self.cleaning.take()?;
+        if !std::mem::take(&mut self.cleaning) {
+            return None;
+        }
         if result.is_ok() {
             (cx.pdf.built, self.outdated, self.result) = (None, false, None);
             self.publish(cx, docs);
@@ -319,7 +312,7 @@ impl Builds {
         for reply in std::mem::take(&mut self.cleaners) {
             reply.send(result.clone());
         }
-        Some(result.is_ok() && live && intent == asked)
+        Some(result.is_ok())
     }
 
     pub fn checks_done(&mut self, cx: &mut Core, docs: &Docs, checks: Vec<LogItem>, edits: u64) {
@@ -355,7 +348,7 @@ impl Actor {
         if !result.as_ref().is_ok_and(|result| result.stopped) {
             self.live.rescan();
         }
-        let (queued, built) = self.builds.done(&mut self.core, result, self.live.asked());
+        let (queued, built) = self.builds.done(&mut self.core, result);
         if let Some(auto) = queued {
             let _ = self.compile(auto);
         }
@@ -364,10 +357,9 @@ impl Actor {
     }
 
     pub fn cleaned(&mut self, result: Result<(), CoreError>) {
-        let (cx, live) = (&mut self.core, self.live.asked());
-        if let Some(restart) = self.builds.cleaned(cx, &self.docs, result, live) {
-            if restart {
-                cx.after(Timer::Restart);
+        if let Some(ok) = self.builds.cleaned(&mut self.core, &self.docs, result) {
+            if ok {
+                self.live.restart_soon(&mut self.core);
             }
             self.close_when_idle();
         }

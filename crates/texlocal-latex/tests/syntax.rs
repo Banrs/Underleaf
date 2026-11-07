@@ -103,6 +103,25 @@ fn control_symbols_are_commands_in_text_and_maths() {
 }
 
 #[test]
+fn a_full_stop_in_maths_is_plain_unless_it_starts_a_number() {
+    let mut doc = SourceDocument::new("\\[ f(x). \\] $a.b$ $.5$");
+    let found = [
+        ("\\[", "Maths"),
+        ("f", "Maths"),
+        ("x", "Maths"),
+        ("\\]", "Maths"),
+        ("$", "Maths"),
+        ("a", "Maths"),
+        ("b", "Maths"),
+        ("$", "Maths"),
+        ("$", "Maths"),
+        (".5", "Maths"),
+        ("$", "Maths"),
+    ];
+    assert_eq!(kinds(&mut doc), pairs(&found));
+}
+
+#[test]
 fn highlighting_carries_maths_and_verbatim_across_lines_and_follows_edits() {
     let mut doc = SourceDocument::new("\\[\na\n\\]\nb");
     let maths = [("\\[", "Maths"), ("a", "Maths"), ("\\]", "Maths")];

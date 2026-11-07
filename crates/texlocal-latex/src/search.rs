@@ -83,6 +83,14 @@ impl Query {
 }
 
 pub fn score(query: &str, text: &str) -> Option<i64> {
+    // A text scores only if the query is a subsequence of it, which is quicker to rule out first.
+    let mut wanted = query.chars().map(fold).peekable();
+    for c in text.chars() {
+        wanted.next_if_eq(&fold(c));
+    }
+    if wanted.peek().is_some() {
+        return None;
+    }
     let text: Vec<char> = text.chars().collect();
     let word_start = |at: usize| {
         at == 0

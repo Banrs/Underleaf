@@ -229,6 +229,7 @@ final class ProjectModel {
         case .lifecycle, .buildLog, .liveLog: break
         case .tree: tree.arrived()
         case .openFile, .outline:
+            if case .openFile(let file?) = section { navigator.opened(file.path) }
             let now = analysis?.outline ?? []
             if now != outline { outline = now }
             findHeadings()
@@ -279,21 +280,37 @@ final class ProjectModel {
     @discardableResult
     func save(reporting: Bool = true) async -> Bool {
         do {
-            return try await session.call(Save(reporting: reporting))
-        } catch _ where store.lifecycle?.stopped != nil || !initialLoadComplete {
-            return discarded || lostEdits.isEmpty
+            return try await saved(reporting: reporting)
         } catch {
             if reporting { window?.report(notSavedTitle(), error) }
             return error is CancellationError
         }
     }
 
-    private var lostEdits: [String] { store.lifecycle?.stopped?.unsaved ?? [] }
+    /// A stopped core can't save, so then it's whether there's nothing to lose.
+    private func saved(reporting: Bool) async throws -> Bool {
+        do {
+            return try await session.call(Save(reporting: reporting))
+        } catch _ where discarded || store.lifecycle?.stopped != nil || !initialLoadComplete {
+            return discarded || lostEdits.isEmpty
+        }
+    }
 
+    /// The files whose edits closing would lose: all of them once the core has stopped, else those it couldn't write.
+    private var lostEdits: [String] {
+        store.lifecycle?.stopped?.unsaved ?? store.documents.filter { $0.error != nil }.map(\.path)
+    }
+
+    /// Saves, or when a file can't be saved asks whether to close without it.
     func saveBeforeLeaving() async -> Bool {
-        if await save() { return true }
+        do {
+            if try await saved(reporting: true) { return true }
+        } catch where lostEdits.isEmpty {
+            window?.report(notSavedTitle(), error)
+            return error is CancellationError
+        } catch {}
         let lost = lostEdits
-        guard !lost.isEmpty, discardAnswer == nil else { return false }
+        guard !lost.isEmpty, conflicts.isEmpty, discardAnswer == nil else { return false }
         window?.controller?.show()
         askingToDiscard = lost
         discarded = await withCheckedContinuation { discardAnswer = $0 }
@@ -422,7 +439,12 @@ final class ProjectModel {
 
     func answer(_ path: String, _ answer: Resolution) {
         answered.insert(path)
-        session.send(Resolve(path: path, answer: answer), else: reporting(notSavedTitle(path)))
+        let report = reporting(notSavedTitle(path))
+        session.send(Resolve(path: path, answer: answer)) { [weak self] error in
+            // The core still asks, so the question shows again.
+            self?.answered.remove(path)
+            report(error)
+        }
     }
 
     @discardableResult
@@ -431,7 +453,7 @@ final class ProjectModel {
         let task = Task { [self] in
             defer { closing = nil }
             do {
-                guard try await session.close() else { return false }
+                guard try await session.close(discarding: discarded) else { return false }
             } catch {
                 window?.report(notSavedTitle(), error)
                 return false

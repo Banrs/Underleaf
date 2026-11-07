@@ -37,14 +37,14 @@ requests! {
     Session(actor: Actor, pending) {
         OpenProject { id: String, auto_compile: bool } -> UiState
             = Err(CoreError::conflict(messages::session_open())),
-        CloseProject {} -> bool => actor.close(pending),
+        CloseProject { discard: Option<bool> } -> bool => actor.close(discard == Some(true), pending),
         SetOptions { auto_compile: bool } -> () = Ok(actor.core.auto_compile = auto_compile),
         Open { path: RelPath } -> Option<String> = actor.open(&path.0),
         Save { reporting: bool } -> bool = actor.docs.save_edits(&mut actor.core, reporting),
         Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
         Compile { auto: bool } -> () = actor.compile(auto),
-        StopCompile {} -> () = Ok(actor.builds.stop(&actor.core)),
-        Clean {} -> () => actor.builds.clean(&actor.core, actor.live.asked(), pending),
+        StopCompile {} -> () = Ok(actor.builds.stop()),
+        Clean {} -> () => actor.builds.clean(&actor.core, pending),
         Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>
             => actor.search(Query::new(&query, match_case, whole_word), pending),
         FindUsages { path: RelPath, offset: u32 } -> Option<Usages> => actor.usages(&path.0, offset, pending),
@@ -267,6 +267,7 @@ impl Actor {
                     None => {}
                 }
                 self.run_later();
+                self.close_hidden();
             }));
             if step.is_err() {
                 return self.stopped(&mut rx);
@@ -299,7 +300,7 @@ impl Actor {
     fn stopped(&mut self, rx: &mut mpsc::UnboundedReceiver<Msg>) {
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let _ = self.docs.flush_all(&mut self.core, false);
-            self.builds.stop(&self.core);
+            self.builds.stop();
             self.live.stop(&mut self.core, &self.docs);
         }));
         self.core.stop_history();
@@ -329,9 +330,7 @@ impl Actor {
     fn handle(&mut self, message: Msg) {
         if let Stage::Closing(_, closes) = &mut self.stage {
             return match message {
-                Msg::Command(Session::CloseProject(_, answer), reply) => {
-                    closes.push(Pending { reply, answer });
-                }
+                Msg::Command(Session::CloseProject(_), reply) => closes.push(Pending::new(reply)),
                 Msg::Command(_, reply) => reply.send(Err(super::gone())),
                 Msg::BuildDone(result) => self.build_done(result),
                 Msg::Cleaned(result) => self.cleaned(result),
@@ -401,9 +400,11 @@ impl Actor {
         }
     }
 
-    fn close(&mut self, reply: Pending<bool>) {
-        match self.docs.flush_all(&mut self.core, true) {
+    /// Saves first; discarding, it saves what it can and closes anyway.
+    fn close(&mut self, discard: bool, reply: Pending<bool>) {
+        match self.docs.flush_all(&mut self.core, !discard) {
             Ok(true) => {}
+            _ if discard => {}
             flushed => return reply.send(flushed),
         }
         let Stage::Open(held) = std::mem::replace(&mut self.stage, Stage::Closed) else {
@@ -412,7 +413,7 @@ impl Actor {
         self.stage = Stage::Closing(held, vec![reply]);
         self.core
             .publish(SessionSection::Lifecycle(Lifecycle::Closing));
-        self.builds.stop(&self.core);
+        self.builds.stop();
         self.live.stop(&mut self.core, &self.docs);
         self.docs.clear();
         self.core.timers.clear();

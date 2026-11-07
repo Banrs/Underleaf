@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
 use texlocal_latex::diff::{DiffLine, compare, edit_to};
 
 use super::actor::{Actor, Core};
@@ -51,7 +52,7 @@ impl Core {
 }
 
 impl Actor {
-    fn beside<T: 'static>(
+    fn beside<T: Serialize + 'static>(
         &self,
         job: impl FnOnce(&History) -> Result<T, CoreError> + Send + 'static,
         reply: Pending<T>,
@@ -104,7 +105,7 @@ impl Actor {
         self.beside(compared, reply);
     }
 
-    fn then_on_actor<U: Send + 'static, T: 'static>(
+    fn then_on_actor<U: Send + 'static, T: Serialize + 'static>(
         &mut self,
         job: impl FnOnce(&History) -> Result<U, CoreError> + Send + 'static,
         then: impl FnOnce(&mut Self, U) -> Result<T, CoreError> + Send + 'static,
@@ -139,7 +140,7 @@ impl Actor {
         });
     }
 
-    pub fn before<T: 'static>(
+    pub fn before<T: Serialize + 'static>(
         &mut self,
         reason: Reason,
         then: Result<Then<T>, CoreError>,
@@ -163,10 +164,9 @@ impl Actor {
         paths: Option<Vec<RelPath>>,
         reply: Pending<ProjectEdits>,
     ) {
-        let open = match self.texts_to_edit() {
-            Ok(open) => open,
-            Err(err) => return reply.send(Err(err)),
-        };
+        if let Err(err) = self.text_to_edit() {
+            return reply.send(Err(err));
+        }
         let project = self.core.project.clone();
         let restore = move |history: &History| {
             let chosen = |path: &str| {
@@ -174,29 +174,27 @@ impl Actor {
                     .as_ref()
                     .is_none_or(|paths| paths.iter().any(|p| p.0 == path))
             };
-            let (mut edits, mut others) = (Vec::new(), Vec::new());
-            for (path, bytes) in history.files(&id, chosen)? {
-                match open.iter().find(|(open, ..)| *open == path) {
-                    Some((_, text, version)) => {
-                        if let Some(edit) = edit_to(text, &lf(lossy_string(bytes))) {
-                            let version = *version;
-                            edits.push(DocumentEdits {
+            let files = history.files(&id, chosen)?;
+            let snapshot = history.take(&project, now(), Taken::Before(Reason::Restore))?;
+            Ok((files, snapshot.map(|id| id.to_string())))
+        };
+        let put_back = |actor: &mut Self, (files, snapshot): (Vec<(String, Vec<u8>)>, _)| {
+            let open = actor.text_to_edit()?;
+            let (mut edits, mut others) = (None, Vec::new());
+            for (path, bytes) in files {
+                match &open {
+                    Some(open) if open.path == path => {
+                        edits = edit_to(&open.text, &lf(lossy_string(bytes))).map(|edit| {
+                            DocumentEdits {
                                 path,
-                                version,
+                                version: open.version,
                                 edits: vec![edit],
-                            });
-                        }
+                            }
+                        });
                     }
-                    None => others.push((path, bytes)),
+                    _ => others.push((path, bytes)),
                 }
             }
-            if edits.len() > 1 {
-                return Err(CoreError::conflict(messages::one_document()));
-            }
-            let snapshot = history.take(&project, now(), Taken::Before(Reason::Restore))?;
-            Ok((edits.pop(), others, snapshot.map(|id| id.to_string())))
-        };
-        let put_back = |actor: &mut Self, (edits, others, snapshot)| {
             let written = projects::put_back(&actor.core.project, others)?;
             if !written.is_empty() {
                 actor.reload_tree();

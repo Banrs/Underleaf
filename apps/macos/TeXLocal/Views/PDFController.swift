@@ -154,8 +154,8 @@ final class PDFController: NSObject {
         }
     }
 
-    /// Parses the PDF and touches every page, which creates it here rather than on the main thread when the view lays
-    /// the document out (measured on 392 pages: a swap takes 23–28 ms on the main thread without this, 7–8 ms with it).
+    /// Parses the PDF and touches every page here, off the main thread, so laying out the view doesn't have to. On 392
+    /// pages that cut a swap's main-thread time from 23–28 ms to 7–8 ms.
     @concurrent static func loadDocument(_ url: URL, covering wanted: CoverPages = CoverPages()) async -> sending LoadedPDF? {
         signposts.withIntervalSignpost("pdf.load") {
             guard let data = try? Data(contentsOf: url), let document = PDFDocument(data: data), document.pageCount > 0 else { return nil }

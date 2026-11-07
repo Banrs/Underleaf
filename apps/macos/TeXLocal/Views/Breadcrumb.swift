@@ -110,10 +110,9 @@ final class Breadcrumb: NSView {
         for (index, (item, frame)) in zip(items, frames).enumerated() {
             let lit = index == hovered || index == open
             if lit {
+                // As in Xcode, the highlight covers the item's 17 pt pop-up, 1 pt inside the 19 pt row.
                 (dark ? NSColor.white : .black).withAlphaComponent(0.05).setFill()
-                let height = min(frame.height, 21)
-                let rect = NSRect(x: frame.minX, y: frame.midY - height / 2, width: frame.width, height: height)
-                NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+                NSBezierPath(roundedRect: frame.insetBy(dx: 0, dy: 1), xRadius: 4, yRadius: 4).fill()
             }
             let color: NSColor = item.chosen != 0 ? .controlAccentColor : active ? .labelColor : dimmed
             let title = NSAttributedString(string: item.choices[item.chosen], attributes: [.font: Self.font, .foregroundColor: color])
@@ -133,6 +132,8 @@ final class Breadcrumb: NSView {
 
     override func viewWillMove(toWindow window: NSWindow?) {
         watch.forEach(NotificationCenter.default.removeObserver)
+        // With no window, `object: nil` would hear every window.
+        guard let window else { return watch = [] }
         watch = [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification].map {
             NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.needsDisplay = true }
@@ -211,7 +212,7 @@ final class Breadcrumb: NSView {
         }
 
         override func accessibilityPerformPress() -> Bool {
-            // The menu opens after the press returns, as a pop-up button's does, rather than tracking inside the request.
+            // Opened after the press returns, as a pop-up button's menu is, not while tracking.
             Task { @MainActor [press] in press() }
             return true
         }

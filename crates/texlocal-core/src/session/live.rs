@@ -84,7 +84,6 @@ pub(crate) struct Live {
     wanted: Option<(String, usize)>,
     caret: Option<(String, usize)>,
     disk_paths: BTreeSet<String>,
-    intent: u64,
     generation: u64,
     issues: Vec<Issue>,
     follow: bool,
@@ -95,11 +94,6 @@ pub(crate) struct Live {
 impl Live {
     pub fn active(&self) -> bool {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
-    }
-
-    /// Whether a preview runs, and the count of starts and stops asked, which tell a clean whether to restart it.
-    pub fn asked(&self) -> (bool, u64) {
-        (self.active(), self.intent)
     }
 
     pub fn typeset(&self) -> &HashMap<String, Arc<str>> {
@@ -187,7 +181,6 @@ impl Live {
     }
 
     fn cancel_work(&mut self, cx: &mut Core) {
-        self.intent += 1;
         cx.timers.remove(&Timer::Restart);
         cx.timers.remove(&Timer::Disk);
         self.disk_paths.clear();

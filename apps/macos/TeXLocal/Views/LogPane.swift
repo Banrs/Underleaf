@@ -3,16 +3,17 @@ import SwiftUI
 struct LogPane: View {
     let text: String
     let filter: String
+    let hiddenKinds: Set<LogKind>
     let title: String
-    @State private var filtered: (filter: String, lines: String)?
+    @State private var filtered: String?
 
     var body: some View {
-        let current = filtered?.filter == filter ? filtered?.lines : nil
-        let previous = filtered.flatMap { $0.lines.isEmpty ? nil : $0.lines }
-        let shown = filter.isEmpty ? text : current ?? previous ?? text
+        let filtering = !filter.isEmpty || !hiddenKinds.isEmpty
+        // Until a new filter's lines arrive, the last filter's stay, even if there were none.
+        let shown = filtering ? filtered ?? text : text
         Group {
-            if shown.isEmpty {
-                ContentUnavailableView.search(text: filter)
+            if shown.isEmpty, filtering {
+                NoFilterResults()
             } else {
                 GeometryReader { geometry in
                     LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
@@ -20,17 +21,20 @@ struct LogPane: View {
                 }
             }
         }
-        .task(id: [text, filter]) {
-            guard !filter.isEmpty else { return filtered = nil }
-            if let lines = await Self.lines(of: text, with: filter), !Task.isCancelled { filtered = (filter, lines) }
+        .task(id: [text, filter, hiddenKinds.map(\.title).sorted().joined(separator: ",")]) {
+            guard filtering else { return filtered = nil }
+            if let lines = await Self.lines(of: text, with: filter, hiding: hiddenKinds), !Task.isCancelled { filtered = lines }
         }
     }
 
-    @concurrent private nonisolated static func lines(of text: String, with filter: String) async -> String? {
+    @concurrent private nonisolated static func lines(of text: String, with filter: String, hiding hidden: Set<LogKind>) async -> String? {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let kinds = hidden.isEmpty ? nil : Syntax.call(LogKinds(log: text)).flatMap { $0.count == lines.count ? $0 : nil }
         var kept: [Substring] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        for (index, line) in lines.enumerated() {
             if Task.isCancelled { return nil }
-            if line.localizedCaseInsensitiveContains(filter) { kept.append(line) }
+            if let kinds, hidden.contains(kinds[index]) { continue }
+            if filter.isEmpty || line.localizedCaseInsensitiveContains(filter) { kept.append(line) }
         }
         return kept.joined(separator: "\n")
     }

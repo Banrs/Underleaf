@@ -1,6 +1,5 @@
 use schemars::Schema;
 use schemars::generate::SchemaSettings;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use texlocal_latex::messages;
@@ -11,12 +10,6 @@ use crate::CoreError;
 use crate::events::Said;
 use crate::service::{Library, LibrarySection};
 use crate::session::{Session, SessionSection};
-
-pub(crate) type Answer<T> = fn(Result<T, CoreError>) -> Result<Value, CoreError>;
-
-pub(crate) fn answer<T: Serialize>(result: Result<T, CoreError>) -> Result<Value, CoreError> {
-    result.map(|value| json!(value))
-}
 
 pub(crate) fn arguments<T: DeserializeOwned>(args: Value) -> Result<T, CoreError> {
     serde_json::from_value(args)
@@ -65,9 +58,26 @@ pub fn protocol() -> Protocol {
     }
 }
 
-/// Declares a group of requests, and with an actor and a name for the pending answer, what each one runs:
-/// `= expr` answers now with its result, and `=> expr` hands the pending answer to the handler it calls.
+/// Declares a group of requests and what each one runs: `= expr` answers with its result, and may await in an
+/// `async` group. With an actor and a name for the pending answer, `=> expr` hands that answer to the handler it calls.
 macro_rules! requests {
+    ($group:ident(async $on:ident: $target:ty) {
+        $($request:ident { $($field:ident: $type:ty),* $(,)? } -> $reply:ty = $answer:expr,)*
+    }) => {
+        $crate::protocol::requests!($group { $($request { $($field: $type),* } -> $reply,)* });
+
+        impl $group {
+            #[allow(clippy::unit_arg)]
+            pub(crate) async fn run(self, $on: &$target) -> Result<serde_json::Value, $crate::CoreError> {
+                match self {
+                    $(Self::$request($request { $($field),* }) => {
+                        let answer: Result<$reply, $crate::CoreError> = $answer;
+                        answer.map(|value| serde_json::json!(value))
+                    })*
+                }
+            }
+        }
+    };
     ($group:ident($actor:ident: $target:ty, $pending:ident) {
         $($request:ident { $($(#[$attr:meta])* $field:ident: $type:ty),* $(,)? } -> $reply:ty
             $(= $now:expr)? $(=> $later:expr)?,)*
@@ -78,9 +88,10 @@ macro_rules! requests {
             #[allow(clippy::unit_arg, unused_variables)]
             pub(crate) fn run(self, $actor: &mut $target, reply: Reply) {
                 match self {
-                    $(Self::$request($request { $($field),* }, answer) => {
-                        $(reply.send(answer($now));)?
-                        $(let $pending = Pending { reply, answer }; $later;)?
+                    $(Self::$request($request { $($field),* }) => {
+                        let $pending = Pending::<$reply>::new(reply);
+                        $($pending.send($now);)?
+                        $($later;)?
                     })*
                 }
             }
@@ -94,16 +105,13 @@ macro_rules! requests {
         )*
 
         pub(crate) enum $group {
-            $($request($request, $crate::protocol::Answer<$reply>),)*
+            $($request($request),)*
         }
 
         impl $group {
             pub(crate) fn parse(name: &str, args: serde_json::Value) -> Result<Self, $crate::CoreError> {
                 match name {
-                    $(stringify!($request) => Ok(Self::$request(
-                        $crate::protocol::arguments(args)?,
-                        $crate::protocol::answer,
-                    )),)*
+                    $(stringify!($request) => Ok(Self::$request($crate::protocol::arguments(args)?)),)*
                     _ => Err($crate::protocol::unknown()),
                 }
             }

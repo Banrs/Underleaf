@@ -15,7 +15,7 @@ nonisolated extension TreeNode: Identifiable {
 
     var symbol: String {
         switch kind {
-        case _ where isDirectory: "folder"
+        case _ where isDirectory: "folder.fill"
         case .tex: "text.document"
         case .bib: "books.vertical"
         case .image: "photo"
@@ -45,6 +45,42 @@ nonisolated extension NSRange {
 
 nonisolated extension LogItem {
     var isError: Bool { kind == .error }
+
+    var issueKind: IssueKind {
+        switch topic {
+        case _ where isError: .error
+        case .badBox: .badBox
+        case .undefinedReference: .undefinedReference
+        case nil: .warning
+        }
+    }
+}
+
+/// The kinds of issue the Issues filter's menu shows or hides.
+nonisolated enum IssueKind: CaseIterable, Hashable, Sendable {
+    case error, warning, badBox, undefinedReference
+
+    static let warnings = Set(allCases).subtracting([.error])
+
+    var title: String {
+        switch self {
+        case .error: String(localized: "Errors")
+        case .warning: String(localized: "Warnings")
+        case .badBox: String(localized: "Bad Boxes")
+        case .undefinedReference: String(localized: "Undefined References")
+        }
+    }
+}
+
+nonisolated extension LogKind {
+    var title: String {
+        switch self {
+        case .error: String(localized: "Errors")
+        case .warning: String(localized: "Warnings")
+        case .badBox: String(localized: "Bad Boxes")
+        case .info: String(localized: "Info")
+        }
+    }
 }
 
 nonisolated extension CompileResult {

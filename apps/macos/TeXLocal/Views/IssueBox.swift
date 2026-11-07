@@ -6,8 +6,8 @@ struct IssueBox: View, Equatable {
     let isLive: Bool
     let issues: Int
     let text: String?
-    /// Whether the message is cut at its tail to the room the box is given. One that isn't keeps its text whole, since a box
-    /// measured off screen came out half a point narrower than its text needed at 2x ("Reference undefined", 162 against 162.5 pt).
+    /// Whether the message is truncated to fit the box. Otherwise it stays whole, since a box measured off screen came out
+    /// half a point too narrow for its text at 2x.
     let truncates: Bool
     let font: NSFont
 

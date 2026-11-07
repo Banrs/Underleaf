@@ -59,6 +59,35 @@ fn a_live_synctex_keeps_the_inputs_read_after_one_has_ended() {
     );
 }
 
+#[test]
+fn a_synctex_with_forms_syncs_as_it_would_without_them() {
+    let form =
+        "<1\n(1,9:0,0:100,100,0\nx1,9:10,10\n<2\n[1,9:0,0:10,10,0\n<3\nx1,9:5,5\n>\n]\n>\n)\n>\n";
+    let read = |forms: &str| {
+        let text = format!(
+            "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{forms}{{1\n[1,4:4736287,46220575:26673152,41484288,0\n(1,4:8799519,8865055:22609920,469238,127139\nx1,4:9000000,8865055\ng1,4:10492314,8865055\n)\n]\n{forms}(1,6:8799519,20000000:22609920,469238,127139\nx1,6:9000000,20000000\n)\n}}1\nPostamble:\n"
+        );
+        SyncTex::read(text.into_bytes()).unwrap()
+    };
+    let (plain, formed) = (read(""), read(form));
+    let shown = |synctex: &SyncTex, line| {
+        let found = synctex.forward(1, &at(line));
+        found
+            .iter()
+            .map(|at| (at.page, at.h, at.v, at.width, at.height))
+            .collect::<Vec<_>>()
+    };
+    for line in [4, 6, 9] {
+        assert_eq!(shown(&formed, line), shown(&plain, line), "line {line}");
+    }
+    assert!(shown(&formed, 9).is_empty());
+    for h in (0..60).map(|i| i as f32 * 10.0) {
+        for v in (0..80).map(|i| i as f32 * 10.0) {
+            assert_eq!(formed.inverse(1, h, v), plain.inverse(1, h, v), "{h}, {v}");
+        }
+    }
+}
+
 const PICTURED: &str = "\\documentclass{article}
 \\usepackage{tikz}
 \\begin{document}

@@ -63,23 +63,32 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
-        let old = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
         foldCache = nil
-        if folds.edited(old, delta: delta) { Task { self.relayOutFolds() } }
+        let edits = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
+        if !edits.filter({ folds.edited($0.range, delta: $0.text.utf16.count - $0.length) }).isEmpty { Task { self.relayOutFolds() } }
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
     }
 
+    /// Makes edits given front to back as one undo step, which undoes and redoes through here too, in one TextKit pass:
+    /// NSTextView's own undo replays them one pass each, and took 6 s to undo an indent of 2,000 lines.
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
         guard isEditable, document.editable, !edits.isEmpty else { return false }
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
-        undoManager?.beginUndoGrouping()
-        for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
-            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-            super.didChangeText()
+        var shift = 0
+        let undone = edits.map { edit in
+            let range = NSRange(location: edit.range.location + shift, length: edit.text.utf16.count)
+            shift += range.length - edit.range.length
+            return TextEdit(range, source.substring(with: edit.range))
         }
+        let restored = self.selections
+        undoManager?.beginUndoGrouping()
+        undoManager?.registerUndo(withTarget: self) { $0.apply(undone, named: name, selecting: restored) }
+        undoManager?.disableUndoRegistration()
+        replace(edits.reversed())
+        undoManager?.enableUndoRegistration()
         if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         // The selections are set before mirroring, so the mirror's edits move them as typing's do.
         mirror()
@@ -292,10 +301,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return completions.close()
         }
         let stroke = document.type(typed, replacing: selectedRange(), autoPair: autoPair)
-        if let edit = stroke.edit {
-            super.insertText(edit.text, replacementRange: edit.range)
-        } else if stroke.selection == nil {
-            super.insertText(string, replacementRange: replacementRange)
+        holdingMirror {
+            if let edit = stroke.edit {
+                super.insertText(edit.text, replacementRange: edit.range)
+            } else if stroke.selection == nil {
+                super.insertText(string, replacementRange: replacementRange)
+            }
         }
         finish(stroke)
     }
@@ -317,7 +328,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard isEditable, selectedRanges.count == 1 else { return super.insertNewline(sender) }
         let stroke = document.insertNewline(selectedRange())
         guard let edit = stroke.edit else { return super.insertNewline(sender) }
-        super.insertText(edit.text, replacementRange: edit.range)
+        holdingMirror { super.insertText(edit.text, replacementRange: edit.range) }
         finish(stroke)
     }
 
@@ -333,9 +344,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if hasMarkedText() != document.composing { document.composing.toggle() }
     }
 
+    /// The keystroke's offsets are from before its mirror edits, which then move the selection as they move typing.
     func finish(_ stroke: Keystroke) {
         if let selection = stroke.selection { self.selection = selection.range }
-        if let partner = stroke.partner { showPartner(of: partner) }
+        let mirrored = mirror()
+        if let partner = stroke.partner { showPartner(of: document.map([.caret(partner)], through: mirrored)[0].location) }
         switch stroke.completions {
         case .keep: break
         case .offer: completions.offer()
@@ -392,21 +405,44 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func didChangeText() {
         super.didChangeText()
-        mirror()
+        if !mirrorHeld { mirror() }
     }
 
-    private func mirror() {
+    private var mirrorHeld = false
+
+    private func holdingMirror(_ edit: () -> Void) {
+        mirrorHeld = true
+        edit()
+        mirrorHeld = false
+    }
+
+    @discardableResult
+    private func mirror() -> [TextEdit] {
         let edits = sync.mirror(composing: hasMarkedText())
-        guard !edits.isEmpty else { return }
+        guard !edits.isEmpty else { return [] }
         let kept = document.map(selections, through: edits)
         sync.mirroring = true
-        for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
-            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-            super.didChangeText()
-        }
+        replace(edits)
         sync.mirroring = false
         setSelectedRanges(kept.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
         breakUndoCoalescing()
+        return edits
+    }
+
+    /// Makes edits given back to front in one TextKit pass: a pass per edit updates every paragraph after it and moves the
+    /// selection, which parses for the maths preview, so 2,000 took 15 s. Each edit still asks to change, keeping its undo
+    /// step, and the core takes them one by one.
+    private func replace(_ edits: some Sequence<TextEdit>) {
+        guard let storage = textStorage else { return }
+        var changed = false
+        storage.beginEditing()
+        for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
+            storage.replaceCharacters(in: edit.range, with: edit.text)
+            sync.batch(edit)
+            changed = true
+        }
+        storage.endEditing()
+        if changed { super.didChangeText() }
     }
 
     private func setsCursor(with event: NSEvent) -> Bool {

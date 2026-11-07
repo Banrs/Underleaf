@@ -108,8 +108,8 @@ struct WindowTests {
         #expect(app.windows.count == 2 && windows.allSatisfy { $0.isVisible && $0.tabbingMode == .disallowed && $0.tabbedWindows == nil })
         #expect(windows.map(\.title) == [first.name, second.name] && windows.allSatisfy { $0.subtitle == "main.tex" })
         #expect(windows[1].frame.minX > windows[0].frame.minX && windows[1].frame.maxY < windows[0].frame.maxY)
-        // Front to back on every Space, since `orderedIndex` puts windows off the active Space, as while a full-screen app
-        // holds it, last by window number (measured with the app hidden).
+        // Front to back across every Space: `orderedIndex` puts windows off the active Space last, ordered by window number,
+        // as while a full-screen app holds it.
         let numbers = windows.map(\.windowNumber)
         func order() -> [Int] { NSWindow.windowNumbers(options: .allSpaces)?.map(\.intValue).filter(numbers.contains) ?? [] }
         #expect(order() == numbers.reversed())
@@ -212,6 +212,8 @@ struct WindowTests {
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
         let items = workspace.toolbar.toolbar.items
+        let navigation = try #require(items.first { $0.itemIdentifier == .navigation } as? NSToolbarItemGroup)
+        #expect(navigation.isNavigational && navigation.subitems.count == 2 && navigation.subitems.allSatisfy { !$0.isEnabled })
         let format = try #require(items.first { $0.itemIdentifier == .format })
         model.layout = .pdf
         try await waitUntil { format.isHidden }

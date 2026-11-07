@@ -189,7 +189,16 @@ final class WindowModel {
         return true
     }
 
-    func end() async -> Bool { await restart(&ending, leave).value }
+    /// Joins a leave already under way, so a second Close waits for the first's questions instead of cancelling them.
+    func end() async -> Bool {
+        if let ending { return await ending.value }
+        let task = Task { [self] in
+            defer { ending = nil }
+            return await leave()
+        }
+        ending = task
+        return await task.value
+    }
 
     func windowClosed() { app.closed(self) }
 

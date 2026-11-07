@@ -166,7 +166,7 @@ extension AppModel {
         case .pdfFind, .pdfGotoPage, .viewActualSize, .viewFitWidth, .viewFitPage, .syncInverse:
             project?.hasPDF == true
         case .syncForward: project?.canSyncForward() == true
-        case .issueNext, .issuePrevious: project?.issues.contains { $0.file != nil } == true
+        case .issueNext, .issuePrevious: project?.issuePlaces.isEmpty == false
         case .symbolLibrary: true
         default: project != nil
         }

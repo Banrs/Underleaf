@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::files::{Planned, inside, write_all};
 use super::tree::visit_files;
-use super::{read_capped, skip_unreadable};
+use super::{MAX_FILES, read_capped, skip_unreadable};
 use crate::atomic::{self, Flush};
 use crate::error::CoreError;
 use crate::messages;
@@ -136,7 +136,8 @@ impl History {
     }
 
     fn files_now(&self, project: &Project) -> Result<BTreeMap<String, String>, CoreError> {
-        static HASHES: Kept<Option<String>> = Kept::holding(16_384);
+        // Holds two of the largest projects, as one snapshot past capacity would hash every file again.
+        static HASHES: Kept<Option<String>> = Kept::holding(2 * MAX_FILES);
         let objects = self.objects();
         let mut files = BTreeMap::new();
         visit_files(project, &mut |abs, rel| {

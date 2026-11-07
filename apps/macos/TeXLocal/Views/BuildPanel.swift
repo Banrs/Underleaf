@@ -9,11 +9,13 @@ struct BuildPanel: View {
                 ContentUnavailableView(project.texpresso.title, systemImage: "bolt", description: Text(
                     project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
             } else if project.panel.tab == .texpresso {
-                LogPane(text: project.texpresso.log, filter: project.panel.logFilter, title: PanelTab.texpresso.title)
+                LogPane(text: project.texpresso.log, filter: project.panel.logFilter, hiddenKinds: project.panel.hiddenLogKinds,
+                        title: PanelTab.texpresso.title)
             } else if project.buildLog.isEmpty {
                 ContentUnavailableView("No Build Log", systemImage: "text.page", description: Text("Compile to see the log here."))
             } else {
-                LogPane(text: project.buildLog, filter: project.panel.logFilter, title: PanelTab.log.title)
+                LogPane(text: project.buildLog, filter: project.panel.logFilter, hiddenKinds: project.panel.hiddenLogKinds,
+                        title: PanelTab.log.title)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -39,12 +41,19 @@ private struct BuildPanelBar: View {
             .fixedSize()
             .layoutPriority(1)
             Spacer(minLength: 0)
+            // As Xcode's console filter: a regular field 182 pt wide with small text, before the bar's action.
+            SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol, textSize: .small,
+                        optionsTitle: String(localized: "Show"), options: LogKind.allCases.map { kind in
+                            (kind.title, Binding { !panel.hiddenLogKinds.contains(kind) } set: { shown in
+                                if shown { panel.hiddenLogKinds.remove(kind) } else { panel.hiddenLogKinds.insert(kind) }
+                            })
+                        })
+                .controlSize(.regular)
+                .frame(maxWidth: 182)
             let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
             Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
                 .help("Copy the whole log")
                 .disabled(text.isEmpty)
-            SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol)
-                .frame(maxWidth: 180)
         }
         .buttonStyle(.accessoryBar)
         .labelStyle(.iconOnly)

@@ -44,10 +44,7 @@ final class SourceDocument {
 
     var editable: Bool { tl_source_editable(raw) }
 
-    var version: UInt64? {
-        var version: UInt64 = 0
-        return tl_source_version(raw, &version) ? version : nil
-    }
+    var version: UInt64 { tl_source_version(raw) }
 
     func line(at offset: Int) -> Int { Int(tl_source_line_at(raw, UInt32(offset))) }
     func lineStart(_ line: Int) -> Int { Int(tl_source_line_start(raw, UInt32(max(1, line)))) }

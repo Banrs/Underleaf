@@ -41,31 +41,43 @@ final class PDFFind: NSObject, NSMenuItemValidation {
         return finder
     }
 
-    /// Reads the shown pages' text again after they change, off the main thread and after the change rather than before
-    /// it, as it takes about a millisecond a page: 430 ms for the 392-page test PDF. A page keeps its text once read, so
-    /// after a live page only that page costs. NSTextFinder doesn't find again when told the text changes, so its matches
-    /// go only when the text did.
+    /// Rereads the shown pages' text after they change, off the main thread, since it costs about a millisecond a page. A
+    /// page keeps its text once read, so a live update rereads only that page. NSTextFinder doesn't search again when told
+    /// the text changed, so its matches are cleared only when the text did change.
     func pagesChanged() {
         let pages = PageTexts(document: view.document)
+        lit = [:]
         _ = restart(&reading) { [weak self] in
             let strings = await pages.read()
             guard let self, !Task.isCancelled else { return }
             guard strings != text.pageStrings else { return highlightMatches() }
+            lit = [:]
             finder.noteClientStringWillChange()
             text.pageStrings = strings
         }
     }
 
+    /// Each match's selection while the pages stay the same. NSTextFinder reports matches a few at a time, and making and
+    /// colouring all 4,500 again for each took up to 250 ms.
+    private var lit: [NSRange: PDFSelection] = [:]
+
     private func highlightMatches() {
-        let found = finder.incrementalMatchRanges.compactMap { text.selection(for: $0.rangeValue) }
-        for match in found { match.color = .findHighlightColor }
+        let old = lit
+        lit = [:]
+        let found = finder.incrementalMatchRanges.compactMap { value in
+            let range = value.rangeValue, kept = old[range]
+            let match = kept ?? text.selection(for: range)
+            if kept == nil { match?.color = .findHighlightColor }
+            lit[range] = match
+            return match
+        }
         view.highlightedSelections = found.isEmpty ? nil : found
     }
 }
 
-/// The PDF's text as NSTextFinder reads it: the pages' strings in turn, each ending in a search boundary so that no match
-/// spans two pages. NSTextFinder reads them on a background queue as it finds incrementally, so they are swapped whole
-/// under a lock rather than read from the pages, and only what touches the view is the main actor's.
+/// The PDF's text as NSTextFinder reads it: each page's string, ending in a search boundary so that no match spans two
+/// pages. NSTextFinder reads it on a background queue while finding incrementally, so the strings are swapped whole
+/// under a lock, and only what touches the view runs on the main actor.
 nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
     private struct Pages {
         var strings: [String] = []
@@ -74,7 +86,15 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
 
         func start(of page: Int) -> Int { page == 0 ? 0 : ends[page - 1] }
 
-        func page(at index: Int) -> Int? { ends.firstIndex { $0 > index } }
+        /// Found by halving, as it's asked for each of thousands of matches.
+        func page(at index: Int) -> Int? {
+            var (low, high) = (0, ends.count)
+            while low < high {
+                let middle = (low + high) / 2
+                if ends[middle] > index { high = middle } else { low = middle + 1 }
+            }
+            return low < ends.count ? low : nil
+        }
     }
 
     private let pages = Mutex(Pages())

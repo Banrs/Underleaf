@@ -23,7 +23,6 @@ pub enum Ty {
 pub struct Field {
     pub name: String,
     pub ty: Ty,
-    pub required: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,71 +58,6 @@ pub struct Ir {
     pub packed: Vec<String>,
 }
 
-const TAKEN: &[&str] = &[
-    "Alignment",
-    "Angle",
-    "Animation",
-    "Any",
-    "App",
-    "Array",
-    "Axis",
-    "Binding",
-    "Bool",
-    "Bundle",
-    "Button",
-    "Calendar",
-    "Character",
-    "Color",
-    "Data",
-    "Date",
-    "Dictionary",
-    "Divider",
-    "Done",
-    "Double",
-    "Edge",
-    "Empty",
-    "Environment",
-    "Error",
-    "Font",
-    "Form",
-    "Group",
-    "Image",
-    "Int",
-    "Label",
-    "Link",
-    "List",
-    "Locale",
-    "Menu",
-    "Never",
-    "Notification",
-    "Optional",
-    "Path",
-    "Picker",
-    "Process",
-    "Range",
-    "Result",
-    "Scene",
-    "Section",
-    "Set",
-    "Settings",
-    "Shape",
-    "State",
-    "String",
-    "Tab",
-    "Table",
-    "Task",
-    "Text",
-    "Thread",
-    "Timer",
-    "Toggle",
-    "URL",
-    "Unit",
-    "View",
-    "Window",
-    "WireKey",
-    "WireRequest",
-];
-
 impl Ir {
     pub fn add(&mut self, defs: &Map<String, Value>, way: Way) {
         for (name, schema) in defs {
@@ -138,27 +72,10 @@ impl Ir {
                 decoded: false,
                 encoded: false,
             });
-            match (&mut def.shape, shape) {
-                (Shape::Struct(had), Shape::Struct(fields)) => {
-                    let names = |fields: &[Field]| {
-                        fields
-                            .iter()
-                            .map(|f| (f.name.clone(), f.ty.clone()))
-                            .collect::<Vec<_>>()
-                    };
-                    assert!(
-                        names(had) == names(&fields),
-                        "{name} differs between what Swift sends and what it reads"
-                    );
-                    if way == Way::Out {
-                        *had = fields;
-                    }
-                }
-                (had, shape) => assert!(
-                    *had == shape,
-                    "{name} differs between what Swift sends and what it reads"
-                ),
-            }
+            assert!(
+                def.shape == shape,
+                "{name} differs between what Swift sends and what it reads"
+            );
             match way {
                 Way::In => def.encoded = true,
                 Way::Out => def.decoded = true,
@@ -259,10 +176,6 @@ fn type_name(name: &str, defs: &Map<String, Value>) {
         chars.next().is_some_and(|c| c.is_ascii_uppercase())
             && chars.all(|c| c.is_ascii_alphanumeric()),
         "{name} isn't a plain type name"
-    );
-    assert!(
-        !TAKEN.contains(&name),
-        "{name} is a Swift, SwiftUI or Foundation type's name"
     );
     let base = name.trim_end_matches(|c: char| c.is_ascii_digit());
     assert!(
@@ -430,14 +343,14 @@ fn fields(name: &str, schema: &Map<String, Value>, way: Way) -> Shape {
     };
     let fields = properties.iter().map(|(field, schema)| {
         assert!(field != "type", "{name} has a field named type");
+        let required = required(field);
         let field = Field {
             name: member_name(field, name),
             ty: ty(schema),
-            required: required(field),
         };
         assert!(field.ty != Ty::Done, "{name}.{} is always null", field.name);
         assert!(
-            field.required || matches!(field.ty, Ty::Optional(_)),
+            required || matches!(field.ty, Ty::Optional(_)),
             "{name}.{} can be left out but isn't optional",
             field.name
         );

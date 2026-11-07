@@ -9,7 +9,6 @@ const LISTS: usize = 1024;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Sheet,
-    Form,
     VBox,
     HBox,
     VoidVBox,
@@ -195,13 +194,12 @@ struct Reader {
     s: SyncTex,
     last_v: i32,
     sheet: Option<usize>,
-    form: Option<u32>,
     parent: Option<u32>,
     child: Option<u32>,
     pending: Vec<Vec<u32>>,
     last_kern: Option<u32>,
     last_glue: Option<u32>,
-    ignored_forms: i32,
+    form_depth: u32,
 }
 
 impl SyncTex {
@@ -244,13 +242,12 @@ impl SyncTex {
             },
             last_v: -1,
             sheet: None,
-            form: None,
             parent: None,
             child: None,
             pending: vec![Vec::new()],
             last_kern: None,
             last_glue: None,
-            ignored_forms: 0,
+            form_depth: 0,
         };
         for line in lines {
             if !reader.record(line) {
@@ -297,26 +294,21 @@ impl Input {
 
 impl Reader {
     fn record(&mut self, line: &[u8]) -> bool {
-        if self.ignored_forms > 0 {
+        // Only refs reach a form's content, and refs are unlinked, so forms are skipped.
+        if self.form_depth > 0 || line.starts_with(b"<") {
             match line.first() {
-                Some(b'<') => self.ignored_forms += 1,
-                Some(b'>') => self.ignored_forms -= 1,
+                Some(b'<') => self.form_depth += 1,
+                Some(b'>') => self.form_depth -= 1,
                 _ => {}
             }
-            if self.ignored_forms == 0 {
-                self.reset_kern();
-            }
+            self.reset_kern();
             return true;
         }
-        if self.sheet.is_none() && self.form.is_none() {
+        if self.sheet.is_none() {
             return self.outside(line);
         }
         let first = line.first().copied().unwrap_or(b'\n');
         let handled = match first {
-            b'<' => {
-                self.begin_form(line);
-                false
-            }
             b'[' => self.begin_box(line, Kind::VBox),
             b'(' => self.begin_box(line, Kind::HBox),
             b']' if self
@@ -341,15 +333,8 @@ impl Reader {
             b'$' => self.leaf(line, Kind::Math),
             b'x' => self.leaf(line, Kind::Boundary),
             b'f' => self.form_ref(line),
-            b'}' if self.sheet.is_some()
-                && self.parent == self.sheet.map(|i| self.s.sheets[i].node) =>
-            {
+            b'}' if self.parent == self.sheet.map(|i| self.s.sheets[i].node) => {
                 (self.sheet, self.parent) = (None, None);
-                self.form = None;
-                return true;
-            }
-            b'>' if self.form.is_some() && self.parent == self.form => {
-                self.end_form();
                 return true;
             }
             _ => false,
@@ -378,9 +363,6 @@ impl Reader {
             self.sheet = Some(self.s.sheets.len() - 1);
             self.parent = Some(node);
             self.reset_kern();
-        } else if line.starts_with(b"<") {
-            self.begin_form(line);
-            self.reset_kern();
         } else if line.starts_with(b"Postamble:") {
             return false;
         }
@@ -392,16 +374,9 @@ impl Reader {
         (self.s.nodes.len() - 1) as u32
     }
 
-    fn page(&self) -> i32 {
-        match (self.form, self.sheet) {
-            (None, Some(sheet)) => self.s.sheets[sheet].page,
-            _ => -1,
-        }
-    }
-
     fn append(&mut self, mut node: Node) -> u32 {
         node.parent = self.parent;
-        node.page = self.page();
+        node.page = self.sheet.map_or(-1, |sheet| self.s.sheets[sheet].page);
         let id = self.add(node);
         match self.child {
             Some(child) => self.s.nodes[child as usize].sibling = Some(id),
@@ -456,9 +431,7 @@ impl Reader {
         let place = self.s.node(from).place();
         for id in pending.into_iter().rev() {
             self.s.nodes[id as usize].set_place(place);
-            if self.form.is_none() {
-                self.make_friend(id);
-            }
+            self.make_friend(id);
         }
     }
 
@@ -473,9 +446,7 @@ impl Reader {
         if kind == Kind::HBox {
             let node = self.s.node(id);
             let start = self.append(Node::boundary(node.place(), node.at));
-            if self.form.is_none() {
-                self.make_friend(start);
-            }
+            self.make_friend(start);
         }
         self.reset_kern();
         true
@@ -489,10 +460,8 @@ impl Reader {
         if self.pending.is_empty() {
             self.pending.push(Vec::new());
         }
-        if self.form.is_none() {
-            for id in pending.into_iter().rev() {
-                self.make_friend(id);
-            }
+        for id in pending.into_iter().rev() {
+            self.make_friend(id);
         }
         self.settle_pending(closed);
         closed
@@ -500,7 +469,7 @@ impl Reader {
 
     fn end_vbox(&mut self) {
         let vbox = self.parent.expect("a vbox is open");
-        if self.s.node(vbox).child.is_none() && self.form.is_none() {
+        if self.s.node(vbox).child.is_none() {
             self.make_friend(vbox);
         }
         self.close();
@@ -509,9 +478,7 @@ impl Reader {
 
     fn end_hbox(&mut self) {
         let hbox = self.parent.expect("an hbox is open");
-        if self.form.is_none()
-            && let Some(sheet) = self.sheet
-        {
+        if let Some(sheet) = self.sheet {
             self.s.sheets[sheet].hboxes.push(hbox);
         }
         let first = self
@@ -586,13 +553,11 @@ impl Reader {
             let pending = self.pending.last_mut().expect("the outermost level stays");
             if previous == Some(Kind::BoxBoundary) || !pending.is_empty() {
                 pending.push(id);
-            } else if self.form.is_none() {
+            } else {
                 self.make_friend(id);
             }
         } else {
-            if matches!(kind, Kind::Kern | Kind::Glue | Kind::Rule | Kind::Math)
-                && self.form.is_none()
-            {
+            if matches!(kind, Kind::Kern | Kind::Glue | Kind::Rule | Kind::Math) {
                 self.make_friend(id);
             }
             self.settle_pending(id);
@@ -647,42 +612,6 @@ impl Reader {
         });
         self.reset_kern();
         true
-    }
-
-    fn begin_form(&mut self, line: &[u8]) {
-        let Some((tag, _)) = number(&line[1..], 0) else {
-            return;
-        };
-        if self
-            .form
-            .is_some_and(|form| self.s.node(form).parent.is_some())
-        {
-            self.ignored_forms = 1;
-            return;
-        }
-        let mut node = Node::new(Kind::Form);
-        (node.tag, node.parent) = (tag, self.form);
-        let id = self.add(node);
-        (self.form, self.parent, self.child) = (Some(id), Some(id), None);
-    }
-
-    fn end_form(&mut self) {
-        let form = self.form.expect("a form is open");
-        if let Some(outer) = self.s.node(form).parent {
-            self.s.nodes[form as usize].parent = None;
-            (self.child, self.form, self.parent) = (Some(form), Some(outer), Some(outer));
-        } else if let Some(sheet) = self.sheet {
-            let node = self.s.sheets[sheet].node;
-            let last = self.child.map(|child| {
-                std::iter::successors(Some(child), |&id| self.s.node(id).sibling)
-                    .last()
-                    .unwrap_or(child)
-            });
-            (self.form, self.parent, self.child) = (None, Some(node), last);
-        } else {
-            (self.form, self.parent, self.child) = (None, None, None);
-        }
-        self.reset_kern();
     }
 
     fn contain(&mut self, bounds: Bounds) {

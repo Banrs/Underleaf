@@ -265,10 +265,6 @@ fn math(s: &mut Stream, state: &mut State, end: Option<&'static str>) -> Option<
         s.pos += 1;
         return Some(Command);
     }
-    if one_of(c, "+-<>|=,/@!*:;'\"`~#?") {
-        s.pos += 1;
-        return None;
-    }
     if is_digit(c) || (is(c, '.') && s.at(1).is_some_and(is_digit)) {
         s.eat_while(is_digit);
         if s.peek().is_some_and(|u| is(u, '.')) {
@@ -276,6 +272,10 @@ fn math(s: &mut Stream, state: &mut State, end: Option<&'static str>) -> Option<
             s.eat_while(is_digit);
         }
         return Some(Maths);
+    }
+    if one_of(c, "+-<>|=,./@!*:;'\"`~#?") {
+        s.pos += 1;
+        return None;
     }
     s.pos += 1;
     if one_of(c, "{}[]()") {
