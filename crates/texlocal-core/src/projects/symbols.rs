@@ -40,6 +40,7 @@ pub struct Files(Kept<Facts>);
 
 impl Default for Files {
     fn default() -> Self {
-        Self(Kept::holding(4096))
+        // Every file of the largest project, as a scan past capacity would read them all again.
+        Self(Kept::holding(super::MAX_FILES))
     }
 }

@@ -63,9 +63,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
                      range edited: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters), !loading else { return }
-        let old = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
         foldCache = nil
-        if folds.edited(old, delta: delta) { Task { self.relayOutFolds() } }
+        for edit in sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
+        where folds.edited(edit.range, delta: edit.text.utf16.count - edit.length) {
+            Task { self.relayOutFolds() }
+        }
         lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
@@ -76,10 +78,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard isEditable, document.editable, !edits.isEmpty else { return false }
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
         undoManager?.beginUndoGrouping()
-        for edit in edits.reversed() where shouldChangeText(in: edit.range, replacementString: edit.text) {
-            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-            super.didChangeText()
-        }
+        replace(edits.reversed())
         if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         // The selections are set before mirroring, so the mirror's edits move them as typing's do.
         mirror()
@@ -413,14 +412,27 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard !edits.isEmpty else { return [] }
         let kept = document.map(selections, through: edits)
         sync.mirroring = true
-        for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
-            textStorage?.replaceCharacters(in: edit.range, with: edit.text)
-            super.didChangeText()
-        }
+        replace(edits)
         sync.mirroring = false
         setSelectedRanges(kept.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
         breakUndoCoalescing()
         return edits
+    }
+
+    /// Makes edits given back to front in one TextKit pass: a pass per edit updates every paragraph after it and moves the
+    /// selection, which parses for the maths preview, so 2,000 took 15 s. Each edit still asks to change, keeping its undo
+    /// step, and the core takes them one by one.
+    private func replace(_ edits: some Sequence<TextEdit>) {
+        guard let storage = textStorage else { return }
+        var changed = false
+        storage.beginEditing()
+        for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
+            storage.replaceCharacters(in: edit.range, with: edit.text)
+            sync.batch(edit)
+            changed = true
+        }
+        storage.endEditing()
+        if changed { super.didChangeText() }
     }
 
     private func setsCursor(with event: NSEvent) -> Bool {

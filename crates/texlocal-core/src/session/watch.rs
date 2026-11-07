@@ -103,9 +103,9 @@ impl Tree {
         let (shown, facts) = (docs.open.clone(), Arc::clone(&self.facts));
         let docs = docs.handles();
         let mut files: Vec<String> = self.files.iter().cloned().collect();
-        files.sort_unstable();
         let (service, main) = (Arc::clone(&cx.service), self.main.clone());
         tokio::task::spawn_blocking(move || {
+            files.sort_unstable();
             let read = projects::scan_facts(&project, &facts, &texts(&docs));
             let installed = tex::installed(&service.tool_paths().0);
             let result = read.map(|read| {

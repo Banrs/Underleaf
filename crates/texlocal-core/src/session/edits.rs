@@ -13,7 +13,7 @@ use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::history::Then;
-use super::scans::tex;
+use super::scans::{may_name, tex};
 use crate::messages;
 use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
@@ -86,6 +86,9 @@ impl Actor {
             return Err(CoreError::conflict(exists(&to)));
         }
         let found = move |rel: &str, text: &str| {
+            if !may_name(kind, &from, text) {
+                return Vec::new();
+            }
             let facts = Facts::read(text, file_kind(rel));
             syntax::usages(&facts, rel, kind, &from, |_| None)
         };

@@ -10,7 +10,7 @@ use texlocal_latex::{FileKind, file_kind};
 use super::skip_unreadable;
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, identity, relative};
+use crate::paths::{Project, fold_case, identity};
 use crate::settings::read_settings;
 
 #[derive(Serialize, JsonSchema)]
@@ -62,7 +62,7 @@ fn entries(
             continue;
         };
         let path = entry.path();
-        let Some(rel) = relative(root, &path) else {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             if whole {
                 return Err(CoreError::bad_request(messages::not_utf8_name(
                     path.display(),
@@ -70,13 +70,14 @@ fn entries(
             }
             continue;
         };
+        // What `relative` would make of the path, without walking the root's components for every entry.
+        let rel = folder.map_or_else(|| name.clone(), |f| format!("{}/{name}", f.rel));
         let Some(kind) = skip_unreadable(entry.file_type())? else {
             continue;
         };
         let symlink = kind.is_symlink();
         let dir = kind.is_dir() || symlink && path.is_dir();
         if keep(&rel) && (dir || kind.is_file() || symlink && path.is_file()) {
-            let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
             out.push(Entry {
                 path,
                 rel,

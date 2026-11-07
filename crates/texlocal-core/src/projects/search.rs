@@ -157,9 +157,9 @@ pub(crate) fn replace_in_files(
         .collect();
     let mut edited = BTreeMap::new();
     visit_files(project, &mut |abs, rel| {
-        let inside = real(abs).filter(|real| real.starts_with(&project.root));
+        let inside = || real(abs).filter(|real| real.starts_with(&project.root));
         if chosen(rel)
-            && inside.is_some_and(|real| seen.insert(real))
+            && inside().is_some_and(|real| seen.insert(real))
             && replace(abs, rel)?.is_some()
         {
             edited.insert(rel.to_owned(), abs.to_owned());

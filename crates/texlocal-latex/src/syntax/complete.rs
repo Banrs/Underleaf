@@ -56,7 +56,12 @@ impl Symbols {
     pub fn spelt(&self, rel: &str) -> Option<String> {
         let rel = fold_case(&segments(rel)?.join("/"));
         let mut files = self.files.iter();
-        files.find(|file| fold_case(file) == rel).cloned()
+        // An ASCII name folds to its ASCII lowercase, compared here without allocating.
+        let same = |file: &&String| match file.is_ascii() {
+            true => file.eq_ignore_ascii_case(&rel),
+            false => fold_case(file) == rel,
+        };
+        files.find(same).cloned()
     }
 
     pub fn labels(&self) -> impl Iterator<Item = &Named> {

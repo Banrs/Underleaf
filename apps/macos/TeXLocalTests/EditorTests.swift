@@ -257,6 +257,22 @@ struct EditorTests {
         #expect(text.string == "a b a b" && text.document.text == text.string)
     }
 
+    @Test func aChangeOfSeveralEditsKeepsAFoldBetweenThemAndTheCoresCopyThroughUndo() {
+        let source = "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter"
+        let (editor, window) = Self.editor(source)
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(21)
+        text.foldAtCaret()
+        #expect(text.folds.ranges == [NSRange(location: 16, length: 16)])
+        text.selection = .caret(0)
+        text.apply([TextEdit(.caret(0), "% "), TextEdit(.caret(46), "% ")], named: "Comment")
+        #expect(text.string == "% " + source.replacingOccurrences(of: "\nafter", with: "\n% after") && text.document.text == text.string)
+        #expect(text.folds.ranges == [NSRange(location: 18, length: 16)] && text.undo.undoActionName == "Comment")
+        text.undo.undo()
+        #expect(text.string == source && text.document.text == source && text.folds.ranges == [NSRange(location: 16, length: 16)])
+    }
+
     @Test func aWrappedLineContinuesUnderItsIndentation() throws {
         let (editor, window) = Self.editor("    " + Array(repeating: "word", count: 80).joined(separator: " "))
         defer { window.close() }

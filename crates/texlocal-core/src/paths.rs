@@ -163,7 +163,13 @@ pub(crate) fn after_entry<'a>(path: &'a str, entry: &str) -> Option<&'a str> {
             rest = rest.strip_prefix('/')?;
         }
         let end = rest.find('/').unwrap_or(rest.len());
-        if fold_case(&rest[..end]) != fold_case(name) {
+        let here = &rest[..end];
+        // ASCII names fold to their ASCII lowercase, compared here without allocating.
+        let same = match here.is_ascii() && name.is_ascii() {
+            true => here.eq_ignore_ascii_case(name),
+            false => fold_case(here) == fold_case(name),
+        };
+        if !same {
             return None;
         }
         rest = &rest[end..];

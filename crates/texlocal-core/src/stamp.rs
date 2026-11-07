@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
+use std::hash::{BuildHasherDefault, DefaultHasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -36,9 +37,11 @@ impl Stamp {
     }
 }
 
+type Paths<T> = HashMap<PathBuf, T, BuildHasherDefault<DefaultHasher>>;
+
 pub(crate) struct Kept<T> {
     capacity: usize,
-    held: Mutex<(u64, BTreeMap<PathBuf, Held<T>>)>,
+    held: Mutex<(u64, Paths<Held<T>>)>,
 }
 
 struct Held<T> {
@@ -55,7 +58,7 @@ impl<T> Kept<T> {
     pub(crate) const fn holding(capacity: usize) -> Self {
         Self {
             capacity,
-            held: Mutex::new((0, BTreeMap::new())),
+            held: Mutex::new((0, HashMap::with_hasher(BuildHasherDefault::new()))),
         }
     }
 
@@ -86,9 +89,11 @@ impl<T> Kept<T> {
             };
             held.insert(path.to_owned(), kept);
             if held.len() > self.capacity {
-                let oldest = held.iter().min_by_key(|(_, kept)| kept.used);
-                let oldest = oldest.map(|(path, _)| path.clone());
-                held.remove(&oldest.expect("over capacity, so not empty"));
+                // An eighth goes at once, so a full cache isn't scanned on every read.
+                let keep = self.capacity - self.capacity / 8;
+                let mut uses: Vec<u64> = held.values().map(|kept| kept.used).collect();
+                let (_, &mut oldest_kept, _) = uses.select_nth_unstable(held.len() - keep);
+                held.retain(|_, kept| kept.used >= oldest_kept);
             }
         }
         Ok(value)

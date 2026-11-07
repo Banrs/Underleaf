@@ -45,6 +45,9 @@ impl Actor {
             };
             let symbols = doc.symbols();
             let found = |rel: &str, text: &str| {
+                if !may_name(kind, &name, text) {
+                    return Vec::new();
+                }
                 let facts = Facts::read(text, file_kind(rel));
                 syntax::usages(&facts, rel, kind, &name, |file| symbols.spelt(file))
             };
@@ -59,6 +62,11 @@ impl Actor {
             reply.send(groups.map(|groups| Some(Usages { name, groups })));
         });
     }
+}
+
+/// A label or citation is a slice of the text naming it, so a text without the name needn't be read.
+pub(super) fn may_name(kind: SymbolKind, name: &str, text: &str) -> bool {
+    !matches!(kind, SymbolKind::Label | SymbolKind::Citation) || text.contains(name)
 }
 
 pub(super) fn tex(rel: &str) -> bool {
