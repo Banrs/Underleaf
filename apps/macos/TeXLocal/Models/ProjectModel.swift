@@ -229,6 +229,7 @@ final class ProjectModel {
         case .lifecycle, .buildLog, .liveLog: break
         case .tree: tree.arrived()
         case .openFile, .outline:
+            if case .openFile(let file?) = section { navigator.opened(file.path) }
             let now = analysis?.outline ?? []
             if now != outline { outline = now }
             findHeadings()

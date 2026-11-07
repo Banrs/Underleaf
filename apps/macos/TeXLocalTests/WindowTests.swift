@@ -212,6 +212,8 @@ struct WindowTests {
         window.layoutIfNeeded()
         defer { workspace.close(); window.close() }
         let items = workspace.toolbar.toolbar.items
+        let navigation = try #require(items.first { $0.itemIdentifier == .navigation } as? NSToolbarItemGroup)
+        #expect(navigation.isNavigational && navigation.subitems.count == 2 && navigation.subitems.allSatisfy { !$0.isEnabled })
         let format = try #require(items.first { $0.itemIdentifier == .format })
         model.layout = .pdf
         try await waitUntil { format.isHidden }

@@ -110,10 +110,9 @@ final class Breadcrumb: NSView {
         for (index, (item, frame)) in zip(items, frames).enumerated() {
             let lit = index == hovered || index == open
             if lit {
+                // Xcode 27.2's path draws it over the item's 17 pt pop-up, a point inside its 19 pt row at either edge (measured).
                 (dark ? NSColor.white : .black).withAlphaComponent(0.05).setFill()
-                let height = min(frame.height, 21)
-                let rect = NSRect(x: frame.minX, y: frame.midY - height / 2, width: frame.width, height: height)
-                NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+                NSBezierPath(roundedRect: frame.insetBy(dx: 0, dy: 1), xRadius: 4, yRadius: 4).fill()
             }
             let color: NSColor = item.chosen != 0 ? .controlAccentColor : active ? .labelColor : dimmed
             let title = NSAttributedString(string: item.choices[item.chosen], attributes: [.font: Self.font, .foregroundColor: color])

@@ -32,9 +32,10 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         matchCase.setAccessibilityLabel(String(localized: "Match Case"))
         (matchCase.target, matchCase.action) = (self, #selector(toggleCase))
 
+        // Xcode 27.2's Find field is a small one, its text 11 pt and its magnifier the small one (measured).
         for field in [query, replacement] {
-            field.controlSize = .regular
-            field.font = .systemFont(ofSize: NSFont.systemFontSize)
+            field.controlSize = .small
+            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             field.sendsSearchStringImmediately = true
             field.delegate = self
             (field.target, field.action) = (self, #selector(edited(_:)))
@@ -125,10 +126,11 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
         matchCase.frame = NSRect(x: width - 8 - 21, y: crumb.frame.minY + 2, width: 21, height: 16)
         var y = Self.row + 2
-        query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field)
+        // Each field draws 22 pt tall, a point inside its 24 pt row at either edge, where Xcode's draws (measured).
+        query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
         y += Self.field
         if shown?.replacing == true {
-            replacement.frame = NSRect(x: 6, y: y + 6, width: width - 12, height: Self.field)
+            replacement.frame = NSRect(x: 6, y: y + 6, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
             y += 6 + Self.field + 6
             let all = replaceAll.intrinsicContentSize.width, one = replace.intrinsicContentSize.width
             replaceAll.frame = NSRect(x: width - 6 - all, y: y, width: all, height: Self.button)
@@ -205,6 +207,8 @@ struct SearchResults: View {
                                            description: Text(failure))
                 } else if project.search.groups?.isEmpty == true {
                     ContentUnavailableView.search(text: project.search.searched.query)
+                } else if groups.isEmpty, project.search.groups != nil {
+                    NoFilterResults()
                 }
             }
             .onChange(of: project.search.searched) { folded = [] }

@@ -125,7 +125,8 @@ final class WorkspaceController: ThinSplitViewController {
         NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
                                      bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
                                      bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height)])
+                                     // Its edge lies on the row above the panes' accessories, over their scroll edges' own line.
+                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.edge.thickness)])
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: app.buildPanelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
