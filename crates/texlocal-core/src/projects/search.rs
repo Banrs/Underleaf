@@ -1,13 +1,14 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::facts::Place;
 use texlocal_latex::{FileKind, file_kind, utf16};
 
-use super::files::{Planned, inside, write_all};
+use super::files::{Planned, write_all};
 use super::history::MAX_KEPT;
 use super::read_capped;
 use super::tree::visit_files;
@@ -122,6 +123,7 @@ pub fn search_project(
 
 pub(crate) fn replace_in_files(
     project: &Project,
+    open: Option<&str>,
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     to: &str,
@@ -147,9 +149,19 @@ pub(crate) fn replace_in_files(
         }
         Ok(Some((now, places.len(), file)))
     };
+    // A file reached by two paths is replaced once, and the open document's not at all: the editor takes its edits.
+    let real = |abs: &Path| fs::canonicalize(abs).ok();
+    let mut seen: HashSet<PathBuf> = open
+        .and_then(|open| real(&project.root.join(open)))
+        .into_iter()
+        .collect();
     let mut edited = BTreeMap::new();
     visit_files(project, &mut |abs, rel| {
-        if chosen(rel) && inside(&project.root, abs) && replace(abs, rel)?.is_some() {
+        let inside = real(abs).filter(|real| real.starts_with(&project.root));
+        if chosen(rel)
+            && inside.is_some_and(|real| seen.insert(real))
+            && replace(abs, rel)?.is_some()
+        {
             edited.insert(rel.to_owned(), abs.to_owned());
         }
         Ok(true)

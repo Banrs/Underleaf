@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
-use crate::fixtures::{Fixture, Fixtures};
+use serde_json::Value;
+
 use crate::ir::{Def, Field, Ir, PAYLOAD, Request, Shape, Ty, case};
 
 const PREAMBLE: &str = r#"import Foundation
@@ -42,27 +43,12 @@ pub fn file(ir: &Ir) -> String {
     out
 }
 
-pub fn fixtures(ir: &Ir, fixtures: &Fixtures) -> String {
-    let listed = |name: &str, list: &[Fixture]| {
-        let rows: Vec<String> = list
-            .iter()
-            .map(|fixture| format!("    ({}.self, #\"{}\"#),\n", fixture.ty, fixture.value))
-            .collect();
-        format!(
-            "\nnonisolated let {name}: [(any (Codable & Hashable & Sendable).Type, String)] = [\n{}]\n",
-            rows.concat()
-        )
-    };
-    let said: String = (fixtures.said.iter())
+// Strings in Swift, as macOS asks the user before the test host reads ~/Documents.
+pub fn said(said: &Value) -> String {
+    let said: String = (said.as_array().expect("said is a list").iter())
         .map(|said| format!("    #\"{said}\"#,\n"))
         .collect();
-    format!(
-        "import Foundation\n@testable import TeXLocal\n{}{}{}\nnonisolated let wireSaid = [\n{}]\n",
-        types(ir, &ir.holding_payload()),
-        listed("wireSamples", &fixtures.samples),
-        listed("wireRejects", &fixtures.rejects),
-        said,
-    )
+    format!("nonisolated let wireSaid = [\n{said}]\n")
 }
 
 fn types(ir: &Ir, generic: &BTreeSet<&str>) -> String {

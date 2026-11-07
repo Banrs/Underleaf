@@ -649,14 +649,12 @@ mod tests {
     }
 
     #[test]
-    fn texpresso_is_looked_for_in_the_chosen_folder_then_the_apps_own_then_the_path() {
+    fn texpresso_is_looked_for_in_the_chosen_folder_then_the_apps_own_only() {
         let [chosen, helpers] = ["/chosen", "/helpers"].map(PathBuf::from);
         let mut app = AppSettings::default();
         app.texpresso_dir = Some(chosen.clone());
         let dirs = |path: String| std::env::split_paths(&path).collect::<Vec<_>>();
-        let path = dirs(tool_paths(&AppSettings::default(), None).1);
-        let found = dirs(tool_paths(&app, Some(&helpers)).1);
-        assert_eq!(found, [&[chosen, helpers][..], &path].concat());
+        assert_eq!(dirs(tool_paths(&app, Some(&helpers)).1), [chosen, helpers]);
     }
 
     #[test]

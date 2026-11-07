@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use schemars::JsonSchema;
@@ -12,7 +12,6 @@ use texlocal_latex::logparse::{
 use tokio::process::Child;
 
 use crate::error::CoreError;
-use crate::lock;
 use crate::messages;
 use crate::paths::{Project, safe_rel_file};
 use crate::process::{self, Processes, Tree, drive};
@@ -57,15 +56,8 @@ pub struct CompileResult {
     pub log: String,
 }
 
-#[derive(Default)]
-struct Running {
-    stopped: bool,
-    tree: Option<Tree>,
-}
-
 pub struct CompileManager {
     processes: Arc<Processes>,
-    running: Mutex<HashMap<PathBuf, Running>>,
 }
 
 #[derive(PartialEq)]
@@ -77,7 +69,6 @@ enum End {
 }
 
 struct CompileRun {
-    root: PathBuf,
     main_rel: String,
     pdf: PathBuf,
     before: HashMap<&'static str, Stamp>,
@@ -114,18 +105,16 @@ impl CompileRun {
     }
 }
 
+impl Started {
+    pub fn tree(&self) -> Tree {
+        let spawned = self.spawned.as_ref().ok();
+        spawned.map(|(_, tree)| tree.clone()).unwrap_or_default()
+    }
+}
+
 impl CompileManager {
     pub(crate) fn new(processes: Arc<Processes>) -> Self {
-        Self {
-            processes,
-            running: Mutex::default(),
-        }
-    }
-
-    pub fn stop(&self, root: &Path) {
-        if let Some(entry) = lock(&self.running).get_mut(root) {
-            entry.stopped |= entry.tree.as_ref().is_some_and(Tree::kill);
-        }
+        Self { processes }
     }
 
     pub fn clean(build: &Path) -> Result<(), CoreError> {
@@ -155,7 +144,6 @@ impl CompileManager {
             .into_iter()
             .filter_map(|ext| Some((ext, Stamp::at(&pdf.with_extension(ext)).ok()?)));
         let run = CompileRun {
-            root: root.clone(),
             before: before.collect(),
             main_rel,
             pdf,
@@ -190,10 +178,7 @@ impl CompileManager {
             command.arg(format!("./{}", run.main_rel));
             command
         });
-        let mut running = lock(&self.running);
-        let entry = running.entry(root.clone()).or_default();
         let spawned = command.and_then(|mut command| self.processes.spawn(None, &mut command));
-        let spawned = spawned.inspect(|(_, tree)| entry.tree = Some(tree.clone()));
         Ok(Started { run, spawned })
     }
 
@@ -206,14 +191,15 @@ impl CompileManager {
                     drive(&mut child, &tree, auto.then_some(COMPILE_TIMEOUT)).await;
                 let end = if timed_out {
                     End::TimedOut
+                } else if tree.killed() {
+                    End::Stopped
                 } else {
                     End::Exited(code)
                 };
                 (end, output)
             }
         };
-        let entry = lock(&self.running).remove(&run.root).unwrap_or_default();
-        let end = if entry.stopped || self.processes.quit() {
+        let end = if self.processes.quit() {
             End::Stopped
         } else {
             end

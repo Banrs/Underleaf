@@ -61,9 +61,9 @@ struct CoreTests {
         let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), text = views.editor.textView
         try await project.load()
-        let stale = try #require(text.document.version)
+        let stale = text.document.version
         text.insertText("% mine\n", replacementRange: NSRange(location: 0, length: 0))
-        let (shown, version) = (text.string, try #require(text.document.version))
+        let (shown, version) = (text.string, text.document.version)
         let edits = { (path: String, version: UInt64) in
             DocumentEdits(path: path, version: version, edits: [TextEdit(start: 0, length: 7, text: "% theirs\n")])
         }
@@ -207,26 +207,6 @@ struct CoreTests {
         #expect(try await session.close() && session.closed)
     }
 
-    @Test func theWireFixturesRoundTripAndItsRejectsAreRefused() throws {
-        // Swift leaves out a nil optional where the core writes null, and serde reads both as None.
-        func pruned(_ value: Any) -> Any {
-            switch value {
-            case let object as [String: Any]: object.filter { !($0.value is NSNull) }.mapValues(pruned)
-            case let array as [Any]: array.map(pruned)
-            default: value
-            }
-        }
-        let object = { (data: Data) in pruned(try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) as? NSObject }
-        for (type, json) in wireSamples {
-            let sent = try JSONEncoder().encode(try JSONDecoder().decode(type, from: Data(json.utf8)))
-            #expect(try object(sent) == object(Data(json.utf8)), "\(json)")
-        }
-        for (type, json) in wireRejects {
-            #expect(throws: DecodingError.self, "\(json)") { try JSONDecoder().decode(type, from: Data(json.utf8)) }
-        }
-        #expect(FixtureUnit.highContrast.title == "High Contrast")
-    }
-
     @Test func aReplyGoesToItsCallerByItsIdEvenWhenTheAppCantReadItsBody() throws {
         let unreadable = Data(#"{"type":"reply","value":{"id":9,"answer":{"type":"error","value":{"kind":"unheardOf"}}}}"#.utf8)
         guard case .reply(9) = try Core.heard(unreadable), case .said(.event) = try Core.heard(Data(wireSaid[2].utf8)) else {
@@ -252,5 +232,11 @@ struct CoreTests {
         #expect(event.event == .liveAlert && log.level == .fault)
         #expect(stopped.event == .section(.lifecycle(.stopped(Stopped(unsaved: ["main.tex"])))))
         #expect(tex.available && tex.latexmkVersion == "4.86" && tex.texDir == nil)
+    }
+
+    @Test func aZoomIsSentAsTheCoreReadsIt() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        #expect(String(decoding: try encoder.encode(Zoom.scale(1.5)), as: UTF8.self) == #"{"type":"scale","value":1.5}"#)
     }
 }

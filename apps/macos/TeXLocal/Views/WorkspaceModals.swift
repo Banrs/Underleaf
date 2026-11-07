@@ -60,7 +60,11 @@ struct WorkspaceModals: ViewModifier {
                 Button("Cancel", role: .cancel) { project.answerDiscard(false) }
             } message: {
                 let files = (project.askingToDiscard ?? []).map { "“\($0.fileName)”" }.formatted(.list(type: .and))
-                Text("TeXLocal stopped after an internal error and couldn’t save \(files). Copy out what you need first.")
+                if project.store.lifecycle?.stopped != nil {
+                    Text("TeXLocal stopped after an internal error and couldn’t save \(files). Copy out what you need first.")
+                } else {
+                    Text("TeXLocal couldn’t save \(files). \(project.saveFailure ?? "") Copy out what you need first.")
+                }
             }
             .sheet(item: $window.prompt) { prompt in
                 switch prompt {

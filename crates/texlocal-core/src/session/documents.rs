@@ -367,7 +367,7 @@ impl Docs {
     }
 
     pub fn save_first(&mut self, cx: &mut Core) -> Result<(), CoreError> {
-        if self.flush_all(cx, true)? {
+        if self.save_edits(cx, true)? {
             Ok(())
         } else {
             Err(CoreError::conflict(messages::edits_unsaved()))
@@ -589,6 +589,22 @@ impl Actor {
         }
     }
 
+    /// Closes documents kept open only because they couldn't be saved when another was shown, once they're saved.
+    pub fn close_hidden(&mut self) {
+        let shown = self.docs.open.clone();
+        let hidden = self
+            .docs
+            .keys()
+            .filter(|path| shown.as_ref() != Some(*path));
+        let mut closed = false;
+        for path in hidden.cloned().collect::<Vec<_>>() {
+            closed |= self.docs.close(&mut self.core, &path, true);
+        }
+        if closed {
+            self.closed();
+        }
+    }
+
     pub fn closed(&mut self) {
         self.builds.publish(&mut self.core, &self.docs);
         self.live.publish(&mut self.core, &self.docs, false);
@@ -662,7 +678,7 @@ mod tests {
         let sessions = Sessions::with_compiler(service, compiler, preview, false, Box::new(|_| {}));
         let (tx, mut rx) = mpsc::unbounded_channel();
         let request = Session::parse("OpenProject", json!({ "id": "P", "autoCompile": false }));
-        let Session::OpenProject(opening, _) = request.unwrap() else {
+        let Session::OpenProject(opening) = request.unwrap() else {
             unreachable!();
         };
         let (mut actor, _) = Actor::new(&sessions, 1, opening, Docs::default(), tx).unwrap();

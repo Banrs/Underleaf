@@ -292,10 +292,12 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return completions.close()
         }
         let stroke = document.type(typed, replacing: selectedRange(), autoPair: autoPair)
-        if let edit = stroke.edit {
-            super.insertText(edit.text, replacementRange: edit.range)
-        } else if stroke.selection == nil {
-            super.insertText(string, replacementRange: replacementRange)
+        holdingMirror {
+            if let edit = stroke.edit {
+                super.insertText(edit.text, replacementRange: edit.range)
+            } else if stroke.selection == nil {
+                super.insertText(string, replacementRange: replacementRange)
+            }
         }
         finish(stroke)
     }
@@ -317,7 +319,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         guard isEditable, selectedRanges.count == 1 else { return super.insertNewline(sender) }
         let stroke = document.insertNewline(selectedRange())
         guard let edit = stroke.edit else { return super.insertNewline(sender) }
-        super.insertText(edit.text, replacementRange: edit.range)
+        holdingMirror { super.insertText(edit.text, replacementRange: edit.range) }
         finish(stroke)
     }
 
@@ -333,9 +335,11 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if hasMarkedText() != document.composing { document.composing.toggle() }
     }
 
+    /// The keystroke's offsets are from before its mirror edits, which then move the selection as they move typing.
     func finish(_ stroke: Keystroke) {
         if let selection = stroke.selection { self.selection = selection.range }
-        if let partner = stroke.partner { showPartner(of: partner) }
+        let mirrored = mirror()
+        if let partner = stroke.partner { showPartner(of: document.map([.caret(partner)], through: mirrored)[0].location) }
         switch stroke.completions {
         case .keep: break
         case .offer: completions.offer()
@@ -392,12 +396,21 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func didChangeText() {
         super.didChangeText()
-        mirror()
+        if !mirrorHeld { mirror() }
     }
 
-    private func mirror() {
+    private var mirrorHeld = false
+
+    private func holdingMirror(_ edit: () -> Void) {
+        mirrorHeld = true
+        edit()
+        mirrorHeld = false
+    }
+
+    @discardableResult
+    private func mirror() -> [TextEdit] {
         let edits = sync.mirror(composing: hasMarkedText())
-        guard !edits.isEmpty else { return }
+        guard !edits.isEmpty else { return [] }
         let kept = document.map(selections, through: edits)
         sync.mirroring = true
         for edit in edits where shouldChangeText(in: edit.range, replacementString: edit.text) {
@@ -407,6 +420,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         sync.mirroring = false
         setSelectedRanges(kept.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false)
         breakUndoCoalescing()
+        return edits
     }
 
     private func setsCursor(with event: NSEvent) -> Bool {

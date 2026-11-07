@@ -796,6 +796,59 @@ async fn a_version_a_snapshot_or_an_export_is_refused_while_edits_cant_be_saved(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_file_that_cant_be_saved_blocks_closing_until_discarded() {
+    let rig = project().await;
+    let main = rig.root().join("main.tex");
+    let doc = rig.open_document("main.tex");
+    fs::set_permissions(&main, fs::Permissions::from_mode(0o444)).unwrap();
+    doc.edit(0, 0, "% typed\n", None, false);
+    assert_eq!(rig.refuse("CloseProject", json!({})), ErrorKind::Denied);
+    assert_eq!(rig.call("CloseProject", json!({ "discard": true })), true);
+    fs::set_permissions(&main, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(fs::read_to_string(main).unwrap(), MAIN);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_left_open_because_it_couldnt_be_saved_closes_once_it_is() {
+    let rig = project().await;
+    let chapter = rig.root().join("ch.tex");
+    let doc = rig.open_document("ch.tex");
+    fs::set_permissions(&chapter, fs::Permissions::from_mode(0o444)).unwrap();
+    doc.edit(0, 0, "a cat ", None, false);
+    rig.open_document("main.tex");
+    rig.section("documents", |d| d.as_array().unwrap().len() == 2);
+    fs::set_permissions(&chapter, fs::Permissions::from_mode(0o644)).unwrap();
+    let replaced = rig.call("Replace", replace_cat());
+    assert!(replaced["edits"].is_null());
+    assert_eq!(
+        replaced["written"],
+        json!([{ "file": "ch.tex", "count": 2 }])
+    );
+    assert_eq!(
+        fs::read_to_string(chapter).unwrap(),
+        format!("a dog {}", CHAPTER.replace("cat", "dog"))
+    );
+    rig.section("documents", |d| {
+        d.as_array().unwrap().len() == 1 && d[0]["path"] == "main.tex"
+    });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replace_all_changes_a_file_reached_by_two_paths_once() {
+    let rig = project().await;
+    std::os::unix::fs::symlink("ch.tex", rig.root().join("link.tex")).unwrap();
+    let replaced = rig.call(
+        "Replace",
+        json!({ "query": "cat", "replacement": "cats", "matchCase": false, "wholeWord": false }),
+    );
+    assert_eq!(replaced["written"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
+        CHAPTER.replace("cat", "cats")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn settings_change_and_bad_ones_are_refused() {
     let rig = project().await;
     rig.call("SetSettings", json!({ "patch": { "engine": "xelatex" } }));
@@ -1437,6 +1490,19 @@ async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_
     preview.send(LiveEvent::Done(RunEnd::Complete));
     let live = rig.section("live", |l| !l["lines"]["ch.tex"].is_null());
     assert_eq!(live["lines"]["ch.tex"][0]["line"], 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_clean_restarts_a_running_live_preview() {
+    let preview = Arc::new(FakePreview::default());
+    let rig = Rig::previewing(&[("main.tex", MAIN)], |_| {}, Arc::clone(&preview)).await;
+    rig.call("StartLive", json!({}));
+    rig.section("live", |l| l["phase"] == "running");
+    rig.forget();
+    rig.call("Clean", json!({}));
+    rig.section("live", |l| l["phase"] == "starting");
+    rig.section("live", |l| l["phase"] == "running");
+    assert!(preview.running());
 }
 
 #[tokio::test(flavor = "multi_thread")]

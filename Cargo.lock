@@ -1074,7 +1074,6 @@ name = "texlocal-wire"
 version = "0.2.0"
 dependencies = [
  "schemars",
- "serde",
  "serde_json",
  "texlocal-core",
 ]

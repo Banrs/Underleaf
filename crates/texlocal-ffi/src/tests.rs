@@ -52,15 +52,7 @@ impl Core {
     }
 
     fn call(&self, command: &str, args: Value) -> Value {
-        self.call_raw(None, Some(command), Some(&args.to_string()))
-    }
-
-    fn ask(&self, session: u64, command: &str, args: Value) -> Value {
-        self.call_raw(Some(session), Some(command), Some(&args.to_string()))
-    }
-
-    fn call_raw(&self, session: Option<u64>, command: Option<&str>, args: Option<&str>) -> Value {
-        let id = self.send(session, command, args);
+        let id = self.send(None, Some(command), Some(&args.to_string()));
         loop {
             let mut said = self.events.recv_timeout(Duration::from_secs(10)).unwrap();
             if said["type"] == "reply" && said["value"]["id"] == id {
@@ -107,19 +99,9 @@ fn take(text: *mut c_char) -> Value {
     value
 }
 
-fn answered(mut answer: Value) -> Value {
-    assert_eq!(answer["type"], "ok", "{answer}");
-    answer["value"].take()
-}
-
 fn refused(mut answer: Value) -> Value {
     assert_eq!(answer["type"], "error", "{answer}");
     answer["value"].take()
-}
-
-fn version(source: *mut TlSource) -> Option<u64> {
-    let mut version = 0;
-    unsafe { tl_source_version(source, &raw mut version) }.then_some(version)
 }
 
 #[test]
@@ -189,79 +171,6 @@ fn each_command_answers_once_with_ok_or_an_error_kind() {
     }
     unsafe { tl_send(ptr::null(), 0, ptr::null(), ptr::null()) };
     unsafe { tl_session_send(ptr::null(), 0, 1, ptr::null(), ptr::null()) };
-}
-
-#[test]
-fn a_session_document_is_edited_restored_saved_and_closed_through_the_abi() {
-    let core = Core::open();
-    core.call("CreateProject", json!({ "name": "P", "template": "blank" }));
-    core.ask(7, "OpenProject", json!({ "id": "P", "autoCompile": false }));
-    core.ask(7, "Open", json!({ "path": "main.tex" }));
-    let path = c("main.tex");
-    let source = unsafe { tl_session_source(core.handle, 7, path.as_ptr()) };
-    assert!(!source.is_null());
-    let (before, opened) = (source_text(source), version(source).unwrap());
-    let note = "% note\n";
-    let edit =
-        || unsafe { tl_source_edit(source, 0, 0, note.as_ptr(), note.len(), ptr::null(), false) };
-    assert_eq!(
-        take(edit()),
-        json!({ "type": "ok", "value": [] }),
-        "an edit outside a snippet mirrors nothing"
-    );
-    let edited = format!("{note}{before}");
-    assert_eq!(source_text(source), edited);
-    unsafe { tl_source_restore(source, edited.as_ptr(), edited.len()) };
-    assert_eq!(
-        version(source),
-        Some(opened + 1),
-        "the same text changes nothing"
-    );
-    let text = "restored\n";
-    unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
-    assert_eq!(version(source), Some(opened + 2));
-    assert!(unsafe { tl_source_editable(source) });
-    assert_eq!(answered(core.ask(7, "CloseProject", json!({}))), true);
-    let saved = std::fs::read_to_string(core._dir.path().join("P/main.tex")).unwrap();
-    assert_eq!(saved, text);
-    assert!(!unsafe { tl_source_editable(source) });
-    assert_eq!(refused(take(edit()))["kind"], "conflict");
-    assert_eq!(source_text(source), text);
-    unsafe { tl_source_free(source) };
-}
-
-#[test]
-fn a_source_of_the_hosts_own_highlights_and_answers_commands() {
-    let text = "\\emph{a} % b";
-    let source = unsafe { tl_source_new(text.as_ptr(), text.len()) };
-    let mut count = 0;
-    let runs = unsafe { tl_source_highlights(source, 0, text.len() as u32, &raw mut count) };
-    let triples = unsafe { std::slice::from_raw_parts(runs, count) }.to_vec();
-    unsafe { tl_source_free_runs(runs, count) };
-    assert_eq!(&triples[..3], [0, 5, 0]);
-    assert_eq!(unsafe { tl_source_line_count(source) }, 1);
-    assert_eq!(version(source), None);
-    let command = c("ToggleComment");
-    let args = c(r#"{"selections":[{"start":0,"length":0}]}"#);
-    let answer = take(unsafe { tl_source_call(source, command.as_ptr(), args.as_ptr()) });
-    assert!(answered(answer).is_array());
-    let unknown = c("nope");
-    let answer = take(unsafe { tl_source_call(source, unknown.as_ptr(), args.as_ptr()) });
-    let refused = refused(answer);
-    assert_eq!(refused["kind"], "invalid");
-    let message = json!({ "id": "unknown_command", "args": {}, "text": "Unknown command" });
-    assert_eq!(refused["message"], message);
-    unsafe { tl_source_free(source) };
-}
-
-#[test]
-fn syntax_commands_need_no_source() {
-    let menus = c("ListMenus");
-    let empty = c("{}");
-    let answer = take(unsafe { tl_syntax_call(menus.as_ptr(), empty.as_ptr()) });
-    assert!(answered(answer)["templates"].is_object());
-    let refused = refused(take(unsafe { tl_syntax_call(ptr::null(), empty.as_ptr()) }));
-    assert_eq!(refused["kind"], "invalid");
 }
 
 #[test]

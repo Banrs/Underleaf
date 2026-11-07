@@ -42,9 +42,8 @@ pub(crate) struct Fixed {
 
 impl Actor {
     pub fn replace(&mut self, query: Query, to: String) -> Result<Then<ProjectEdits>, CoreError> {
-        let open = self.texts_to_edit()?;
         let found = move |_: &str, text: &str| query.places(text);
-        edit_project(&open, texlocal_latex::is_text, found, to)
+        self.edit_project(texlocal_latex::is_text, found, to)
     }
 
     pub fn rename_symbol(
@@ -69,11 +68,13 @@ impl Actor {
         if to.is_empty() || to.contains(|c: char| "{}%\\,".contains(c) || c.is_whitespace()) {
             return Err(CoreError::bad_request(bad_name()));
         }
-        let open = self.texts_to_edit()?;
-        let texts = open
-            .iter()
-            .map(|(path, text, _)| (path.clone(), text.clone()));
-        let read = projects::scan_facts(&self.core.project, &self.tree.facts, &texts.collect())?;
+        let open = self.text_to_edit()?;
+        let texts = open.map(|open| (open.path, open.text));
+        let read = projects::scan_facts(
+            &self.core.project,
+            &self.tree.facts,
+            &texts.into_iter().collect(),
+        )?;
         let defines = |name: &str| {
             let mut files = read.values();
             files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
@@ -88,7 +89,7 @@ impl Actor {
             let facts = Facts::read(text, file_kind(rel));
             syntax::usages(&facts, rel, kind, &from, |_| None)
         };
-        edit_project(&open, tex, found, to)
+        self.edit_project(tex, found, to)
     }
 
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
@@ -131,7 +132,6 @@ impl Actor {
     }
 
     fn add_package(&mut self, name: String) -> Result<Then<ProjectEdits>, CoreError> {
-        let open = self.texts_to_edit()?;
         let main = self.tree.main.clone();
         let line = format!("\n\\usepackage{{{name}}}");
         let found = move |_: &str, text: &str| {
@@ -140,59 +140,74 @@ impl Actor {
             facts.new_package.filter(|_| !loaded).into_iter().collect()
         };
         let main = move |rel: &str| Some(rel) == main.as_deref();
-        edit_project(&open, main, found, line)
+        self.edit_project(main, found, line)
     }
 
-    pub fn texts_to_edit(&mut self) -> Result<Vec<(String, String, u64)>, CoreError> {
+    /// The shown document, once every edit is saved and the documents kept open only because they couldn't be are
+    /// closed, so the core's text is the disk's for every other file.
+    pub fn text_to_edit(&mut self) -> Result<Option<OpenText>, CoreError> {
         let unsettled = |doc: &&Doc| doc.conflict.is_some();
         if let Some(doc) = self.docs.values().find(unsettled) {
             return Err(CoreError::conflict(messages::changed_on_disk(&doc.path)));
         }
         self.docs.save_first(&mut self.core)?;
-        let text = |doc: &Doc| {
+        self.close_hidden();
+        let shown = self.docs.open.as_ref().and_then(|path| self.docs.get(path));
+        Ok(shown.map(|doc| {
             let (text, version) = doc.doc.snapshot();
-            (doc.path.clone(), text, version)
-        };
-        Ok(self.docs.values().map(text).collect())
+            OpenText {
+                path: doc.path.clone(),
+                text,
+                version,
+            }
+        }))
+    }
+
+    /// Saves first, so the version taken before the edits has every change, and plans the edits once it's taken,
+    /// against what's open then.
+    fn edit_project(
+        &mut self,
+        chosen: impl Fn(&str) -> bool + Send + 'static,
+        found: impl Fn(&str, &str) -> Vec<Place> + Send + 'static,
+        to: String,
+    ) -> Result<Then<ProjectEdits>, CoreError> {
+        self.text_to_edit()?;
+        Ok(Box::new(move |actor, snapshot| {
+            let open = actor.text_to_edit()?;
+            let edits = open
+                .as_ref()
+                .filter(|open| chosen(&open.path))
+                .and_then(|open| {
+                    let lines = Text::new(&open.text).lines;
+                    let edit = |place: Place| TextEdit {
+                        start: lines[place.line as usize - 1] + place.column,
+                        length: place.length,
+                        text: to.clone(),
+                    };
+                    let edits: Vec<TextEdit> = found(&open.path, &open.text)
+                        .into_iter()
+                        .map(edit)
+                        .collect();
+                    (!edits.is_empty()).then(|| DocumentEdits {
+                        path: open.path.clone(),
+                        version: open.version,
+                        edits,
+                    })
+                });
+            let open_path = open.as_ref().map(|open| open.path.as_str());
+            let written =
+                projects::replace_in_files(&actor.core.project, open_path, &chosen, &found, &to)?;
+            Ok(ProjectEdits {
+                edits,
+                written,
+                snapshot,
+            })
+        }))
     }
 }
 
-fn edit_project(
-    open: &[(String, String, u64)],
-    chosen: impl Fn(&str) -> bool + Send + 'static,
-    found: impl Fn(&str, &str) -> Vec<Place> + Send + 'static,
-    to: String,
-) -> Result<Then<ProjectEdits>, CoreError> {
-    let mut edits: Vec<DocumentEdits> = open
-        .iter()
-        .filter(|(path, ..)| chosen(path))
-        .filter_map(|(path, text, version)| {
-            let lines = Text::new(text).lines;
-            let edit = |place: Place| TextEdit {
-                start: lines[place.line as usize - 1] + place.column,
-                length: place.length,
-                text: to.clone(),
-            };
-            let edits: Vec<TextEdit> = found(path, text).into_iter().map(edit).collect();
-            (!edits.is_empty()).then(|| DocumentEdits {
-                path: path.clone(),
-                version: *version,
-                edits,
-            })
-        })
-        .collect();
-    if edits.len() > 1 {
-        return Err(CoreError::conflict(messages::one_document()));
-    }
-    let edits = edits.pop();
-    let open: Vec<String> = open.iter().map(|(path, ..)| path.clone()).collect();
-    Ok(Box::new(move |actor, snapshot| {
-        let others = |rel: &str| chosen(rel) && !open.iter().any(|path| path == rel);
-        let written = projects::replace_in_files(&actor.core.project, &others, &found, &to)?;
-        Ok(ProjectEdits {
-            edits,
-            written,
-            snapshot,
-        })
-    }))
+pub(crate) struct OpenText {
+    pub path: String,
+    pub text: String,
+    pub version: u64,
 }

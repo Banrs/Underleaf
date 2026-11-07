@@ -85,12 +85,7 @@ impl Actor {
             self.reload_tree();
         }
         if meaning.settings {
-            let chosen = settings::read_settings(&self.core.project.settings).main_file;
-            let chosen = paths::fold_case(&chosen);
-            let mut files = self.tree.files.iter();
-            if files.find(|f| paths::fold_case(f) == chosen) != main.as_ref() {
-                self.main_file_changed();
-            }
+            self.main_file_changed(main.as_ref());
             self.tree.publish_project(&mut self.core);
         }
     }
@@ -154,29 +149,40 @@ impl Actor {
         self.live.publish(&mut self.core, &self.docs, false);
         self.reload_tree();
         if renamed.main_moved {
-            self.main_file_changed();
+            self.builds.main_changed(&mut self.core);
         }
         Ok(Some(renamed))
     }
 
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
+        let main = self.tree.main.clone();
         let project = &self.core.project;
-        let main = settings::read_settings(&project.settings).main_file;
-        let updated = settings::write_settings(project, patch)?;
+        settings::write_settings(project, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
-        if updated.main_file != main {
-            self.live.restart(&mut self.core);
-            self.main_file_changed();
-        } else if build && self.core.auto_compile {
+        if !self.main_file_changed(main.as_ref()) && build && self.core.auto_compile {
             self.core.later.push_back(Later::Compile(true));
         }
         self.tree.publish_project(&mut self.core);
         granted.unwrap_or(Ok(()))
     }
 
-    fn main_file_changed(&mut self) {
+    /// Whether the settings now name a main file other than `was`, restarting what depends on it if so. A change of
+    /// case alone names the same file.
+    fn main_file_changed(&mut self, was: Option<&String>) -> bool {
+        let chosen = settings::read_settings(&self.core.project.settings).main_file;
+        let chosen = paths::fold_case(&chosen);
+        if self
+            .tree
+            .files
+            .iter()
+            .find(|f| paths::fold_case(f) == chosen)
+            == was
+        {
+            return false;
+        }
+        self.live.restart(&mut self.core);
         self.reload_tree();
-        self.live.restart_soon(&mut self.core);
         self.builds.main_changed(&mut self.core);
+        true
     }
 }

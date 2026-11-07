@@ -58,21 +58,39 @@ impl Drop for InSession {
 }
 
 requests! {
-    Library {
-        CheckTex {} -> TexStatus,
-        SetTexpressoDir { dir: Option<PathBuf> } -> TexStatus,
-        SetTexDir { dir: Option<PathBuf> } -> TexStatus,
-        InstallTex {} -> TexStatus,
-        ReloadProjects {} -> (),
-        CreateProject { name: String, template: ProjectTemplate, engine: Option<Engine> } -> ProjectInfo,
-        DuplicateProject { id: String, name: String } -> ProjectInfo,
-        FreeProjectName {} -> String,
-        RenameProject { id: String, name: String } -> ProjectInfo,
-        TrashProject { id: String } -> PathBuf,
-        PutBackProject { id: String, trashed: PathBuf } -> (),
-        KillAll {} -> (),
-        OpenPath { path: PathBuf } -> Opening,
-        ForgetFolder { id: String } -> (),
+    Library(async service: Service) {
+        CheckTex {} -> TexStatus = Ok(service.status().await),
+        SetTexpressoDir { dir: Option<PathBuf> } -> TexStatus
+            = service.set_bin_dir(dir, "texpresso", messages::no_texpresso_there, |app, bin| app.texpresso_dir = bin).await,
+        SetTexDir { dir: Option<PathBuf> } -> TexStatus
+            = service.set_bin_dir(dir, "latexmk", messages::no_latexmk, |app, bin| app.tex_dir = bin).await,
+        InstallTex {} -> TexStatus = {
+            let installed = tinytex::install(&service.processes, &service.tool_paths().0).await;
+            let _turn = service.tex_turn().await;
+            let status = service.status().await;
+            installed.map(|()| status)
+        },
+        ReloadProjects {} -> () = service.publish_projects(),
+        CreateProject { name: String, template: ProjectTemplate, engine: Option<Engine> } -> ProjectInfo
+            = service.relisted(projects::create_project(service, &name, template, engine)),
+        DuplicateProject { id: String, name: String } -> ProjectInfo
+            = service.relisted(import::duplicate_project(service, &id, &name)),
+        FreeProjectName {} -> String = projects::free_project_name(&service.data_dir),
+        RenameProject { id: String, name: String } -> ProjectInfo = service.relisted(
+            service
+                .unless_open(&id, messages::close_before_renaming)
+                .and_then(|_library| projects::rename_project(service, &id, &name)),
+        ),
+        TrashProject { id: String } -> PathBuf = service.relisted(
+            service
+                .unless_open(&id, messages::close_before_trashing)
+                .and_then(|_library| projects::trash_project(service, &id)),
+        ),
+        PutBackProject { id: String, trashed: PathBuf } -> ()
+            = service.relisted(projects::put_back_project(service, &id, &trashed)),
+        KillAll {} -> () = Ok(service.kill_all()),
+        OpenPath { path: PathBuf } -> Opening = service.relisted(projects::open_path(service, &path)),
+        ForgetFolder { id: String } -> () = service.relisted(projects::forget_folder(service, &id)),
     }
 }
 
@@ -213,6 +231,20 @@ impl Service {
         found
     }
 
+    async fn set_bin_dir(
+        &self,
+        dir: Option<PathBuf>,
+        program: &str,
+        missing: fn() -> Message,
+        set: fn(&mut AppSettings, Option<PathBuf>),
+    ) -> Result<TexStatus, CoreError> {
+        let missing = || CoreError::bad_request(missing());
+        let bin = dir.map(|dir| tex::bin_dir(&dir, program).ok_or_else(missing));
+        let bin = bin.transpose()?;
+        AppSettings::update(&self.state_dir, |app| set(app, bin))?;
+        Ok(self.status().await)
+    }
+
     pub(crate) fn tool_paths(&self) -> (String, String) {
         tex::tool_paths(&AppSettings::read(&self.state_dir), self.helpers.as_ref())
     }
@@ -234,71 +266,7 @@ impl Service {
                 Some(turn) => Some(turn.await),
                 None => None,
             };
-            service.run(request?).await
-        }
-    }
-
-    #[expect(clippy::unit_arg)]
-    async fn run(&self, request: Library) -> Result<Value, CoreError> {
-        match request {
-            Library::CheckTex(CheckTex {}, answer) => answer(Ok(self.status().await)),
-            Library::SetTexpressoDir(SetTexpressoDir { dir }, answer) => {
-                let none_there = || CoreError::bad_request(messages::no_texpresso_there());
-                let bin = dir.map(|dir| tex::bin_dir(&dir, "texpresso").ok_or_else(none_there));
-                let bin = bin.transpose()?;
-                AppSettings::update(&self.state_dir, |app| app.texpresso_dir = bin)?;
-                answer(Ok(self.status().await))
-            }
-            Library::SetTexDir(SetTexDir { dir }, answer) => {
-                let no_latexmk = || CoreError::bad_request(messages::no_latexmk());
-                let bin = dir.map(|dir| tex::bin_dir(&dir, "latexmk").ok_or_else(no_latexmk));
-                let bin = bin.transpose()?;
-                AppSettings::update(&self.state_dir, |app| app.tex_dir = bin)?;
-                answer(Ok(self.status().await))
-            }
-            Library::InstallTex(InstallTex {}, answer) => {
-                let installed = tinytex::install(&self.processes, &self.tool_paths().0).await;
-                let _turn = self.tex_turn().await;
-                let status = self.status().await;
-                answer(installed.map(|()| status))
-            }
-            Library::ReloadProjects(ReloadProjects {}, answer) => answer(self.publish_projects()),
-            Library::CreateProject(
-                CreateProject {
-                    name,
-                    template,
-                    engine,
-                },
-                answer,
-            ) => answer(self.relisted(projects::create_project(self, &name, template, engine))),
-            Library::DuplicateProject(DuplicateProject { id, name }, answer) => {
-                answer(self.relisted(import::duplicate_project(self, &id, &name)))
-            }
-            Library::FreeProjectName(FreeProjectName {}, answer) => {
-                answer(projects::free_project_name(&self.data_dir))
-            }
-            Library::RenameProject(RenameProject { id, name }, answer) => {
-                let renamed = self
-                    .unless_open(&id, messages::close_before_renaming)
-                    .and_then(|_library| projects::rename_project(self, &id, &name));
-                answer(self.relisted(renamed))
-            }
-            Library::TrashProject(TrashProject { id }, answer) => {
-                let trashed = self
-                    .unless_open(&id, messages::close_before_trashing)
-                    .and_then(|_library| projects::trash_project(self, &id));
-                answer(self.relisted(trashed))
-            }
-            Library::PutBackProject(PutBackProject { id, trashed }, answer) => {
-                answer(self.relisted(projects::put_back_project(self, &id, &trashed)))
-            }
-            Library::KillAll(KillAll {}, answer) => answer(Ok(self.kill_all())),
-            Library::OpenPath(OpenPath { path }, answer) => {
-                answer(self.relisted(projects::open_path(self, &path)))
-            }
-            Library::ForgetFolder(ForgetFolder { id }, answer) => {
-                answer(self.relisted(projects::forget_folder(self, &id)))
-            }
+            request?.run(&service).await
         }
     }
 }

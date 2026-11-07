@@ -58,70 +58,6 @@ pub struct Ir {
     pub packed: Vec<String>,
 }
 
-const TAKEN: &[&str] = &[
-    "Alignment",
-    "Angle",
-    "Animation",
-    "Any",
-    "App",
-    "Array",
-    "Axis",
-    "Binding",
-    "Bool",
-    "Bundle",
-    "Button",
-    "Calendar",
-    "Character",
-    "Color",
-    "Data",
-    "Date",
-    "Dictionary",
-    "Divider",
-    "Done",
-    "Double",
-    "Edge",
-    "Empty",
-    "Environment",
-    "Error",
-    "Font",
-    "Form",
-    "Group",
-    "Image",
-    "Int",
-    "Label",
-    "Link",
-    "List",
-    "Locale",
-    "Menu",
-    "Never",
-    "Notification",
-    "Optional",
-    "Path",
-    "Picker",
-    "Process",
-    "Range",
-    "Result",
-    "Scene",
-    "Section",
-    "Set",
-    "Settings",
-    "Shape",
-    "State",
-    "String",
-    "Tab",
-    "Table",
-    "Task",
-    "Text",
-    "Thread",
-    "Timer",
-    "Toggle",
-    "URL",
-    "Unit",
-    "View",
-    "Window",
-    "WireRequest",
-];
-
 impl Ir {
     pub fn add(&mut self, defs: &Map<String, Value>, way: Way) {
         for (name, schema) in defs {
@@ -240,10 +176,6 @@ fn type_name(name: &str, defs: &Map<String, Value>) {
         chars.next().is_some_and(|c| c.is_ascii_uppercase())
             && chars.all(|c| c.is_ascii_alphanumeric()),
         "{name} isn't a plain type name"
-    );
-    assert!(
-        !TAKEN.contains(&name),
-        "{name} is a Swift, SwiftUI or Foundation type's name"
     );
     let base = name.trim_end_matches(|c: char| c.is_ascii_digit());
     assert!(

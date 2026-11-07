@@ -268,16 +268,16 @@ final class SessionClient {
         }
     }
 
-    func close() async throws -> Bool {
+    func close(discarding: Bool = false) async throws -> Bool {
         do {
-            guard try await call(CloseProject()) else { return false }
+            guard try await call(CloseProject(discard: discarding ? true : nil)) else { return false }
         } catch let error where error is CancellationError || lifecycle?.stopped != nil {}
         end()
         return true
     }
 
     func discard() {
-        send(CloseProject())
+        send(CloseProject(discard: true))
         end()
     }
 

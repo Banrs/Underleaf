@@ -105,6 +105,8 @@ nonisolated struct Clean: SessionRequest {
 nonisolated struct CloseProject: SessionRequest {
     typealias Reply = Bool
     static let command = "CloseProject"
+
+    var discard: Bool?
 }
 
 nonisolated struct CodeRanges: SourceRequest {
@@ -785,7 +787,6 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case answerUnfit = "answer_unfit"
     case changedOnDisk = "changed_on_disk"
     case editsUnsaved = "edits_unsaved"
-    case oneDocument = "one_document"
     case notUtf8Name = "not_utf8_name"
     case notUtf8File = "not_utf8_file"
     case tooLargeToKeep = "too_large_to_keep"

@@ -66,7 +66,6 @@ texlocal_latex::messages! {
     answer_unfit = "That answer doesn't fit this conflict";
     changed_on_disk(path) = "“{path}” changed on disk, so nothing was changed. Keep your edits or the disk’s first, then try again.";
     edits_unsaved = "Some edits aren’t saved, so they’d be left out. Save them, then try again.";
-    one_document = "Only one open document can be edited at once: close the others first.";
     not_utf8_name(path) = "The name of “{path}” isn't UTF-8, so it can't be copied as it is. Rename it, then try again.";
     not_utf8_file(path) = "“{path}” isn't UTF-8 text, and writing it would change it, so nothing was changed. Convert it to UTF-8 to edit it.";
     too_large_to_keep(path) = "“{path}” is too large for the version history to keep, so nothing was changed, as it couldn’t be put back.";
@@ -121,7 +120,7 @@ texlocal_latex::messages! {
 
     live_unpatched = "This TeXpresso doesn't have Underleaf's patch, or has an older one. Choose Automatic in Settings › Live Preview to use TeXLocal's own.";
     live_no_main = "The main file does not exist.";
-    no_texpresso = "TeXpresso wasn't found. Choose the folder it's in, in Settings, or install it in /opt/homebrew/bin or /usr/local/bin.";
+    no_texpresso = "TeXpresso wasn't found. Choose the folder it's in, in Settings.";
     texpresso_unstarted(error) = "Couldn't start TeXpresso: {error}. Check its folder in Settings › Live Preview.";
     texpresso_unsynced = "TeXpresso hasn't written a document to sync with yet";
     texpresso_exited(status) = "TeXpresso exited ({status}). Check its log and start TeXpresso again.";

@@ -46,7 +46,8 @@ pub(crate) fn tool_paths(app: &AppSettings, helpers: Option<&PathBuf>) -> (Strin
         .chain(tinytex::root().map(|root| tinytex::bin(&root)))
         .chain(texlive_bins())
         .collect();
-    let texpresso = join_path(app.texpresso_dir.iter().chain(helpers).chain(&tex).cloned());
+    // Only a TeXpresso built with the app's patch works; one on PATH or from Homebrew is upstream's viewer.
+    let texpresso = join_path(app.texpresso_dir.iter().chain(helpers).cloned());
     (join_path(tex), texpresso)
 }
 

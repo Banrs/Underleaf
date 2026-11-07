@@ -14,10 +14,12 @@ mod watch;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::{Entry, VacantEntry};
+use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::project::{Analysis, Scan};
@@ -26,7 +28,6 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::compile::CompileResult;
 use crate::events::{Hub, Listener, Replied, Said};
-use crate::protocol::Answer;
 use crate::service::Service;
 use crate::settings::UiState;
 use crate::{CoreError, lock, messages, paths};
@@ -99,14 +100,15 @@ thread_local! {
     static ACTOR: Cell<bool> = const { Cell::new(false) };
 }
 
-pub(crate) struct Pending<T> {
-    reply: Reply,
-    answer: Answer<T>,
-}
+pub(crate) struct Pending<T>(Reply, PhantomData<fn(T)>);
 
-impl<T> Pending<T> {
+impl<T: Serialize> Pending<T> {
+    pub fn new(reply: Reply) -> Self {
+        Self(reply, PhantomData)
+    }
+
     pub fn send(self, result: Result<T, CoreError>) {
-        self.reply.send((self.answer)(result));
+        self.0.send(result.map(|value| json!(value)));
     }
 }
 
@@ -196,10 +198,8 @@ impl Sessions {
                 drop(open.get().tx.send(Msg::Command(request, reply)));
             }
             Entry::Vacant(entry) => match request {
-                Session::OpenProject(opening, answer) => {
-                    self.open(entry, opening, Pending { reply, answer });
-                }
-                Session::CloseProject(_, answer) => reply.send(answer(Ok(true))),
+                Session::OpenProject(opening) => self.open(entry, opening, Pending::new(reply)),
+                Session::CloseProject(_) => Pending::new(reply).send(Ok(true)),
                 _ => reply.send(Err(gone())),
             },
         }
@@ -260,25 +260,24 @@ impl Sessions {
 mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::atomic::AtomicUsize;
     use std::sync::mpsc::{Sender, channel};
     use std::time::Duration;
 
     use tokio::sync::Notify;
 
-    use super::build::Fut;
+    use super::build::{Compiling, Fut};
     use super::*;
+    use crate::process::Tree;
     use crate::projects::History;
 
     struct Panics;
 
     impl Compiler for Panics {
-        fn compile(&self, _: Project, _: bool) -> Fut<Result<CompileResult, CoreError>> {
+        fn compile(&self, _: Project, _: bool) -> Compiling {
             panic!("the test compiler panics")
         }
-
-        fn stop_compile(&self, _: &Path) {}
 
         fn clean(&self, _: PathBuf) -> Fut<Result<(), CoreError>> {
             panic!("the test compiler panics")
@@ -292,16 +291,15 @@ mod tests {
     }
 
     impl Compiler for Holds {
-        fn compile(&self, _: Project, _: bool) -> Fut<Result<CompileResult, CoreError>> {
+        fn compile(&self, _: Project, _: bool) -> Compiling {
             self.builds.fetch_add(1, Ordering::Relaxed);
             let done = Arc::clone(&self.done);
-            Box::pin(async move {
+            let build = async move {
                 done.notified().await;
                 Ok(CompileResult::default())
-            })
+            };
+            (Tree::default(), Box::pin(build))
         }
-
-        fn stop_compile(&self, _: &Path) {}
 
         fn clean(&self, _: PathBuf) -> Fut<Result<(), CoreError>> {
             Box::pin(async { Ok(()) })

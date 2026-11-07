@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use texlocal_core::service::Service;
 use texlocal_core::session::{Document, Sessions};
 use texlocal_core::{Answered, CoreError, messages};
-use texlocal_latex::syntax::{Source, SourceDocument, Syntax, TextRange};
+use texlocal_latex::syntax::{Source, Syntax, TextRange};
 
 pub struct TlHandle {
     runtime: tokio::runtime::Runtime,
@@ -129,22 +129,10 @@ pub unsafe extern "C" fn tl_free(text: *mut c_char) {
     }
 }
 
-pub enum TlSource {
-    Own(Box<SourceDocument>),
-    Session(Document),
-}
+pub type TlSource = Document;
 
-impl TlSource {
-    fn with<T>(&mut self, body: impl FnOnce(&mut SourceDocument) -> T) -> T {
-        match self {
-            Self::Own(doc) => body(doc),
-            Self::Session(document) => document.with(body),
-        }
-    }
-}
-
-unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&mut TlSource) -> T) -> T {
-    unsafe { source.as_mut() }
+unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&Document) -> T) -> T {
+    unsafe { source.as_ref() }
         .and_then(|source| caught(|| body(source)))
         .unwrap_or_default()
 }
@@ -156,9 +144,9 @@ fn answered(body: impl FnOnce() -> Result<Value, CoreError>) -> *mut c_char {
 
 unsafe fn answer_on(
     source: *mut TlSource,
-    body: impl FnOnce(&mut TlSource) -> Result<Value, CoreError>,
+    body: impl FnOnce(&Document) -> Result<Value, CoreError>,
 ) -> *mut c_char {
-    answered(|| match unsafe { source.as_mut() } {
+    answered(|| match unsafe { source.as_ref() } {
         Some(source) => body(source),
         None => Err(CoreError::bad_request(messages::no_source())),
     })
@@ -182,20 +170,19 @@ pub unsafe extern "C" fn tl_session_source(
     };
     caught(|| handle.sessions.document(session, path))
         .flatten()
-        .map_or(std::ptr::null_mut(), |document| {
-            Box::into_raw(Box::new(TlSource::Session(document)))
-        })
+        .map(Box::new)
+        .map_or(std::ptr::null_mut(), Box::into_raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_new(text: *const u8, len: usize) -> *mut TlSource {
     let text = unsafe { text_arg(text, len) };
-    own(|| SourceDocument::new(&text))
+    own(|| Document::detached(&text))
 }
 
-fn own(make: impl FnOnce() -> SourceDocument) -> *mut TlSource {
-    let doc = caught(make).unwrap_or_else(|| SourceDocument::new(""));
-    Box::into_raw(Box::new(TlSource::Own(Box::new(doc))))
+fn own(make: impl FnOnce() -> Document) -> *mut TlSource {
+    let document = caught(make).unwrap_or_else(|| Document::detached(""));
+    Box::into_raw(Box::new(document))
 }
 
 #[unsafe(no_mangle)]
@@ -210,13 +197,10 @@ pub unsafe extern "C" fn tl_source_edit(
 ) -> *mut c_char {
     let text = unsafe { text_arg(text, len) };
     let changing = unsafe { changing.as_ref() }.copied();
-    let edit = |source: &mut TlSource| {
-        let mirrors = match source {
-            TlSource::Own(doc) => doc.apply_edit(start, length, &text, changing, mirroring),
-            TlSource::Session(document) => document
-                .edit(start, length, &text, changing, mirroring)
-                .ok_or_else(|| CoreError::conflict(messages::not_editable()))?,
-        };
+    let edit = |document: &Document| {
+        let mirrors = document
+            .edit(start, length, &text, changing, mirroring)
+            .ok_or_else(|| CoreError::conflict(messages::not_editable()))?;
         Ok(json!(mirrors))
     };
     unsafe { answer_on(source, edit) }
@@ -230,20 +214,13 @@ pub unsafe extern "C" fn tl_source_select(
     mirroring: bool,
 ) {
     let selection = TextRange { start, length };
-    let select = |source: &mut TlSource| match source {
-        TlSource::Own(doc) => doc.select(selection, mirroring),
-        TlSource::Session(document) => document.select(selection, mirroring),
-    };
+    let select = |document: &Document| document.select(selection, mirroring);
     unsafe { on_source(source, select) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_composing(source: *mut TlSource, composing: bool) {
-    let compose = |source: &mut TlSource| {
-        if let TlSource::Session(document) = source {
-            document.compose(composing);
-        }
-    };
+    let compose = |document: &Document| document.compose(composing);
     unsafe { on_source(source, compose) }
 }
 
@@ -268,34 +245,18 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_restore(source: *mut TlSource, text: *const u8, len: usize) {
     let text = unsafe { text_arg(text, len) };
-    let restore = |source: &mut TlSource| match source {
-        TlSource::Own(doc) => **doc = SourceDocument::new(&text),
-        TlSource::Session(document) => document.restore(&text),
-    };
+    let restore = |document: &Document| document.restore(&text);
     unsafe { on_source(source, restore) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_editable(source: *mut TlSource) -> bool {
-    let editable = |source: &mut TlSource| match source {
-        TlSource::Own(_) => true,
-        TlSource::Session(document) => document.editable(),
-    };
-    unsafe { on_source(source, editable) }
+    unsafe { on_source(source, Document::editable) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_source_version(source: *mut TlSource, version: *mut u64) -> bool {
-    let read = |source: &mut TlSource| match source {
-        TlSource::Own(_) => None,
-        TlSource::Session(document) => Some(document.version()),
-    };
-    let (Some(version), Some(read)) = (unsafe { (version.as_mut(), on_source(source, read)) })
-    else {
-        return false;
-    };
-    *version = read;
-    true
+pub unsafe extern "C" fn tl_source_version(source: *mut TlSource) -> u64 {
+    unsafe { on_source(source, Document::version) }
 }
 
 #[unsafe(no_mangle)]
@@ -323,8 +284,8 @@ pub unsafe extern "C" fn tl_source_highlights(
     let Some(count) = (unsafe { count.as_mut() }) else {
         return std::ptr::null_mut();
     };
-    let highlights = |source: &mut TlSource| {
-        let runs = source.with(|doc| doc.highlights(start, length));
+    let highlights = |document: &Document| {
+        let runs = document.with(|doc| doc.highlights(start, length));
         runs.into_iter()
             .flat_map(|h| [h.start, h.length, h.kind as u32])
             .collect()
@@ -348,9 +309,9 @@ pub unsafe extern "C" fn tl_source_call(
     args_json: *const c_char,
 ) -> *mut c_char {
     let called = unsafe { command_args(command, args_json) };
-    let call = |source: &mut TlSource| {
+    let call = |document: &Document| {
         let (command, args) = called?;
-        source
+        document
             .with(|doc| Source::call(doc, command, args))
             .map_err(CoreError::bad_request)
     };

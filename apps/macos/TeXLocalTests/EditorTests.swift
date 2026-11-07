@@ -36,7 +36,7 @@ struct EditorTests {
         #expect(document.text == "one\n2")
         #expect(document.lineCount == 2)
         #expect(document.line(at: 4) == 2)
-        #expect(document.version == nil)
+        #expect(document.version == 1)
     }
 
     @Test func aRefusedCallReloadsTheCoresCopyFromTheEditorsTextAndANullAnswerDoesNot() {
@@ -114,6 +114,16 @@ struct EditorTests {
         Self.type("ab", in: text)
         #expect(text.string == "\\begin{xab}\n\\end{xab}" && text.document.text == text.string)
         #expect(text.selection == .caret(20))
+    }
+
+    @Test func aPairTypedInAnEndsNamePutsTheCaretInsideItOnceItsBeginIsMirrored() {
+        let (editor, window) = Self.editor("\\begin{x}\n\\end{x}")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(16)
+        Self.type("(", in: text)
+        #expect(text.string == "\\begin{x()}\n\\end{x()}" && text.document.text == text.string)
+        #expect(text.selection == .caret(19))
     }
 
     @Test func acceptingACompletionInAnEndsNameLeavesTheCaretAfterItOnceItsBeginIsMirrored() throws {
