@@ -17,7 +17,7 @@ use super::build::{Builds, Shown, built_pdf};
 use super::documents::{Docs, Resolution};
 use super::edits::{AddedCitation, Fixed, ProjectEdits};
 use super::live::Live;
-use super::navigate::{QuickHelp, QuickOpenItem};
+use super::navigate::{BadBoxArea, QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::{Lifecycle, Stopped};
 use super::watch::Tree;
@@ -84,6 +84,7 @@ requests! {
             => actor.synctex_inverse(page, x, y, click, pending),
         SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>
             => actor.synctex_match(file.0, line, column, pages, pending),
+        BadBoxAreas {} -> Vec<BadBoxArea> => actor.bad_box_areas(pending),
     }
 }
 

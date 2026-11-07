@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
@@ -99,18 +100,23 @@ pub(crate) fn forward(
     Ok(first)
 }
 
-/// Where `lines` of `file` were typeset, as one box on the page they start on.
-pub(crate) fn area(
+/// Finds where lines of a file were typeset, as one box on the page they start on, reading the SyncTeX file and
+/// matching its inputs to the project's files once for every lookup.
+pub(crate) fn areas(
     project: &Project,
-    file: &str,
-    lines: RangeInclusive<u32>,
     live: Option<&Path>,
-) -> Result<Option<ForwardLoc>, CoreError> {
-    let (sync, tag) = tagged(project, file, live)?;
-    Ok(sync
-        .area(tag, lines)
-        .filter(|shown| shown.page >= 1)
-        .map(located))
+) -> Result<impl Fn(&str, RangeInclusive<u32>) -> Option<ForwardLoc> + use<>, CoreError> {
+    let sync = sync_for(project, live)?;
+    let mut tags = HashMap::new();
+    for (tag, name) in sync.inputs() {
+        if let Some(file) = source_file(project, name) {
+            tags.entry(file).or_insert(tag);
+        }
+    }
+    Ok(move |file: &str, lines| {
+        let shown = sync.area(*tags.get(file)?, lines)?;
+        (shown.page >= 1).then(|| located(shown))
+    })
 }
 
 fn tagged(

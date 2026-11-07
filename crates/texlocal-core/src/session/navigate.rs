@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::diff::map_line;
 use texlocal_latex::facts::FilePlace;
-use texlocal_latex::logparse::{aux_inputs, label_number};
+use texlocal_latex::logparse::{aux_inputs, bad_box, label_number};
 use texlocal_latex::search::score;
 use texlocal_latex::syntax::catalog::CATALOG;
 use texlocal_latex::syntax::{SymbolKind, labelled_lines, sync_lines};
@@ -38,6 +38,17 @@ pub(crate) enum QuickOpenKind {
     File,
     Heading,
     Label,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BadBoxArea {
+    file: String,
+    line: u32,
+    // How far an overfull box runs past the text, in points; none for an underfull one.
+    too_wide: Option<f64>,
+    message: String,
+    area: ForwardLoc,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -185,9 +196,8 @@ impl Actor {
                         let typeset = |line| map_line(typeset, &text, line);
                         lines = typeset(*lines.start())..=typeset(*lines.end());
                     }
-                    synctex::area(&project, file, lines, live.as_deref())
-                        .ok()
-                        .flatten()
+                    let area = synctex::areas(&project, live.as_deref()).ok()?;
+                    area(file, lines)
                 }),
                 _ => None,
             };
@@ -252,6 +262,33 @@ impl Actor {
                 }
                 Ok(loc)
             }));
+        });
+    }
+
+    /// Where the last build's bad boxes are in its PDF; none while Live Preview's is shown, which has its own lines.
+    pub fn bad_box_areas(&self, reply: Pending<Vec<BadBoxArea>>) {
+        if !matches!(self.live.pdf(&self.core), Ok(None)) {
+            return reply.send(Ok(Vec::new()));
+        }
+        let (boxes, project) = (self.builds.bad_boxes().to_vec(), self.core.project.clone());
+        tokio::task::spawn_blocking(move || {
+            let Ok(area) = synctex::areas(&project, None) else {
+                return reply.send(Ok(Vec::new()));
+            };
+            let areas = boxes.into_iter().filter_map(|item| {
+                let (file, line) = (item.file?, item.line?);
+                let bad = bad_box(&item.message.text)?;
+                let area = area(&file, bad.lines)?;
+                let (too_wide, message) = (bad.too_wide, item.message.text);
+                Some(BadBoxArea {
+                    file,
+                    line,
+                    too_wide,
+                    message,
+                    area,
+                })
+            });
+            reply.send(Ok(areas.collect()));
         });
     }
 

@@ -68,6 +68,19 @@ nonisolated struct ApplyFix: SessionRequest {
     var id: String
 }
 
+nonisolated struct BadBoxArea: Decodable, Hashable, Sendable {
+    var file: String
+    var line: Int
+    var tooWide: Double?
+    var message: String
+    var area: ForwardLoc
+}
+
+nonisolated struct BadBoxAreas: SessionRequest {
+    typealias Reply = [BadBoxArea]
+    static let command = "BadBoxAreas"
+}
+
 nonisolated struct BuildFinished: Decodable, Hashable, Sendable {
     var auto: Bool
     var announce: Bool

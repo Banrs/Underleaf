@@ -23,6 +23,9 @@ final class WorkspaceViews: ProjectViews {
                 self?.pdf.loading?.cancel()
             },
             track({ [weak project] in project?.window?.app.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
+            track({ [weak project] in project?.navigator.hiddenIssueKinds.contains(.badBox) == true }) { [weak self] in
+                self?.pdf.view.showsBadBoxes = !$0
+            },
         ]
     }
 
@@ -78,7 +81,9 @@ final class WorkspaceViews: ProjectViews {
     func heard(_ event: Event) {
         switch event {
         case .section(.openFile): showOpenFile()
-        case .section(.build), .section(.live): showIssues()
+        case .section(.build), .section(.live):
+            showIssues()
+            if pdf.isLoading == false, project.store.build?.result?.badBoxes != markedBadBoxes { project.session.task { await self.markBadBoxes() } }
         case .section(.shownPdf): showPDF()
         case .reload(let edits): reload(edits)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
@@ -180,7 +185,27 @@ final class WorkspaceViews: ProjectViews {
 
     private func showPDF() {
         guard let shown = project.store.shownPdf, !shown.live else { return }
-        _ = pdf.load(shown.path.map { URL(filePath: $0) })
+        let loading = pdf.load(shown.path.map { URL(filePath: $0) })
+        project.session.task { [self] in
+            await loading.value
+            await markBadBoxes()
+        }
+    }
+
+    @ObservationIgnored private var markedBadBoxes: [LogItem]?
+
+    /// Marks the last build's bad boxes in the PDF shown, once it has loaded, and again when a build reports others.
+    private func markBadBoxes() async {
+        let badBoxes = project.store.build?.result?.badBoxes ?? []
+        guard let document = pdf.view.document else { return }
+        markedBadBoxes = badBoxes
+        if badBoxes.isEmpty { return pdf.view.clearBadBoxes() }
+        guard let areas = try? await project.session.call(BadBoxAreas()),
+              pdf.view.document === document, markedBadBoxes == badBoxes else { return }
+        pdf.view.mark(Dictionary(grouping: areas) { Int($0.area.page) - 1 }) { [weak self] badBox in
+            guard let project = self?.project else { return }
+            project.session.task { await project.open(badBox.file, line: Int(badBox.line), jump: true) }
+        }
     }
 
     /// Takes the disk's text through an undoable edit, which an edit made since the session asked refuses.
