@@ -82,6 +82,7 @@ texlocal_latex::messages! {
     bad_version_id = "Bad version id";
 
     main_file_missing(path) = "Main file not found: {path}";
+    main_file_shell_name(path) = r#"Rename “{path}” to compile it: a main file’s name can’t have ` $ " or \ in it."#;
     timed_out(minutes) = "This automatic build was stopped after {minutes} minutes without finishing. Compile to build without a time limit; the Build Log shows how far it got.";
     latexmk_unstarted(error) = "Couldn't start latexmk: {error}";
     no_pdf_made = "The build made no PDF. See the Build Log.";

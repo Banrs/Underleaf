@@ -41,10 +41,9 @@ final class PDFFind: NSObject, NSMenuItemValidation {
         return finder
     }
 
-    /// Reads the shown pages' text again after they change, off the main thread and after the change rather than before
-    /// it, as it takes about a millisecond a page: 430 ms for the 392-page test PDF. A page keeps its text once read, so
-    /// after a live page only that page costs. NSTextFinder doesn't find again when told the text changes, so its matches
-    /// go only when the text did.
+    /// Rereads the shown pages' text after they change, off the main thread, since it costs about a millisecond a page. A
+    /// page keeps its text once read, so a live update rereads only that page. NSTextFinder doesn't search again when told
+    /// the text changed, so its matches are cleared only when the text did change.
     func pagesChanged() {
         let pages = PageTexts(document: view.document)
         _ = restart(&reading) { [weak self] in
@@ -63,9 +62,9 @@ final class PDFFind: NSObject, NSMenuItemValidation {
     }
 }
 
-/// The PDF's text as NSTextFinder reads it: the pages' strings in turn, each ending in a search boundary so that no match
-/// spans two pages. NSTextFinder reads them on a background queue as it finds incrementally, so they are swapped whole
-/// under a lock rather than read from the pages, and only what touches the view is the main actor's.
+/// The PDF's text as NSTextFinder reads it: each page's string, ending in a search boundary so that no match spans two
+/// pages. NSTextFinder reads it on a background queue while finding incrementally, so the strings are swapped whole
+/// under a lock, and only what touches the view runs on the main actor.
 nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
     private struct Pages {
         var strings: [String] = []

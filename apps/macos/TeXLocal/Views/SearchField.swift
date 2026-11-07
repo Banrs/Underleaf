@@ -1,32 +1,31 @@
 import SwiftUI
 
 extension CGFloat {
-    /// The first whole pixel at or past this, at a backing scale: a half point stays put at 2x and goes on to the next point at 1x.
+    /// Rounds up to a whole pixel at a backing scale: a half point stays put at 2x and moves to the next point at 1x.
     func pixelCeiling(_ scale: CGFloat) -> CGFloat { (self * scale).rounded(.up) / scale }
 }
 
 extension NSSearchFieldCell {
-    /// Shows a symbol where the magnifier was, at the magnifier's size for the field's control size, so the cell's own
-    /// insets fit it: the filter symbol comes 2 pt wider than a small field's magnifier, and ran into the text.
+    /// Shows a symbol in place of the magnifier, scaled to the magnifier's height so the cell's insets fit it (the filter
+    /// symbol is 2 pt wider than a small field's magnifier and ran into the text).
     func showSearchSymbol(_ symbol: NSImage) {
         guard let button = searchButtonCell, button.image !== symbol else { return }
         if let magnifier = button.image { symbol.size = NSSize(width: symbol.size.width * magnifier.size.height / symbol.size.height, height: magnifier.size.height) }
         showSearchImage(symbol)
     }
 
-    /// Shows an image in the search button pressed or not: AppKit keeps its magnifier as the button's pressed image, which
-    /// a click on any other symbol flashed in its place.
+    /// Sets the search button's image for both states: AppKit keeps its magnifier as the pressed image, which flashed on
+    /// a click.
     func showSearchImage(_ image: NSImage?) {
         guard let button = searchButtonCell else { return }
         (button.image, button.alternateImage) = (image, image)
     }
 }
 
-/// A symbol with the chevron AppKit sets after its magnifying glass when a search field has a menu, and leaves out beside any
-/// other symbol. The chevron is AppKit's own: its magnifying glass and chevron, from a stock search field with a menu, drawn
-/// with only the chevron showing, which keeps it crisp at 1x, as Xcode 27.2's is. Xcode sets it 11 pt after the symbol's
-/// centre, level with it (measured). The search button shows a clear placeholder as wide as both, so a click on either opens
-/// the menu, and copies of its cell draw them where AppKit centres the placeholder, so they keep its tint and highlight.
+/// A symbol followed by the chevron a search field shows after its magnifier when it has a menu, which AppKit leaves out
+/// beside any other symbol. The chevron is cut from a stock field's image, so it stays crisp at 1x, and sits 11 pt after
+/// the symbol's centre, as in Xcode. The button shows a clear placeholder as wide as both, so a click on either opens the
+/// menu, and copies of its cell draw the two so they keep its tint and highlight.
 final class MenuSymbol {
     let symbol: NSImage
     let placeholder: NSImage
@@ -56,12 +55,12 @@ final class MenuSymbol {
         }
         let origin = NSPoint(x: rect.midX - placeholder.size.width / 2, y: rect.midY - placeholder.size.height / 2)
         let symbolRect = NSRect(origin: origin, size: symbol.size)
-        // AppKit's chevron is centred 16 pt into its image, after a magnifying glass that ends before 12 pt, with its handle
-        // below 10; the image starts on a whole pixel, rounding down between two, as Xcode's chevron does at 1x.
+        // The stock chevron is centred 16 pt into its image, after a magnifier that ends before 12 pt and a handle below 10.
+        // It starts on a whole pixel, rounding down, as Xcode's does at 1x.
         let scale = view.window?.backingScaleFactor ?? 2
         let stockRect = NSRect(x: symbolRect.minX + ((symbol.size.width / 2 + 11 - 16) * scale).rounded(.down) / scale,
                                y: symbolRect.minY, width: stock.size.width, height: stock.size.height)
-        // The symbol unaligned, so the cell rounds it to pixels as AppKit rounds its own search button.
+        // Unaligned, so the cell rounds it to pixels as it rounds its own image.
         cells.symbol.draw(withFrame: symbolRect, in: view)
         NSGraphicsContext.saveGraphicsState()
         NSRect(x: stockRect.minX + 12, y: stockRect.minY + 5, width: stockRect.width - 12, height: 5).clip()
@@ -70,16 +69,14 @@ final class MenuSymbol {
     }
 }
 
-/// A stock search field, a capsule on 27.2 with its focus ring to match, with its symbol where the magnifier was and, with a
-/// menu, the chevron AppKit draws only beside its own magnifier.
+/// A stock search field showing a symbol in place of the magnifier and, with a menu, the menu chevron.
 final class FilterSearchField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         /// Drawn in the search button's place when the field has a menu.
         var menuSymbol: MenuSymbol?
 
-        /// AppKit's rect runs the field's height a point below its middle, and sets a symbol half a point below the middle
-        /// of its rect; this one sits on the field's middle, as Xcode 27.2's console filter's does (measured), and an
-        /// eighth of a point lower, so that at 1x it rounds down a pixel, as Xcode's does.
+        /// Centres the symbol on the field, like Xcode's console filter, an eighth of a point low so that at 1x it rounds down a
+        /// pixel as Xcode's does. AppKit's own rect sits a point below the middle, with the symbol half a point below that.
         override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
             let button = super.searchButtonRect(forBounds: rect)
             return NSRect(x: button.minX, y: rect.midY - 7.875, width: button.width, height: 15)
@@ -190,7 +187,7 @@ struct SearchField: NSViewRepresentable {
             }
             cell.searchMenuTemplate = menu
         }
-        // The cell puts its magnifier back whenever its control size or menu changes, as SwiftUI's environment does after
+        // The cell restores its magnifier whenever its control size or menu changes, which SwiftUI's environment does after
         // makeNSView.
         if let symbol = context.coordinator.symbol, let cell = view.cell as? NSSearchFieldCell {
             cell.showSearchSymbol(options.isEmpty ? symbol : context.coordinator.menuSymbol?.placeholder ?? symbol)

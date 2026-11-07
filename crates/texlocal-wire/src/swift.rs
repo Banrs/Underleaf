@@ -21,24 +21,6 @@ nonisolated struct Done: Decodable, Hashable, Sendable {
         }
     }
 }
-
-nonisolated struct WireKey: CodingKey {
-    let stringValue: String
-    var intValue: Int? { nil }
-
-    init(stringValue: String) { self.stringValue = stringValue }
-    init?(intValue: Int) { nil }
-}
-
-nonisolated extension Decoder {
-    func strict<Key: CodingKey & CaseIterable>(_: Key.Type) throws -> KeyedDecodingContainer<Key> {
-        let known = Set(Key.allCases.map(\.stringValue))
-        if let unknown = try container(keyedBy: WireKey.self).allKeys.first(where: { !known.contains($0.stringValue) }) {
-            throw DecodingError.dataCorrupted(.init(codingPath: codingPath + [unknown], debugDescription: "Unknown key"))
-        }
-        return try container(keyedBy: Key.self)
-    }
-}
 "#;
 
 pub fn file(ir: &Ir) -> String {
@@ -193,16 +175,6 @@ fn declared(name: &str, def: &Def, generic: &BTreeSet<&str>) -> String {
     }
 }
 
-fn keys<'a>(out: &mut String, names: impl IntoIterator<Item = &'a str>) {
-    let names: Vec<String> = names.into_iter().map(ident).collect();
-    let names = names.join(", ");
-    writeln!(
-        out,
-        "\n    enum CodingKeys: String, CodingKey, CaseIterable {{ case {names} }}"
-    )
-    .unwrap();
-}
-
 fn structure(
     out: &mut String,
     name: &str,
@@ -234,49 +206,6 @@ fn structure(
     for field in fields {
         let ty = swift(&field.ty, generic);
         writeln!(out, "    var {}: {ty}", ident(&field.name)).unwrap();
-    }
-    if !def.decoded {
-        out.push_str("}\n");
-        return;
-    }
-    assert!(!fields.is_empty(), "{name} has no fields to read");
-    keys(out, fields.iter().map(|field| field.name.as_str()));
-    out.push_str("}\n");
-    writeln!(out, "\nnonisolated extension {name} {{").unwrap();
-    out.push_str("    init(from decoder: any Decoder) throws {\n");
-    out.push_str("        let wire = try decoder.strict(CodingKeys.self)\n");
-    for field in fields {
-        let (decode, ty) = match &field.ty {
-            Ty::Optional(ty) if !field.required => ("decodeIfPresent", swift(ty, generic)),
-            ty => ("decode", swift(ty, generic)),
-        };
-        let field = &field.name;
-        writeln!(
-            out,
-            "        {} = try wire.{decode}({ty}.self, forKey: .{field})",
-            ident(field)
-        )
-        .unwrap();
-    }
-    out.push_str("    }\n");
-    if def.encoded {
-        out.push_str("\n    func encode(to encoder: any Encoder) throws {\n");
-        out.push_str("        var wire = encoder.container(keyedBy: CodingKeys.self)\n");
-        for field in fields {
-            let encode = if field.required {
-                "encode"
-            } else {
-                "encodeIfPresent"
-            };
-            let field = &field.name;
-            writeln!(
-                out,
-                "        try wire.{encode}({}, forKey: .{field})",
-                ident(field)
-            )
-            .unwrap();
-        }
-        out.push_str("    }\n");
     }
     out.push_str("}\n");
 }
@@ -356,12 +285,11 @@ fn union(
             .unwrap_or_default();
         writeln!(out, "    case {}{value}", ident(case)).unwrap();
     }
-    keys(out, ["type", "value"]);
-    out.push_str("}\n");
+    out.push_str("\n    enum CodingKeys: String, CodingKey { case type, value }\n}\n");
     writeln!(out, "\nnonisolated extension {name} {{").unwrap();
     if def.decoded {
         out.push_str("    init(from decoder: any Decoder) throws {\n");
-        out.push_str("        let wire = try decoder.strict(CodingKeys.self)\n");
+        out.push_str("        let wire = try decoder.container(keyedBy: CodingKeys.self)\n");
         out.push_str("        switch try wire.decode(String.self, forKey: .type) {\n");
         for (case, value) in cases {
             match value {

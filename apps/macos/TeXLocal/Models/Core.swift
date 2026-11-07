@@ -185,8 +185,8 @@ final class Core {
         let type: String, value: Reply
     }
 
-    /// A reply goes to its caller by its id alone, which decodes its body, so one the app can't read fails the caller
-    /// rather than leaving it waiting.
+    /// Only a reply's id is read here and its caller decodes the body, so a reply the app can't read fails the caller
+    /// instead of leaving it waiting.
     nonisolated static func heard(_ said: Data) throws -> Heard {
         let decoder = JSONDecoder()
         if let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" { return .reply(replying.value.id) }

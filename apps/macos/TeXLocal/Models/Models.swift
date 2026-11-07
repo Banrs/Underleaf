@@ -46,25 +46,21 @@ nonisolated extension NSRange {
 nonisolated extension LogItem {
     var isError: Bool { kind == .error }
 
-    /// Read from its words as the core sets them: bad boxes are TeX's "Overfull \…" and "Underfull \…" lines, and undefined
-    /// references are TeX's warnings about them and the core's own "No label …" and "No citation …".
     var issueKind: IssueKind {
-        let text = message.text
-        if isError { return .error }
-        if text.hasPrefix("Overfull \\") || text.hasPrefix("Underfull \\") { return .badBox }
-        if text.wholeMatch(of: Self.undefinedReference) != nil || text.hasPrefix("No label ") || text.hasPrefix("No citation ")
-            || text.hasPrefix("There were undefined references") || text.hasPrefix("There were undefined citations") {
-            return .undefinedReference
+        switch topic {
+        case _ where isError: .error
+        case .badBox: .badBox
+        case .undefinedReference: .undefinedReference
+        case nil: .warning
         }
-        return .warning
     }
-
-    nonisolated(unsafe) private static let undefinedReference = #/(?:Reference|Citation) `.*' on page \S+ undefined.*/#
 }
 
 /// The kinds of issue the Issues filter's menu shows or hides.
 nonisolated enum IssueKind: CaseIterable, Hashable, Sendable {
     case error, warning, badBox, undefinedReference
+
+    static let warnings = Set(allCases).subtracting([.error])
 
     var title: String {
         switch self {
@@ -76,13 +72,7 @@ nonisolated enum IssueKind: CaseIterable, Hashable, Sendable {
     }
 }
 
-/// The kinds of line the Logs filter's menu shows or hides, each line taking the kind of the entry it belongs to, as the
-/// core reads them: an error from its "!" or "file:line:" line to the line after its "l.<line>", a warning from its
-/// "Warning:" line to the next line that isn't its continuation, and a bad box to the next blank line. A line after one
-/// TeX wrapped at 79 bytes continues it.
-nonisolated enum LogKind: CaseIterable, Hashable, Sendable {
-    case error, warning, badBox, info
-
+nonisolated extension LogKind {
     var title: String {
         switch self {
         case .error: String(localized: "Errors")
@@ -91,41 +81,6 @@ nonisolated enum LogKind: CaseIterable, Hashable, Sendable {
         case .info: String(localized: "Info")
         }
     }
-
-    static func of(_ lines: [Substring]) -> [LogKind] {
-        var kinds: [LogKind] = []
-        kinds.reserveCapacity(lines.count)
-        var entry: LogKind = .info, endsAfterNext = false, wrapped = false
-        for line in lines {
-            defer { wrapped = line.utf8.count == 79 }
-            if wrapped {
-                kinds.append(entry)
-                continue
-            }
-            if line.hasPrefix("!") || line.prefixMatch(of: fileLineError) != nil {
-                (entry, endsAfterNext) = (.error, false)
-            } else if line.hasPrefix("Overfull \\") || line.hasPrefix("Underfull \\") {
-                entry = .badBox
-            } else if line.contains("Warning:") {
-                entry = .warning
-            } else if line.isEmpty {
-                entry = .info
-            } else if entry == .error, endsAfterNext {
-                // The rest of TeX's context, after its "l.<line>".
-                kinds.append(.error)
-                (entry, endsAfterNext) = (.info, false)
-                continue
-            } else if entry == .error, line.hasPrefix("l."), line.dropFirst(2).first?.isNumber == true {
-                endsAfterNext = true
-            } else if entry == .warning, !(line.hasPrefix("(") || line.first?.isWhitespace == true) {
-                entry = .info
-            }
-            kinds.append(entry)
-        }
-        return kinds
-    }
-
-    nonisolated(unsafe) private static let fileLineError = #/[^\s:][^:]*:\d+: /#
 }
 
 nonisolated extension CompileResult {

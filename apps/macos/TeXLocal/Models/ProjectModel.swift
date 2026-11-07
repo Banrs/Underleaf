@@ -423,7 +423,12 @@ final class ProjectModel {
 
     func answer(_ path: String, _ answer: Resolution) {
         answered.insert(path)
-        session.send(Resolve(path: path, answer: answer), else: reporting(notSavedTitle(path)))
+        let report = reporting(notSavedTitle(path))
+        session.send(Resolve(path: path, answer: answer)) { [weak self] error in
+            // The core still asks, so the question shows again.
+            self?.answered.remove(path)
+            report(error)
+        }
     }
 
     @discardableResult

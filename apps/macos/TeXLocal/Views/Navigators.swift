@@ -81,9 +81,8 @@ final class NavigatorFilterBar: NSView {
     private let field = NavigatorField()
     private let fieldGlass = NSGlassEffectView()
     private let add = NSButton()
-    // Xcode 27.2's toggles and their words, read from its accessibility: the Project navigator's "Recent files", "Show only
-    // recent files", and the Issue navigator's "Only errors", "Show only errors". Xcode's latest issues are those of open
-    // documents and the last build, which here are every issue, so this one keeps to the files that were recently open.
+    // Xcode's words. Its recent-issues toggle means issues from open documents and the last build, which here is every
+    // issue, so this one keeps to recently opened files.
     private let recentOnly = FilterToggle("clock", label: String(localized: "Recent files"), help: String(localized: "Show only recent files"))
     private let recentIssues = FilterToggle("clock", label: String(localized: "Issues in recent files"),
                                             help: String(localized: "Show only issues in recent files"))
@@ -93,6 +92,7 @@ final class NavigatorFilterBar: NSView {
     private let windowModel: WindowModel
     private let project: ProjectModel
     private var watch: Task<Void, Never>?
+    private var shown: Shown?
 
     isolated deinit { watch?.cancel() }
 
@@ -119,7 +119,7 @@ final class NavigatorFilterBar: NSView {
         content.addSubview(onlyErrors)
         fieldGlass.contentView = content
 
-        // A glass button, whose symbol takes the label's colour and dims with its window, as stock glass does.
+        // Stock glass, so the symbol takes the label colour and dims with the window.
         add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))
         (add.bezelStyle, add.borderShape, add.controlSize) = (.glass, .circle, .large)
         (add.target, add.action) = (self, #selector(showAdd(_:)))
@@ -139,7 +139,7 @@ final class NavigatorFilterBar: NSView {
 
         @MainActor init(_ model: NavigatorModel) {
             (navigator, text) = (model.shown, model[keyPath: model.shown.filter])
-            (recentOnly, recentIssues, onlyErrors) = (model.showsOnlyRecentFiles, model.showsOnlyRecentIssues, !model.showsWarnings)
+            (recentOnly, recentIssues, onlyErrors) = (model.showsOnlyRecentFiles, model.showsOnlyRecentIssues, model.showsOnlyErrors)
             hiddenKinds = model.hiddenIssueKinds
         }
     }
@@ -154,19 +154,21 @@ final class NavigatorFilterBar: NSView {
         recentIssues.isOn = shown.recentIssues
         onlyErrors.isHidden = shown.navigator != .issues
         onlyErrors.isOn = shown.onlyErrors
-        showMenu(hiding: shown.navigator == .issues ? shown.hiddenKinds : nil)
+        if self.shown?.navigator != shown.navigator || self.shown?.hiddenKinds != shown.hiddenKinds {
+            showMenu(hiding: shown.navigator == .issues ? shown.hiddenKinds : nil)
+        }
+        self.shown = shown
         needsLayout = true
     }
 
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height + 2 * Self.inset) }
 
-    /// Xcode 27.2's navigator filter bar, read from its accessibility frames: a 30 pt field 7 pt from the edges, or 6 pt
-    /// after a 30 pt + that sits 6 pt in; toggles 16 pt wide (Only Errors 18) and 4 pt apart, the last ending 7 pt before
-    /// the field's end, with the clear button 4 pt before the first.
+    /// Xcode's geometry: a 30 pt field 7 pt from the edges, or 6 pt after a 30 pt + that sits 6 pt in; toggles 16 pt wide
+    /// (18 for errors) and 4 pt apart, the last 7 pt from the field's end, with the clear button 4 pt before the first.
     override func layout() {
         super.layout()
         let y = (bounds.height - Self.height) / 2
-        // Each control's glass is 28 pt inside its 30 pt frame, where Xcode draws a 1 pt ring of the bar's colour.
+        // Xcode leaves a 1 pt ring of the bar's colour around each 28 pt capsule.
         let slot = NSRect(x: Self.inset - 1, y: y, width: Self.height, height: Self.height)
         add.frame = slot.insetBy(dx: 1, dy: 1)
         let minX = add.isHidden ? Self.inset : slot.maxX + Self.inset - 1
@@ -175,14 +177,13 @@ final class NavigatorFilterBar: NSView {
         let toggles = [recentOnly, recentIssues, onlyErrors].filter { !$0.isHidden }
         var maxX = fieldGlass.bounds.maxX - (Self.inset - 1)
         for toggle in toggles.reversed() {
-            // Each symbol centred in its frame and on the capsule's middle, as Xcode's are: their tops 7.5 pt into the capsule
-            // at 2x, and at 1x the pixel above, 7 pt (measured).
+            // Centred on the capsule: tops 7.5 pt in at 2x, a pixel higher at 1x.
             let width: CGFloat = toggle === onlyErrors ? 18 : 16
             let y = (fieldGlass.bounds.midY - 8.5).pixelCeiling(window?.backingScaleFactor ?? 2)
             toggle.frame = NSRect(x: maxX - width, y: y, width: width, height: 17)
             maxX = toggle.frame.minX - 4
         }
-        // The clear button's rect ends 6 pt before its room, so the room leaves it 4 pt before the first toggle.
+        // The clear button ends 6 pt before the room, which leaves it 4 pt before the first toggle.
         (field.cell as? NavigatorField.Cell)?.room = toggles.isEmpty ? 0 : fieldGlass.bounds.maxX - maxX - 6
         field.needsDisplay = true
     }
@@ -195,14 +196,13 @@ final class NavigatorFilterBar: NSView {
 
     @objc private func filter() { project.navigator[keyPath: project.navigator.shown.filter] = field.stringValue }
 
-    @objc private func toggleErrors() { project.navigator.showsWarnings = !onlyErrors.isOn }
+    @objc private func toggleErrors() { project.navigator.showsOnlyErrors = onlyErrors.isOn }
 
     @objc private func toggleRecent() { project.navigator.showsOnlyRecentFiles = recentOnly.isOn }
 
     @objc private func toggleRecentIssues() { project.navigator.showsOnlyRecentIssues = recentIssues.isOn }
 
-    /// The Issues filter has a menu of the kinds of issue it shows, under a chevron after its symbol, as Xcode's Issues filter
-    /// has its kinds; the others have neither, their toggles beside the text being all they offer.
+    /// Only the Issues filter has a menu, listing the kinds of issue it shows.
     private func showMenu(hiding hidden: Set<IssueKind>?) {
         guard let cell = field.cell as? NSSearchFieldCell else { return }
         if let hidden {
@@ -230,9 +230,8 @@ final class NavigatorFilterBar: NSView {
             let item = menu.addItem(withTitle: command.title, action: #selector(add(_:)), keyEquivalent: "")
             (item.target, item.representedObject) = (self, command)
         }
-        // Above the +, its foot on the button's top and its edge on the button's, as Xcode 27.2's opens (measured); the
-        // menu's size runs 7 pt past the foot of the menu it draws (measured on 27.2). A menu placed beneath ran off the
-        // screen's foot and AppKit moved it up over the + and the pointer.
+        // Above the +, edges aligned, as Xcode opens it; `menu.size` is 7 pt taller than the menu drawn. Opened below, the
+        // menu could run off the screen, and AppKit would then move it over the + and the pointer.
         guard let window = button.window else { return }
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
         menu.popUp(positioning: nil, at: NSPoint(x: frame.minX, y: frame.maxY + menu.size.height - 7), in: nil)
@@ -246,20 +245,18 @@ final class NavigatorFilterBar: NSView {
     private static let inset: CGFloat = 7
 }
 
-/// A toggle beside a filter's text, which shows that it's on as Xcode 27.2's do: its symbol filled and in the accent colour,
-/// as a borderless toggle tints its symbol, rather than AppKit's borderless push on/push off, which looks the same either way.
+/// A toggle beside a filter's text, filled and in the accent colour while on, as in Xcode.
 final class FilterToggle: NSButton {
-    private let symbol: String
-    private var shownSymbol: String?
-
     init(_ symbol: String, label: String, help: String) {
-        self.symbol = symbol
         super.init(frame: .zero)
         setButtonType(.pushOnPushOff)
         isBordered = false
+        // Shows the alternate image when on; by default a borderless one looks the same on and off.
+        (cell as? NSButtonCell)?.showsStateBy = .contentsCellMask
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        alternateImage = NSImage(systemSymbolName: symbol + ".fill", accessibilityDescription: nil)
         toolTip = help
         setAccessibilityLabel(label)
-        isOn = false
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -267,28 +264,21 @@ final class FilterToggle: NSButton {
     var isOn: Bool {
         get { state == .on }
         set {
-            if state != (newValue ? .on : .off) { state = newValue ? .on : .off }
-            show()
+            state = newValue ? .on : .off
+            tint()
         }
     }
 
-    /// A click flips the state before the action is sent, so the symbol follows it at once.
+    /// A click changes the state without the setter, so the tint follows here.
     override func sendAction(_ action: Selector?, to target: Any?) -> Bool {
-        show()
+        tint()
         return super.sendAction(action, to: target)
     }
 
-    private func show() {
-        let name = state == .on ? "\(symbol).fill" : symbol
-        if shownSymbol != name {
-            image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
-            shownSymbol = name
-        }
-        contentTintColor = state == .on ? .controlAccentColor : nil
-    }
+    private func tint() { contentTintColor = isOn ? .controlAccentColor : nil }
 }
 
-/// What a navigator shows when its filter leaves nothing, in Xcode 27.2's words, size and colour (measured).
+/// What a navigator shows when its filter leaves nothing: Xcode's words, size and colour.
 struct NoFilterResults: View {
     var body: some View {
         Text("No Filter Results")
@@ -301,21 +291,20 @@ struct NoFilterResults: View {
 final class NavigatorField: NSSearchField {
     final class Cell: NSSearchFieldCell {
         var room: CGFloat = 0
-        /// Laid out as Xcode 27.2's navigator filter, measured: the text 1 pt after the symbol's rect, 26 pt into its 30 pt
-        /// frame without a menu and 34 with one, and the glass behind the field as its background.
+        /// Laid out like Xcode's navigator filter: the text 1 pt after the symbol's rect, 26 pt into the 30 pt frame (34 with a
+        /// menu), and the glass behind the field as its background.
         var filterBar = false
         /// Drawn in the search button's place when the filter has a menu.
         var menuSymbol: MenuSymbol?
         private var hasMenu: Bool { filterBar && searchMenuTemplate != nil }
 
-        /// As wide as AppKit's image, 21 pt with its own menu's chevron, which a narrower rect clips. AppKit draws the image at
-        /// the rect's top, rounded down to a pixel, and the 15 pt symbol's glyph a point below that. A filter bar's glyph sits on
-        /// the capsule's middle as Xcode's does: its top 7.5 pt into the capsule at 2x, and at 1x the pixel below, 8 pt
-        /// (measured), so the rect's top is the next whole pixel down from the middle less 7.5 pt.
+        /// As wide as AppKit's image (21 pt with its menu chevron; a narrower rect clips it). AppKit draws the image at the
+        /// rect's top, rounded down to a pixel, and the 15 pt symbol's ink starts a point lower. A filter bar centres the ink on
+        /// the capsule as Xcode does, so the rect's top is the middle less 7.5 pt, rounded down a pixel.
         override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
             let scale = controlView?.window?.backingScaleFactor ?? 2
             let image = searchButtonCell?.image?.size ?? NSSize(width: 16, height: 15)
-            // Find's small magnifier is centred on its field and 5 pt into it, as Xcode's is (measured).
+            // Find's small magnifier is centred and 5 pt in, as in Xcode.
             let top = filterBar ? rect.midY - 7.5 : rect.midY - image.height / 2
             return NSRect(x: rect.minX + (filterBar ? 6 : 5), y: top.pixelCeiling(scale), width: image.width, height: filterBar ? 15 : image.height)
         }
@@ -326,13 +315,13 @@ final class NavigatorField: NSSearchField {
 
         override func searchTextRect(forBounds rect: NSRect) -> NSRect {
             let minX = searchButtonRect(forBounds: rect).maxX + 1
-            // With a menu Xcode's text top is level with its symbol's, 1 pt above the cell's own centring, which its other
-            // filters keep; Find's 11 pt text sits a point lower in its 22 pt field (measured).
+            // With a menu, Xcode's text top is level with the symbol's, 1 pt above the cell's centring; Find's 11 pt text sits
+            // 1 pt lower in its 22 pt field.
             let top = rect.midY - (hasMenu ? 9 : filterBar ? 8 : 7)
             return NSRect(x: minX, y: top, width: cancelButtonRect(forBounds: rect).minX - 6 - minX, height: 20)
         }
 
-        /// A filter bar's field draws no bezel: the bezel's fill over the glass behind it darkened the capsule.
+        /// A filter bar's field draws no bezel: its fill over the glass darkened the capsule.
         override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
             if filterBar { drawInterior(withFrame: cellFrame, in: controlView) } else { super.draw(withFrame: cellFrame, in: controlView) }
         }
@@ -340,9 +329,7 @@ final class NavigatorField: NSSearchField {
         override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
             super.drawInterior(withFrame: cellFrame, in: controlView)
             if hasMenu, let menuSymbol, let button = searchButtonCell {
-                // A copy of the button cell draws its image half a point above where the field draws the button's own (measured
-                // at 1x and 2x), so it's given the rect half a point lower, which puts the symbol and its chevron where AppKit's
-                // own image would be.
+                // A copied button cell draws half a point higher than the field's own, so its rect is moved down to match.
                 menuSymbol.draw(for: button, in: searchButtonRect(forBounds: cellFrame).offsetBy(dx: 0, dy: 0.5), of: controlView)
             }
         }
@@ -381,8 +368,7 @@ private extension Navigator {
         }
     }
 
-    /// The filter's help, in the words of Xcode 27.2's navigator filters ("Show files with matching name", "Show results with
-    /// matching text"), saying what each of these matches.
+    /// The filter's tooltip, following Xcode's ("Show files with matching name").
     var filterHelp: String {
         switch self {
         case .files: String(localized: "Show files with matching name")
@@ -408,8 +394,8 @@ struct NavigatorPane: View {
         ZStack {
             ForEach(Navigator.allCases, id: \.self) { navigator in
                 let shown = navigator == project.navigator.shown
-                // disabled() leaves a List in the key-view loop, where focusable(false) takes it out; with no interactions, a
-                // shown navigator's focusable(true) adds no stop of its own before its list (27.2).
+                // disabled() leaves a List in the key-view loop and focusable(false) takes it out; with no interactions,
+                // focusable(true) adds no stop of its own before the list.
                 list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: []).accessibilityHidden(!shown)
             }
         }
@@ -439,7 +425,7 @@ private struct IssueNavigator: View {
             .overlay { if items.isEmpty { empty } }
     }
 
-    /// The text, the toggles and the kinds are all the filter's, so whichever hides the issues, Xcode's words say so.
+    /// Whatever hides the issues is part of the filter, so Xcode's "No Filter Results" covers every case.
     @ViewBuilder private var empty: some View {
         if project.listed.isEmpty {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")

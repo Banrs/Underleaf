@@ -17,6 +17,14 @@ pub enum Severity {
     Warning,
 }
 
+// What a warning is about, where the Issues filter tells it apart from other warnings.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum Topic {
+    BadBox,
+    UndefinedReference,
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq, Hash)]
 pub struct LogItem {
     pub kind: Severity,
@@ -31,6 +39,8 @@ pub struct LogItem {
     pub(crate) explain: Option<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<Fix>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic: Option<Topic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -108,6 +118,8 @@ impl LogItem {
         let short = flat.strip_prefix("LaTeX Error: ").unwrap_or(&flat);
         let command = undefined_command(short);
         let (explain, fix) = explained(short, command.as_deref());
+        let topic = (kind == Severity::Warning && UNDEFINED_REFERENCE.is_match(short))
+            .then_some(Topic::UndefinedReference);
         Self {
             kind,
             file,
@@ -117,6 +129,7 @@ impl LogItem {
             command,
             explain,
             fix,
+            topic,
         }
     }
 
@@ -135,6 +148,7 @@ impl LogItem {
             command: None,
             explain: None,
             fix: None,
+            topic: None,
         }
     }
 
@@ -223,6 +237,10 @@ static LAST_CS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(\\(?:[A-Za-z@]+|.))\s*$").unwrap());
 static WARNING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:LaTeX(?: Font| NFSS)?|Package \S+|Class \S+) Warning:\s*(?P<message>.*)$")
+        .unwrap()
+});
+static UNDEFINED_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:Reference|Citation) `.*' on page \S+ undefined|^There were undefined (?:references|citations)")
         .unwrap()
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
@@ -385,6 +403,8 @@ struct Diagnostic<'a> {
     line: Option<u32>,
     echo: Option<usize>,
     summary: bool,
+    /// The line after the entry: past TeX's echo of an error, or past a warning's continuation.
+    end: usize,
 }
 
 fn diagnostic<'a>(lines: &[&str], i: usize, m: &Captures<'a>) -> Diagnostic<'a> {
@@ -394,10 +414,12 @@ fn diagnostic<'a>(lines: &[&str], i: usize, m: &Captures<'a>) -> Diagnostic<'a> 
     let echo = if error { echo_of(lines, i) } else { None };
     let tag = continuation_tag(if error { &m["message"] } else { lines[i] });
     let mut prev = lines[i];
+    let mut end = i + 1;
     for next in lines[i + 1..].iter().take_while(|next| !starts_new(next)) {
         let Some((text, joiner)) = continuation(prev, next, tag) else {
             break;
         };
+        end += 1;
         if !text.is_empty() {
             if !joiner.is_empty() {
                 message.truncate(message.trim_end().len());
@@ -432,7 +454,48 @@ fn diagnostic<'a>(lines: &[&str], i: usize, m: &Captures<'a>) -> Diagnostic<'a> 
         line,
         echo,
         summary,
+        end,
     }
+}
+
+// The kinds of line the Logs filter shows or hides.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum LogKind {
+    Error,
+    Warning,
+    BadBox,
+    Info,
+}
+
+/// The kind of each of the log's lines, split at each newline: those of each error, warning and bad box the parser
+/// reads take its kind, and the rest are info.
+pub fn log_kinds(log: &str) -> Vec<LogKind> {
+    let lines: Vec<&str> = (log.split('\n'))
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect();
+    let mut kinds = vec![LogKind::Info; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let (kind, end) = if let Some(m) = error_start(line).or_else(|| WARNING.captures(line)) {
+            let found = diagnostic(&lines, i, &m);
+            if found.error {
+                let end = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
+                (LogKind::Error, end)
+            } else {
+                (LogKind::Warning, found.end)
+            }
+        } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
+            (LogKind::BadBox, blank_from(&lines, i + 1))
+        } else {
+            (LogKind::Info, i + 1)
+        };
+        let end = end.clamp(i + 1, lines.len());
+        kinds[i..end].fill(kind);
+        i = end;
+    }
+    kinds
 }
 
 fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<LogItem>) {
@@ -472,7 +535,11 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
             let line_no = BAD_BOX_LINE.captures(line).and_then(|m| m[1].parse().ok());
             let mut message = line.trim().to_string();
             let (file, line_no) = locate(None, line_no, &open, main_file, &mut message, &project);
-            bad_boxes.push(LogItem::read(Severity::Warning, file, line_no, message));
+            let read = LogItem::read(Severity::Warning, file, line_no, message);
+            bad_boxes.push(LogItem {
+                topic: Some(Topic::BadBox),
+                ..read
+            });
         }
         if i >= quiet_until {
             track(&mut open, line, &opens);
@@ -641,6 +708,40 @@ mod tests {
         assert!(items.is_empty());
         assert_eq!(bad_boxes.len(), 1);
         assert_eq!(bad_boxes[0].line, Some(5));
+    }
+
+    #[test]
+    fn bad_boxes_and_undefined_references_say_so() {
+        let log = "(./main.tex\nOverfull \\hbox (12.0pt too wide) in paragraph at lines 5--6\n[]\\OT1/cmr/m/n/10 text\n\nLaTeX Warning: Reference `lem:x' on page 1 undefined on input line 17.\n\nLaTeX Warning: Citation `knuth' on page 2 undefined on input line 9.\n\nLaTeX Warning: There were undefined references.\n\nLaTeX Font Warning: Font shape `OT1/cmr/m/n' in size <5.5> not available\n)";
+        let (items, bad_boxes) = parse_log(log, "main.tex");
+        let topics: Vec<_> = items.iter().map(|item| item.topic).collect();
+        let undefined = Some(Topic::UndefinedReference);
+        assert_eq!(topics, [undefined, undefined, undefined, None]);
+        assert_eq!(bad_boxes[0].topic, Some(Topic::BadBox));
+    }
+
+    #[test]
+    fn each_line_takes_the_kind_of_the_entry_it_belongs_to() {
+        let log = "(./main.tex\n./main.tex:12: Undefined control sequence.\nl.12 \\foo\n          bar\n(./main.aux)\nPackage hyperref Warning: Token not allowed in a PDF string (Unicode):\n(hyperref)                removing `math shift' on input line 12.\n\nOverfull \\hbox (12.0pt too wide) in paragraph at lines 5--6\n[]\\OT1/cmr/m/n/10 text\n\n! Missing $ inserted.\n<inserted text>\nl.20 x^\n       2\nLaTeX Warning: There were undefined references.\nOutput written on main.pdf (1 page).\n";
+        use LogKind::{BadBox, Error, Info, Warning};
+        let expected = [
+            Info, Error, Error, Error, Info, Warning, Warning, Info, BadBox, BadBox, Info, Error,
+            Error, Error, Error, Warning, Info, Info,
+        ];
+        assert_eq!(log_kinds(log), expected);
+    }
+
+    #[test]
+    fn a_line_after_one_wrapped_at_79_bytes_continues_it() {
+        let warning = format!("LaTeX Warning: Reference `fig:{}", "x".repeat(80));
+        let log = format!(
+            "{}\n' on page 1 undefined on input line 7.\nOutput written on main.pdf (1 page).",
+            &warning[..79]
+        );
+        assert_eq!(
+            log_kinds(&log),
+            [LogKind::Warning, LogKind::Warning, LogKind::Info]
+        );
     }
 
     #[test]

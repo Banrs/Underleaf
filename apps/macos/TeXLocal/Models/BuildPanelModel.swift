@@ -39,11 +39,15 @@ final class NavigatorModel {
     var outlineFilter = ""
     var searchFilter = ""
     var issueFilter = ""
-    var showsWarnings = true
     var showsOnlyRecentFiles = false
     var showsOnlyRecentIssues = false
     var hiddenIssueKinds: Set<IssueKind> = []
-    /// The files this window opened, latest first, which the Files list shows alone when asked.
+    /// The Only errors toggle, on while the filter's menu hides every kind but errors.
+    var showsOnlyErrors: Bool {
+        get { hiddenIssueKinds.isSuperset(of: IssueKind.warnings) }
+        set { if newValue { hiddenIssueKinds.formUnion(IssueKind.warnings) } else { hiddenIssueKinds.subtract(IssueKind.warnings) } }
+    }
+    /// Files opened in this window, latest first, for the Recent files toggle.
     private(set) var recentFiles: [String] = []
 
     func opened(_ path: String) {
@@ -51,6 +55,8 @@ final class NavigatorModel {
         recentFiles.insert(path, at: 0)
         if recentFiles.count > 10 { recentFiles.removeLast() }
     }
+
+    func renamed(_ remap: (String) -> String) { recentFiles = recentFiles.map(remap) }
     @ObservationIgnored private var beforeFailedBuild: Navigator?
     @ObservationIgnored private let project: String
     @ObservationIgnored private let defaults: UserDefaults
@@ -89,7 +95,6 @@ final class NavigatorModel {
 
     /// Whether the toggles and the filter's menu leave an issue in the list.
     func shows(_ item: LogItem) -> Bool {
-        (showsWarnings || item.isError) && !hiddenIssueKinds.contains(item.issueKind)
-            && (!showsOnlyRecentIssues || item.file.map(recentFiles.contains) == true)
+        !hiddenIssueKinds.contains(item.issueKind) && (!showsOnlyRecentIssues || item.file.map(recentFiles.contains) == true)
     }
 }

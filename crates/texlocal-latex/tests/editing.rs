@@ -62,6 +62,24 @@ fn typing_an_opener_inserts_its_closer() {
 }
 
 #[test]
+fn typing_over_an_inserted_closer_closes_the_completions() {
+    let mut doc = SourceDocument::new("\\ref");
+    let typed = run(
+        &mut doc,
+        "TypeText",
+        json!({ "selection": caret(4), "text": "{", "autoPair": true }),
+    );
+    apply(&mut doc, &typed["edit"]);
+    let over = run(
+        &mut doc,
+        "TypeText",
+        json!({ "selection": caret(5), "text": "}", "autoPair": true }),
+    );
+    assert_eq!(over["selection"], caret(6));
+    assert_eq!(over["completions"], "close");
+}
+
+#[test]
 fn deleting_an_inserted_opener_deletes_its_closer() {
     let mut doc = SourceDocument::new("a");
     let typed = run(

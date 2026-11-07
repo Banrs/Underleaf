@@ -130,8 +130,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         return item
     }
 
-    /// Xcode 27.2's ‹ › before the title, in its words (read from its accessibility): a momentary pair that AppKit places
-    /// before the title as a navigational item, retracing the places the caret has been, as Navigate ▸ Go Back and Go Forward do.
+    /// Xcode's ‹ › before the title, with its tooltips: a momentary pair, marked navigational so AppKit puts it before the
+    /// title, that runs Navigate ▸ Go Back and Go Forward.
     private func navigationItem() -> NSToolbarItem {
         let commands = [MenuCommand.goBack, .goForward]
         let images = zip(commands, ["chevron.left", "chevron.right"]).compactMap { command, symbol in

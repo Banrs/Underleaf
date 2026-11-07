@@ -72,8 +72,14 @@ extension ProjectModel {
         }
     }
 
+    /// The issues Next and Previous Issue step through: those the Issues list shows that have a file.
+    var issuePlaces: [Int] {
+        let issues = issues
+        return navigator.rows(of: listed).map(\.offset).filter { $0 < issues.count && issues[$0].file != nil }
+    }
+
     func goToIssue(next: Bool) {
-        let places = issues.indices.filter { issues[$0].file != nil }
+        let places = issuePlaces
         let after = next ? places.first { $0 > chosenIssue ?? -1 } : places.last { $0 < chosenIssue ?? .max }
         guard let place = after ?? (next ? places.first : places.last) else { return }
         navigator.shown = .issues

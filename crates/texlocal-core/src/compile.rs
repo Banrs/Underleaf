@@ -140,6 +140,11 @@ impl CompileManager {
         let root = &project.root;
         let (settings, trusted) = (read_settings(&project.settings), granted(project));
         let main_rel = safe_rel_file(&settings.main_file)?;
+        if !shell_safe(&main_rel) {
+            return Err(CoreError::bad_request(messages::main_file_shell_name(
+                main_rel,
+            )));
+        }
         if !root.join(&main_rel).exists() {
             return Err(CoreError::bad_request(messages::main_file_missing(
                 main_rel,
@@ -294,4 +299,22 @@ fn read_tail(mut file: std::fs::File, max: u64) -> std::io::Result<Vec<u8>> {
         bytes.drain(..start);
     }
     Ok(bytes)
+}
+
+/// latexmk runs the engine through /bin/sh with the file's name in double quotes, where these characters still act.
+fn shell_safe(main_rel: &str) -> bool {
+    !main_rel.contains(['`', '$', '"', '\\'])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_safe;
+
+    #[test]
+    fn a_main_file_the_shell_would_read_is_refused() {
+        for name in ["x`touch y`.tex", "$(touch y).tex", "a\"b.tex", "a\\b.tex"] {
+            assert!(!shell_safe(name), "{name}");
+        }
+        assert!(shell_safe("chapters/intro 1 (draft) & notes's.tex"));
+    }
 }

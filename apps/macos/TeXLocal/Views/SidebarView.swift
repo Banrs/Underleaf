@@ -115,7 +115,7 @@ struct FilesList: View {
 
     private func create(_ entry: NewEntry) {
         let folder = entry.folder ?? chosenFolder
-        project.navigator.fileFilter = ""
+        (project.navigator.fileFilter, project.navigator.showsOnlyRecentFiles) = ("", false)
         Task {
             guard let path = await project.createEntry(in: folder, directory: entry.directory) else { return }
             showRow(path)

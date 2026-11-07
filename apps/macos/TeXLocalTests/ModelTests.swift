@@ -659,62 +659,25 @@ struct ViewsTests {
 struct FilterKindTests {
     private let defaults = TestDefaults()
 
-    private func item(_ kind: Severity, _ text: String) -> LogItem {
-        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), explain: nil, fix: nil)
-    }
-
-    @Test func issuesTakeTheKindTheCoresWordsGiveThem() {
-        #expect(item(.error, "Undefined control sequence: \\foo").issueKind == .error)
-        #expect(item(.warning, "Overfull \\hbox (12.0pt too wide) in paragraph at lines 5--6").issueKind == .badBox)
-        #expect(item(.warning, "Underfull \\vbox (badness 10000) has occurred while \\output is active").issueKind == .badBox)
-        #expect(item(.warning, "Reference `lem:missing' on page 1 undefined on input line 17.").issueKind == .undefinedReference)
-        #expect(item(.warning, "Citation `knuth' on page 2 undefined on input line 9.").issueKind == .undefinedReference)
-        #expect(item(.warning, "There were undefined references.").issueKind == .undefinedReference)
-        #expect(item(.warning, "No label “fig:x” is defined.").issueKind == .undefinedReference)
-        #expect(item(.warning, "No citation “knuth” is defined.").issueKind == .undefinedReference)
-        #expect(item(.warning, "Font shape `OT1/cmr/m/n' in size <5.5> not available").issueKind == .warning)
+    private func item(_ kind: Severity, _ text: String, _ topic: Topic? = nil) -> LogItem {
+        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), explain: nil, fix: nil,
+                topic: topic)
     }
 
     @Test func aKindTheMenuHidesLeavesTheIssueListAndComesBackWhenShownAgain() {
         let navigator = ProjectModel(id: "P", window: defaults.window()).navigator
-        let (error, reference) = (item(.error, "Missing $ inserted."), item(.warning, "There were undefined references."))
+        let (error, reference) = (item(.error, "Missing $ inserted."), item(.warning, "There were undefined references.", .undefinedReference))
         navigator.hiddenIssueKinds = [.undefinedReference]
         #expect(navigator.rows(of: [error, reference]).map(\.element) == [error])
-        navigator.hiddenIssueKinds = [.error]
-        navigator.showsWarnings = false
+        navigator.hiddenIssueKinds = []
+        navigator.showsOnlyErrors = true
+        #expect(navigator.rows(of: [error, reference]).map(\.element) == [error])
+        #expect(navigator.hiddenIssueKinds == IssueKind.warnings)
+        navigator.hiddenIssueKinds.insert(.error)
         #expect(navigator.rows(of: [error, reference]).isEmpty)
-        (navigator.hiddenIssueKinds, navigator.showsWarnings) = ([], true)
+        navigator.showsOnlyErrors = false
+        #expect(navigator.hiddenIssueKinds == [.error])
+        navigator.hiddenIssueKinds = []
         #expect(navigator.rows(of: [error, reference]).map(\.element) == [error, reference])
-    }
-
-    @Test func logLinesTakeTheKindOfTheEntryTheyBelongTo() {
-        let log = """
-            (./main.tex
-            ./main.tex:12: Undefined control sequence.
-            l.12 \\foo
-                      bar
-            (./main.aux)
-            Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-            (hyperref)                removing `math shift' on input line 12.
-
-            Overfull \\hbox (12.0pt too wide) in paragraph at lines 5--6
-            []\\OT1/cmr/m/n/10 text
-
-            ! Missing $ inserted.
-            <inserted text>
-            l.20 x^
-                   2
-            LaTeX Warning: There were undefined references.
-            Output written on main.pdf (1 page).
-            """
-        let lines = log.split(separator: "\n", omittingEmptySubsequences: false)
-        #expect(LogKind.of(lines) == [.info, .error, .error, .error, .info, .warning, .warning, .info, .badBox, .badBox, .info,
-                                      .error, .error, .error, .error, .warning, .info])
-    }
-
-    @Test func aLineAfterOneTeXWrappedAt79BytesContinuesIt() {
-        let first = String(("LaTeX Warning: Reference `fig:" + String(repeating: "x", count: 80)).prefix(79))
-        let lines: [Substring] = [Substring(first), "' on page 1 undefined on input line 7.", "Output written on main.pdf (1 page)."]
-        #expect(LogKind.of(lines) == [.warning, .warning, .info])
     }
 }

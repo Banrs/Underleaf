@@ -23,7 +23,6 @@ pub enum Ty {
 pub struct Field {
     pub name: String,
     pub ty: Ty,
-    pub required: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,7 +119,6 @@ const TAKEN: &[&str] = &[
     "Unit",
     "View",
     "Window",
-    "WireKey",
     "WireRequest",
 ];
 
@@ -138,27 +136,10 @@ impl Ir {
                 decoded: false,
                 encoded: false,
             });
-            match (&mut def.shape, shape) {
-                (Shape::Struct(had), Shape::Struct(fields)) => {
-                    let names = |fields: &[Field]| {
-                        fields
-                            .iter()
-                            .map(|f| (f.name.clone(), f.ty.clone()))
-                            .collect::<Vec<_>>()
-                    };
-                    assert!(
-                        names(had) == names(&fields),
-                        "{name} differs between what Swift sends and what it reads"
-                    );
-                    if way == Way::Out {
-                        *had = fields;
-                    }
-                }
-                (had, shape) => assert!(
-                    *had == shape,
-                    "{name} differs between what Swift sends and what it reads"
-                ),
-            }
+            assert!(
+                def.shape == shape,
+                "{name} differs between what Swift sends and what it reads"
+            );
             match way {
                 Way::In => def.encoded = true,
                 Way::Out => def.decoded = true,
@@ -430,14 +411,14 @@ fn fields(name: &str, schema: &Map<String, Value>, way: Way) -> Shape {
     };
     let fields = properties.iter().map(|(field, schema)| {
         assert!(field != "type", "{name} has a field named type");
+        let required = required(field);
         let field = Field {
             name: member_name(field, name),
             ty: ty(schema),
-            required: required(field),
         };
         assert!(field.ty != Ty::Done, "{name}.{} is always null", field.name);
         assert!(
-            field.required || matches!(field.ty, Ty::Optional(_)),
+            required || matches!(field.ty, Ty::Optional(_)),
             "{name}.{} can be left out but isn't optional",
             field.name
         );

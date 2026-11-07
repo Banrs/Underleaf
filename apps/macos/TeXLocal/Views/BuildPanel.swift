@@ -41,7 +41,7 @@ private struct BuildPanelBar: View {
             .fixedSize()
             .layoutPriority(1)
             Spacer(minLength: 0)
-            // Xcode 27.2's console filter, measured: a regular 24 pt field 182 pt wide with small text and its action after it.
+            // As Xcode's console filter: a regular field 182 pt wide with small text, before the bar's action.
             SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol, textSize: .small,
                         optionsTitle: String(localized: "Show"), options: LogKind.allCases.map { kind in
                             (kind.title, Binding { !panel.hiddenLogKinds.contains(kind) } set: { shown in

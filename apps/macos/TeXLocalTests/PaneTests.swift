@@ -94,10 +94,9 @@ struct PaneTests {
         #expect(button.image != nil && button.alternateImage === button.image)
 
         let toggle = try #require(bar.descendants(of: FilterToggle.self).first { !$0.isHidden })
-        let off = toggle.image
         #expect(!toggle.isOn && toggle.contentTintColor == nil)
         toggle.performClick(nil)
-        #expect(toggle.isOn && toggle.contentTintColor == .controlAccentColor && toggle.image !== off)
+        #expect(toggle.isOn && toggle.contentTintColor == .controlAccentColor)
         #expect(workspace.project.navigator.showsOnlyRecentFiles)
         toggle.performClick(nil)
         #expect(!toggle.isOn && toggle.contentTintColor == nil && !workspace.project.navigator.showsOnlyRecentFiles)

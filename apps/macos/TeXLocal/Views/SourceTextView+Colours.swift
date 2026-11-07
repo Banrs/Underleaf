@@ -19,7 +19,8 @@ extension SourceTextView {
         }
     }
 
-    /// 27.2 redraws no fragment whose rendering attributes change; redrawing only those whose runs differ cut typing CPU by 41% (3bef49e7).
+    /// TextKit doesn't redraw a fragment whose rendering attributes change. Redrawing only those whose runs differ cut
+    /// typing CPU by 41%.
     func colour(from start: Int) {
         guard let manager = textLayoutManager else { return }
         staleColours = nil
@@ -55,7 +56,8 @@ extension SourceTextView {
         return rect.isNull ? nil : rect.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
     }
 
-    /// 27.2 draws each shown fragment in a view of its own, which neither new rendering attributes nor the text view's display redraw.
+    /// TextKit draws each shown fragment in its own view, which neither new rendering attributes nor the text view's
+    /// display redraw.
     func redrawFragments(in rects: [CGRect]) {
         guard !rects.isEmpty else { return }
         func redraw(_ view: NSView) {

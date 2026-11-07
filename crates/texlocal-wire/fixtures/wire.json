@@ -11,12 +11,9 @@
     { "type": "FixtureNested", "value": { "shape": { "type": "many", "value": ["highContrast"] }, "optional": { "note": null }, "list": { "items": [] }, "map": { "scores": { "a": 1 } }, "children": [] } }
   ],
   "rejects": [
-    { "type": "FixtureStruct", "value": { "name": "a", "count": 1, "total": 1, "ratio": 1.0, "on": false, "bytes": "", "more": 1 } },
     { "type": "FixtureStruct", "value": { "name": "a" } },
-    { "type": "FixtureOptional", "value": { "note": null, "more": 1 } },
     { "type": "FixtureUnit", "value": "dark" },
     { "type": "FixtureUnion", "value": { "type": "round" } },
-    { "type": "FixtureUnion", "value": { "type": "plain", "value": { "name": "a", "count": 1, "total": 1, "ratio": 1.0, "on": false, "bytes": "" }, "more": 1 } },
     { "type": "FixtureMap", "value": { "scores": { "a": "1" } } }
   ],
   "said": [

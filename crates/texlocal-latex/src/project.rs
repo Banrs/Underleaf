@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::facts::{Facts, Heading, Input, Kind, Named, Slip};
-use crate::logparse::{LogItem, Severity};
+use crate::logparse::{LogItem, Severity, Topic};
 use crate::message::Message;
 use crate::messages;
 use crate::syntax::{Installed, SymbolKind, Symbols, headings};
@@ -250,7 +250,10 @@ pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
             reached().flat_map(|(file, facts)| read(facts, &facts.uses).map(move |u| (file, u)));
         let uses = uses.filter(|(_, used)| used.kind == kind && literal(&used.name));
         let undefined = uses.filter(|(_, used)| !defined.contains(&*used.name));
-        let item = |(file, used): (&str, &Named)| warning(file, used.place.line, said(&used.name));
+        let item = |(file, used): (&str, &Named)| LogItem {
+            topic: Some(Topic::UndefinedReference),
+            ..warning(file, used.place.line, said(&used.name))
+        };
         undefined.map(item).collect()
     };
     let packages: HashSet<&str> = reached()

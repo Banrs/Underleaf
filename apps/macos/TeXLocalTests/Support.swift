@@ -12,10 +12,9 @@ func waitUntil(timeout: Duration = .seconds(120), _ condition: () -> Bool) async
     }
 }
 
-/// A window showing `view` for PDFKit to lay out and draw, which it does only on screen, without taking focus: ordered
-/// in front without becoming key, clicked through and all but transparent. It is a non-activating panel on every Space,
-/// as a window stays off the active Space while a full-screen app has it. A window the system finds hidden fails the test
-/// rather than letting it measure nothing.
+/// A window showing `view` on screen, where PDFKit lays out and draws, without taking focus: a non-activating,
+/// click-through, nearly transparent panel on every Space, since a window stays off the active Space while a full-screen
+/// app holds it. A window the system finds hidden fails the test instead of measuring nothing.
 func onScreen(_ view: NSView, size: NSSize = NSSize(width: 500, height: 600)) async throws -> NSWindow {
     let window = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                          styleMask: [.titled, .resizable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: false)

@@ -29,6 +29,7 @@ extension ProjectModel {
         trail.moved(result.from, to: result.to)
         let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
         expandedFolders = Set(expandedFolders.map(remap))
+        navigator.renamed(remap)
         foldedHeadings = Set(foldedHeadings.map { key in key.firstIndex(of: "\t").map { remap(String(key[..<$0])) + key[$0...] } ?? key })
         return result
     }

@@ -110,7 +110,7 @@ final class Breadcrumb: NSView {
         for (index, (item, frame)) in zip(items, frames).enumerated() {
             let lit = index == hovered || index == open
             if lit {
-                // Xcode 27.2's path draws it over the item's 17 pt pop-up, a point inside its 19 pt row at either edge (measured).
+                // As in Xcode, the highlight covers the item's 17 pt pop-up, 1 pt inside the 19 pt row.
                 (dark ? NSColor.white : .black).withAlphaComponent(0.05).setFill()
                 NSBezierPath(roundedRect: frame.insetBy(dx: 0, dy: 1), xRadius: 4, yRadius: 4).fill()
             }
@@ -132,6 +132,8 @@ final class Breadcrumb: NSView {
 
     override func viewWillMove(toWindow window: NSWindow?) {
         watch.forEach(NotificationCenter.default.removeObserver)
+        // With no window, `object: nil` would hear every window.
+        guard let window else { return watch = [] }
         watch = [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification].map {
             NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.needsDisplay = true }
@@ -210,7 +212,7 @@ final class Breadcrumb: NSView {
         }
 
         override func accessibilityPerformPress() -> Bool {
-            // The menu opens after the press returns, as a pop-up button's does, rather than tracking inside the request.
+            // Opened after the press returns, as a pop-up button's menu is, not while tracking.
             Task { @MainActor [press] in press() }
             return true
         }

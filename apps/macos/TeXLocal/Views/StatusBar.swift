@@ -7,8 +7,8 @@ enum BarMetrics {
     static let inset: CGFloat = 8
     static let symbolWidth: CGFloat = 30
 
-    /// A bar's top edge is drawn as AppKit's thin split divider, in its colour and thickness (which follow Increase
-    /// Contrast), so it matches the dividers it meets, as Xcode's bar line and split dividers do.
+    /// The bar's top edge uses the thin split divider's colour and thickness, which follow Increase Contrast, so it
+    /// matches the dividers it meets.
     static let edge: (color: NSColor, thickness: CGFloat) = {
         let split = NSSplitView()
         split.dividerStyle = .thin
@@ -16,8 +16,8 @@ enum BarMetrics {
     }()
 }
 
-/// The status bar's spacing: Xcode's measured 14 pt to the first item, 16 between items and 9 before the divider;
-/// an icon 4 pt from its text, as AppKit sets a button's image beside its title.
+/// Xcode's spacing: 14 pt to the first item, 16 between items and 9 before the divider; an icon 4 pt from its text, as
+/// in an AppKit button.
 private enum Spacing {
     static let lead: CGFloat = 14
     static let items: CGFloat = 16
@@ -39,9 +39,8 @@ private extension LabelStyle where Self == BarLabelStyle {
     static var bar: BarLabelStyle { BarLabelStyle() }
 }
 
-/// A bar button's hover as Xcode 27.2's debug bar draws its branch button's (measured): a capsule 20 pt tall that reaches
-/// 5 pt past the label at either end, filled as its path control's highlight and Find's are. The capsule lies over the space
-/// around the button, so the labels stay where Xcode's measured spacing puts them, drawn as borderless buttons draw them.
+/// The hover of Xcode's debug-bar buttons: a 20 pt capsule reaching 5 pt past the label at each end, filled like the
+/// path control's highlight. It's drawn outside the button's frame, so the labels keep Xcode's spacing.
 private struct BarHover: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
@@ -333,8 +332,8 @@ extension View {
     }
 }
 
-/// The divider's colour is translucent, so it lies on the window's ground, as the split views' dividers do, and not on
-/// the scroll edge's line beneath, which showed through it a step lighter than the dividers it meets.
+/// The divider colour is translucent, so it's drawn over the window background, as split view dividers are. Over the
+/// scroll edge's line it came out a step lighter than the dividers it meets.
 private struct Hairline: View {
     var body: some View {
         Rectangle().fill(Color(nsColor: BarMetrics.edge.color))

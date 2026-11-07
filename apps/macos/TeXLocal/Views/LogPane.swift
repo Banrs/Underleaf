@@ -5,18 +5,12 @@ struct LogPane: View {
     let filter: String
     let hiddenKinds: Set<LogKind>
     let title: String
-    @State private var filtered: (key: Key, lines: String)?
-
-    private struct Key: Equatable {
-        let filter: String, hiddenKinds: Set<LogKind>
-    }
+    @State private var filtered: String?
 
     var body: some View {
-        let key = Key(filter: filter, hiddenKinds: hiddenKinds)
         let filtering = !filter.isEmpty || !hiddenKinds.isEmpty
-        let current = filtered?.key == key ? filtered?.lines : nil
-        let previous = filtered.flatMap { $0.lines.isEmpty ? nil : $0.lines }
-        let shown = filtering ? current ?? previous ?? text : text
+        // Until a new filter's lines arrive, the last filter's stay, even if there were none.
+        let shown = filtering ? filtered ?? text : text
         Group {
             if shown.isEmpty, filtering {
                 NoFilterResults()
@@ -29,13 +23,13 @@ struct LogPane: View {
         }
         .task(id: [text, filter, hiddenKinds.map(\.title).sorted().joined(separator: ",")]) {
             guard filtering else { return filtered = nil }
-            if let lines = await Self.lines(of: text, with: filter, hiding: hiddenKinds), !Task.isCancelled { filtered = (key, lines) }
+            if let lines = await Self.lines(of: text, with: filter, hiding: hiddenKinds), !Task.isCancelled { filtered = lines }
         }
     }
 
     @concurrent private nonisolated static func lines(of text: String, with filter: String, hiding hidden: Set<LogKind>) async -> String? {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let kinds = hidden.isEmpty ? nil : LogKind.of(lines)
+        let kinds = hidden.isEmpty ? nil : Syntax.call(LogKinds(log: text)).flatMap { $0.count == lines.count ? $0 : nil }
         var kept: [Substring] = []
         for (index, line) in lines.enumerated() {
             if Task.isCancelled { return nil }

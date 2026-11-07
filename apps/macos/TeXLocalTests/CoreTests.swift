@@ -208,7 +208,15 @@ struct CoreTests {
     }
 
     @Test func theWireFixturesRoundTripAndItsRejectsAreRefused() throws {
-        let object = { (data: Data) in try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) as? NSObject }
+        // Swift leaves out a nil optional where the core writes null, and serde reads both as None.
+        func pruned(_ value: Any) -> Any {
+            switch value {
+            case let object as [String: Any]: object.filter { !($0.value is NSNull) }.mapValues(pruned)
+            case let array as [Any]: array.map(pruned)
+            default: value
+            }
+        }
+        let object = { (data: Data) in pruned(try JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) as? NSObject }
         for (type, json) in wireSamples {
             let sent = try JSONEncoder().encode(try JSONDecoder().decode(type, from: Data(json.utf8)))
             #expect(try object(sent) == object(Data(json.utf8)), "\(json)")

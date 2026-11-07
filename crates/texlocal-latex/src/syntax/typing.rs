@@ -101,10 +101,13 @@ impl SourceDocument {
             if next == Some(key) && !(dollar && escaped(units, start)) || escaped_closer {
                 typing.closers.remove(&start);
                 let mut bracket = start + escaped_closer as usize;
-                let mut keystroke = Keystroke::default();
+                // Past the closer, the word being completed has ended.
+                let mut keystroke = Keystroke {
+                    completions: Completing::Close,
+                    ..Keystroke::default()
+                };
                 if escaped_closer && escaped(units, start) {
                     keystroke.edit = Some(splice(start - 1, 1, ""));
-                    keystroke.completions = Completing::Close;
                     bracket -= 1;
                 }
                 keystroke.selection = Some(span(bracket + 1, 0));
