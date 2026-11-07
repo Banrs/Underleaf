@@ -115,7 +115,7 @@ struct VersionHistorySheet: View {
                         }
                     }
                 } icon: {
-                    Image(systemName: "document")
+                    FileIcon(change.kind)
                 }
                 Spacer()
                 let (letter, spoken): (String, LocalizedStringKey) = switch change.change {

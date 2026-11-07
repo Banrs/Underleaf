@@ -252,7 +252,7 @@ struct SearchResults: View {
             Text("\(Text(group.file.fileName).fontWeight(.medium)) \(Text(group.file.parentFolder.replacing("/", with: " ▸ ")).foregroundStyle(.secondary))")
                 .lineLimit(1)
         } icon: {
-            Image(systemName: project.tree.node(at: group.file)?.symbol ?? "text.document")
+            FileIcon(project.tree.node(at: group.file)?.kind ?? .text)
         }
         .navigatorRow()
         .help(group.file)

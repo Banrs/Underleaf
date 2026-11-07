@@ -147,7 +147,7 @@ struct FilesList: View {
                 }
             }
         } icon: {
-            Image(systemName: node.symbol)
+            FileIcon(node.kind)
                 .overlay(alignment: .bottomLeading) {
                     if isMain {
                         Image(systemName: "star.circle.fill")

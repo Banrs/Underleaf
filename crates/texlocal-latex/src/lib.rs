@@ -48,9 +48,13 @@ pub fn same_folded(a: &str, b: &str) -> bool {
     }
 }
 
+/// Classes, packages and the files they load or are built from.
+const PACKAGE_EXTENSIONS: &[&str] = &[
+    "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist", "lco",
+];
+
 const TEXT_EXTENSIONS: &[&str] = &[
-    "ltx", "cls", "sty", "clo", "def", "cfg", "bst", "bbx", "cbx", "lbx", "dtx", "ins", "ist",
-    "lco", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",
+    "ltx", "tikz", "pgf", "mf", "mp", "asy", "rnw", "rmd", "qmd", "md", "txt", "csv", "tsv", "dat",
     "json", "yaml", "yml", "toml", "ini", "xml", "lua", "py", "r", "sh",
 ];
 
@@ -63,6 +67,7 @@ pub enum FileKind {
     Bib,
     Image,
     Pdf,
+    Package,
     Text,
     Other,
 }
@@ -75,6 +80,7 @@ pub fn file_kind(name: &str) -> FileKind {
         "bib" => FileKind::Bib,
         "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" => FileKind::Image,
         "pdf" => FileKind::Pdf,
+        ext if PACKAGE_EXTENSIONS.contains(&ext) => FileKind::Package,
         ext if TEXT_EXTENSIONS.contains(&ext) => FileKind::Text,
         "" if TEXT_NAMES.contains(&lower(path.file_name()).as_str()) => FileKind::Text,
         _ => FileKind::Other,
@@ -84,6 +90,6 @@ pub fn file_kind(name: &str) -> FileKind {
 pub fn is_text(name: &str) -> bool {
     matches!(
         file_kind(name),
-        FileKind::Tex | FileKind::Bib | FileKind::Text
+        FileKind::Tex | FileKind::Bib | FileKind::Package | FileKind::Text
     )
 }
