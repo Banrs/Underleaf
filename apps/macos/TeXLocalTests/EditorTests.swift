@@ -175,6 +175,37 @@ struct EditorTests {
         #expect(!text.canPasteTable)
     }
 
+    @Test func continuityCamerasImagesComeInAsFiguresThroughTheFigurePath() async throws {
+        let (editor, window) = Self.editor("")
+        defer { window.close() }
+        let text = editor.textView, jpeg = NSPasteboard.PasteboardType("public.jpeg")
+        for type in [NSPasteboard.PasteboardType.png, .tiff, .pdf, jpeg] {
+            #expect(text.validRequestor(forSendType: nil, returnType: type) as? SourceTextView === text, "\(type)")
+        }
+        var copied: [(name: String, existed: Bool)] = []
+        text.fileDrop = { url in
+            .copy {
+                copied.append((url.lastPathComponent, FileManager.default.fileExists(atPath: url.path(percentEncoded: false))))
+                return "\\includegraphics{\(url.lastPathComponent)}"
+            }
+        }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.declareTypes([jpeg], owner: nil)
+        board.setData(Data([0xFF, 0xD8, 0xFF, 0xD9]), forType: jpeg)
+        #expect(text.readSelection(from: board))
+        try await waitUntil { !copied.isEmpty }
+        #expect(copied.map(\.name) == ["Pasted Graphic.jpg"] && copied[0].existed)
+        #expect(text.string == "\\includegraphics{Pasted Graphic.jpg}" && text.undo.undoActionName == "Insert Figure")
+        board.declareTypes([.string, jpeg], owner: nil)
+        board.setString("words", forType: .string)
+        board.setData(Data([0xFF, 0xD8, 0xFF, 0xD9]), forType: jpeg)
+        Self.event(text) { _ = text.readSelection(from: board) }
+        #expect(copied.count == 1 && text.string == "words")
+        text.isEditable = false
+        #expect(text.validRequestor(forSendType: nil, returnType: .png) == nil)
+    }
+
     @Test func theEditorTakesTheFocusARevealAskedForOnlyTheNextTimeItShows() {
         let (editor, window) = Self.editor("text")
         defer { window.close() }
