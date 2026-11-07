@@ -99,13 +99,15 @@ private struct QuickOpenView: View {
     }
 
     private func row(_ item: QuickOpenItem) -> some View {
-        let symbol = switch item.kind {
-        case .heading: "list.bullet.indent"
-        case .label: "tag"
-        case .file: tree.node(at: item.path)?.symbol ?? "document"
-        }
-        return HStack(spacing: 10) {
-            Image(systemName: symbol).frame(width: 20)
+        HStack(spacing: 10) {
+            Group {
+                switch item.kind {
+                case .heading: Image(systemName: "list.bullet.indent")
+                case .label: Image(systemName: "tag")
+                case .file: FileIcon(tree.node(at: item.path)?.kind ?? .other)
+                }
+            }
+            .frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                 if !item.detail.isEmpty {

@@ -455,7 +455,7 @@ private struct IssueList: View {
                             Text("\(file?.fileName ?? project.name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
                                 .help(file ?? project.name)
                         } icon: {
-                            Image(systemName: file == nil ? "folder.fill" : "text.document")
+                            FileIcon(file.map { project.tree.node(at: $0)?.kind ?? .text })
                                 .overlay(alignment: .bottomLeading) {
                                     if rows.contains(where: { $0.element.isError }) {
                                         Image(systemName: "xmark.circle.fill")

@@ -14,6 +14,7 @@ import Testing
 struct ChromePixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
     private let requests = ProcessInfo.processInfo.environment["TEXLOCAL_SCREEN"].map { URL(filePath: $0, directoryHint: .isDirectory) }
+    private static var kept: [NSWindow] = []
 
     @Test func theChromeIsWrittenOut() async throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -45,7 +46,11 @@ struct ChromePixelTests {
             window.setFrameOrigin(NSPoint(x: 40, y: 40))
         }
         window.orderFrontRegardless()
-        defer { workspace.close(); window.close() }
+        // Put away rather than closed: a closed workspace's editor, laid out once more, crashed the test host.
+        defer {
+            window.orderOut(nil)
+            Self.kept.append(window)
+        }
         let suffix = dark ? "dark" : "light"
         if let screen {
             try await settle()
@@ -108,11 +113,18 @@ struct ChromePixelTests {
         try await navigator("files-selected")
         window.makeFirstResponder(nil)
         try await navigator("files-selected-unfocused")
+        project.store.apply(.build(Self.build(ok: false, issues: [(true, "main.tex"), (false, "refs.bib"), (false, "mystyle.sty"),
+                                                                  (false, "/usr/local/texlive/article.cls")])))
         project.navigator.shown = .issues
         try await navigator("issues")
         project.navigator.shown = .search
         project.search.replacing = true
         try await navigator("search")
+        // The view's own search fails with no session; a search run after it shows these results.
+        project.search.query = "intro"
+        try await Task.sleep(for: .milliseconds(400))
+        _ = await project.search.run { _ in Self.found }
+        try await navigator("search-results")
         if screen != nil, let header = sidebar.descendants(of: FindHeader.self).first {
             try await hover(header, NSPoint(x: 20, y: 10))
             try await capture("navigator-search-hover-mode")
@@ -127,6 +139,31 @@ struct ChromePixelTests {
         try write("logs-bar-\(suffix)", area, NSRect(x: columns.convert(columns.bounds, to: area).minX, y: 0,
                                                     width: columns.bounds.width, height: 48))
         try await capture("logs")
+
+        // Open Quickly's choice list, the second row chosen.
+        let rows = ChoiceRows<TreeNode> { [$0.name] }
+        rows.items = Self.tree.flatMap { [$0] + ($0.children ?? []) }.filter { !$0.isDirectory }
+        rows.selection = 1
+        let list = NSHostingView(rootView: ChoiceList(rows: rows, height: 38, corner: 16, truncation: .middle, chosen: { _ in }) { node in
+            HStack(spacing: 10) {
+                FileIcon(node.kind).frame(width: 20)
+                Text(node.name)
+            }
+        }.frame(width: 320, height: 330).background(Color(nsColor: .windowBackgroundColor)))
+        list.frame = NSRect(x: 0, y: 0, width: 320, height: 330)
+        let panel = NSWindow(contentRect: list.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.appearance = window.appearance
+        panel.alphaValue = 0.01
+        panel.contentView = list
+        panel.orderFrontRegardless()
+        defer { panel.close() }
+        try await settle()
+        try write("open-quickly-\(suffix)", list, list.bounds)
+    }
+
+    private static let found = ["main.tex", "chapters/intro.tex", "refs.bib", "mystyle.sty", "notes.txt"].map { file in
+        SearchGroup(file: file, hits: [SearchHit(file: file, line: 3, column: 4, length: 5, before: "see the ", match: "intro", after: "duction")])
     }
 
     private static let tree: [TreeNode] = [
@@ -134,7 +171,7 @@ struct ChromePixelTests {
         folder("figures", [file("figures/plot.png", .image), file("figures/diagram.pdf", .pdf)]),
         file("main.tex", .tex, main: true),
         file("refs.bib", .bib),
-        file("mystyle.sty", .text),
+        file("mystyle.sty", .package),
         file("notes.txt", .text),
         file("data.csv", .text),
         file("archive.zip", .other),
