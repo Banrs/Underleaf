@@ -49,8 +49,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if app.tex?.available == false { Task { await app.refreshTeXStatus() } }
     }
 
+    /// Launching to open a project shows just its window, as the Projects window comes up only if nothing else does.
     func application(_ application: NSApplication, open urls: [URL]) {
-        Task { await app.front.open(urls.filter(AppModel.canOpen)) }
+        let window = app.main ?? app.windows.first ?? app.openWindow(nil)
+        Task { [app] in
+            await window.open(urls.filter(AppModel.canOpen))
+            if !app.windows.contains(where: { $0.shownProject != nil }) { window.controller?.show() }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
