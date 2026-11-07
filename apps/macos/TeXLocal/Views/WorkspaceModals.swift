@@ -114,11 +114,19 @@ private struct GoToSheet: View {
 
 private struct CitationSheet: View {
     let project: ProjectModel
-    @State private var text = Self.pasted ?? ""
+    @State private var text: String
     @FocusState private var focused: Bool
 
-    private static var pasted: String? {
-        NSPasteboard.general.string(forType: .string).flatMap { Syntax.call(LocateCitation(text: $0)) ?? nil }?.id
+    init(project: ProjectModel) {
+        self.project = project
+        _text = State(initialValue: Self.copied ?? "")
+    }
+
+    /// A DOI or arXiv ID that was copied, read only where the person lets TeXLocal read the pasteboard without asking.
+    private static var copied: String? {
+        let board = NSPasteboard.general
+        guard board.accessBehavior == .alwaysAllow, let text = board.string(forType: .string) else { return nil }
+        return (Syntax.call(LocateCitation(text: text)) ?? nil)?.id
     }
 
     var body: some View {
