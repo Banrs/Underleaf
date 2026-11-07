@@ -257,7 +257,7 @@ struct EditorTests {
         #expect(text.string == "a b a b" && text.document.text == text.string)
     }
 
-    @Test func aChangeOfSeveralEditsKeepsAFoldBetweenThemAndTheCoresCopyThroughUndo() {
+    @Test func aChangeOfSeveralEditsKeepsAFoldBetweenThemAndTheCoresCopyThroughUndoAndRedo() {
         let source = "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter"
         let (editor, window) = Self.editor(source)
         defer { window.close() }
@@ -271,6 +271,23 @@ struct EditorTests {
         #expect(text.folds.ranges == [NSRange(location: 18, length: 16)] && text.undo.undoActionName == "Comment")
         text.undo.undo()
         #expect(text.string == source && text.document.text == source && text.folds.ranges == [NSRange(location: 16, length: 16)])
+        #expect(text.selection == .caret(0))
+        text.undo.redo()
+        #expect(text.string.hasPrefix("% ") && text.document.text == text.string && text.folds.ranges == [NSRange(location: 18, length: 16)])
+    }
+
+    @Test func typingOnAfterAChangeOfSeveralEditsUndoesApartFromIt() {
+        let (editor, window) = Self.editor("\nz")
+        defer { window.close() }
+        let text = editor.textView
+        Self.type("ab", in: text)
+        text.apply([TextEdit(.caret(3), "% ")], named: "Comment")
+        Self.type("c", in: text)
+        #expect(text.string == "abc\n% z")
+        text.undo.undo()
+        #expect(text.string == "ab\n% z" && text.document.text == text.string)
+        text.undo.undo()
+        #expect(text.string == "ab\nz" && text.document.text == text.string)
     }
 
     @Test func aWrappedLineContinuesUnderItsIndentation() throws {

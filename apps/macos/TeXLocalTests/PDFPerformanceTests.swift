@@ -92,7 +92,7 @@ struct EditorPerformanceTests {
         let redo = ContinuousClock().measure { text.undo.redo() }
         #expect(text.string == indented && text.document.text == indented)
         print("EditorPerformance indenting 2,000 lines \(ms(indent)), its undo \(ms(undo)), redo \(ms(redo))")
-        #expect(indent <= .seconds(3))
+        #expect(indent <= .seconds(3) && undo <= .seconds(3) && redo <= .seconds(3))
     }
 
 }

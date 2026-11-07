@@ -71,12 +71,24 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
     }
 
+    /// Makes edits given front to back as one undo step, which undoes and redoes through here too, in one TextKit pass:
+    /// NSTextView's own undo replays them one pass each, and took 6 s to undo an indent of 2,000 lines.
     @discardableResult
     func apply(_ edits: [TextEdit], named name: String, selecting: [NSRange]? = nil) -> Bool {
         guard isEditable, document.editable, !edits.isEmpty else { return false }
         let selections = selecting ?? document.map(selectedRanges.map(\.rangeValue), through: edits)
+        var shift = 0
+        let undone = edits.map { edit in
+            let range = NSRange(location: edit.range.location + shift, length: edit.text.utf16.count)
+            shift += range.length - edit.range.length
+            return TextEdit(range, source.substring(with: edit.range))
+        }
+        let restored = self.selections
         undoManager?.beginUndoGrouping()
+        undoManager?.registerUndo(withTarget: self) { $0.apply(undone, named: name, selecting: restored) }
+        undoManager?.disableUndoRegistration()
         replace(edits.reversed())
+        undoManager?.enableUndoRegistration()
         if !selections.isEmpty { setSelectedRanges(selections.map { NSValue(range: $0) }, affinity: .downstream, stillSelecting: false) }
         // The selections are set before mirroring, so the mirror's edits move them as typing's do.
         mirror()
