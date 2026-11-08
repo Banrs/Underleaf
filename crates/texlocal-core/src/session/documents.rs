@@ -664,20 +664,12 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::service::Service;
-    use crate::session::{Msg, Session, Sessions};
+    use crate::session::tests::panicking;
+    use crate::session::{Msg, Session};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_delayed_edit_after_a_rejected_reload_keeps_the_deletion_conflict() {
-        let dir = tempfile::tempdir().unwrap();
-        let service = Arc::new(Service::new(dir.path().into(), dir.path().into(), None));
-        service
-            .call("CreateProject", json!({ "name": "P", "template": "blank" }))
-            .await
-            .unwrap();
-        let compiler = Arc::new(Arc::clone(&service));
-        let preview = Arc::clone(&service.texpresso);
-        let sessions = Sessions::with_compiler(service, compiler, preview, false, Box::new(|_| {}));
+        let (sessions, _heard, _dir) = panicking().await;
         let (tx, mut rx) = mpsc::unbounded_channel();
         let request = Session::parse("OpenProject", json!({ "id": "P", "autoCompile": false }));
         let Session::OpenProject(opening) = request.unwrap() else {
