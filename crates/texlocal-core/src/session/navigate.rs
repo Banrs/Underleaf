@@ -163,7 +163,7 @@ impl Actor {
                 }
                 (SymbolKind::Label, Some(_)) => {
                     let number = aux.ok().and_then(|aux| numbered(&aux, &name));
-                    let number = number.unwrap_or_else(|| "Compile to number it".to_owned());
+                    let number = number.unwrap_or_else(|| messages::label_unnumbered().text);
                     let symbols = doc.symbols();
                     let what = symbols.labels().find(|label| label.name == name);
                     Some(match what.and_then(|label| label.detail.as_ref()) {
@@ -180,7 +180,7 @@ impl Actor {
                 }
                 (SymbolKind::Command, None) => {
                     let package = CATALOG.packages.get(&name);
-                    package.map(|package| format!("From the {package} package"))
+                    package.map(|package| messages::from_package(package).text)
                 }
                 _ => None,
             };
