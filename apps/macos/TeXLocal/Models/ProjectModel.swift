@@ -412,12 +412,7 @@ final class ProjectModel {
         }
         let added = try await session.call(AddCitation(entry: fetched))
         let name = String(localized: "Add Citation")
-        if let edits = added.edits, !apply(edits.edits, named: name) {
-            if let snapshot = edits.snapshot, !edits.written.isEmpty {
-                try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
-            }
-            throw Self.unchanged
-        }
+        if let edits = added.edits { try await applying(edits, named: name) }
         // Only where it was asked for: the person may have moved to another file while it was fetched.
         if openPath == citing { views?.perform(.cite(added.key)) }
         notices.note(added.edits == nil ? String(localized: "Cited “\(added.key)” from “\(added.file)”")
@@ -436,9 +431,14 @@ final class ProjectModel {
     private func editProject<R: SessionRequest>(_ request: R, named name: String) async throws -> ProjectEdits
         where R.Reply == ProjectEdits {
         let answer = try await session.call(request)
-        if apply(answer.edits, named: name) { return answer }
-        if let snapshot = answer.snapshot, !answer.written.isEmpty {
-            try await session.call(RestoreVersion(id: snapshot, paths: answer.written.map(\.file)))
+        try await applying(answer, named: name)
+        return answer
+    }
+
+    private func applying(_ edits: ProjectEdits, named name: String) async throws {
+        if apply(edits.edits, named: name) { return }
+        if let snapshot = edits.snapshot, !edits.written.isEmpty {
+            try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
         }
         throw Self.unchanged
     }
