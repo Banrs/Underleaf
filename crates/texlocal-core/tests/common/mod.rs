@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_core::session::{LiveEvent, LiveRun, Preview, Project, Sessions, Sink};
+use texlocal_core::session::{LiveEvent, LiveRun, Preview, Project, RunEnd, Sessions, Sink};
 use texlocal_core::{CoreError, ErrorKind};
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +392,16 @@ impl FakePreview {
         if let Some(sink) = &*self.sink.lock().unwrap() {
             sink(event);
         }
+    }
+
+    pub fn typeset(&self, pdf: &Path, pages: u32, revision: u64) {
+        self.send(LiveEvent::Document {
+            path: pdf.to_string_lossy().into_owned(),
+            pages,
+            run: RunEnd::Complete,
+            changed: Vec::new(),
+            revision,
+        });
     }
 }
 

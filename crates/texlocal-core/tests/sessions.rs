@@ -1320,13 +1320,7 @@ async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     *preview.log.lock().unwrap() =
         "./main.tex:3: Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
     rig.forget();
-    preview.send(LiveEvent::Document {
-        path: "live.pdf".into(),
-        pages: 1,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: preview.revision(),
-    });
+    preview.typeset(Path::new("live.pdf"), 1, preview.revision());
     preview.send(LiveEvent::Page {
         page: 0,
         pdf: "JVBERi0=".into(),
@@ -1369,13 +1363,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
         false,
     );
     doc.select(TextRange::default(), false);
-    preview.send(LiveEvent::Document {
-        path: pdf.to_string_lossy().into_owned(),
-        pages: 2,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: typeset,
-    });
+    preview.typeset(&pdf, 2, typeset);
     rig.event("liveDocument", |_| true);
     let moved = json!({ "file": "main.tex", "line": 11 });
     assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
@@ -1394,17 +1382,7 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
     fs::write(rig.library.path("live/live.synctex"), PICTURED_SYNCTEX).unwrap();
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
-    preview.send(LiveEvent::Document {
-        path: rig
-            .library
-            .path("live/live.pdf")
-            .to_string_lossy()
-            .into_owned(),
-        pages: 2,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: preview.revision(),
-    });
+    preview.typeset(&rig.library.path("live/live.pdf"), 2, preview.revision());
     rig.event("liveDocument", |_| true);
     let start = |line: usize| {
         PICTURED
@@ -1905,13 +1883,7 @@ async fn a_live_acknowledgement_keeps_the_shown_pdfs_source_snapshot() {
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     let typeset = preview.revision();
-    preview.send(LiveEvent::Document {
-        path: pdf.to_string_lossy().into_owned(),
-        pages: 2,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: typeset,
-    });
+    preview.typeset(&pdf, 2, typeset);
     rig.event("liveDocument", |_| true);
     doc.edit(0, 0, &"% comment\n".repeat(20), None, false);
     wait_until("the edit reaches Live Preview", || {
