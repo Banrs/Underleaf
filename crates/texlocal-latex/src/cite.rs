@@ -6,7 +6,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::bib::{entries, fields};
+use crate::bib::{entries, field, fields};
 
 #[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct CitationSource {
@@ -102,12 +102,7 @@ pub fn tidy(source: &str, taken: impl Fn(&str) -> bool) -> Option<Tidied> {
             .unwrap_or(FIRST.len())
     });
     let parsed = fields(body);
-    let field = |name: &str| {
-        parsed
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, value)| value.trim().to_owned())
-    };
+    let field = |name: &str| field(&parsed, name).map(|value| value.trim().to_owned());
     let surname = field("author").and_then(|authors| {
         let first = authors.split(" and ").next()?.trim().to_owned();
         let surname = match first.split_once(',') {
@@ -133,16 +128,10 @@ pub fn tidy(source: &str, taken: impl Fn(&str) -> bool) -> Option<Tidied> {
         .into_iter()
         .flatten()
         .collect::<String>();
-    let base = if made.is_empty() {
-        ascii_key(&entry[2])
-    } else {
-        made
-    };
-    let base = if base.is_empty() {
-        "ref".to_owned()
-    } else {
-        base
-    };
+    let base = [made, ascii_key(&entry[2])]
+        .into_iter()
+        .find(|base| !base.is_empty())
+        .unwrap_or_else(|| "ref".into());
     let key = std::iter::once(base.clone())
         .chain((b'a'..=b'z').map(|letter| format!("{base}{}", char::from(letter))))
         .chain((2..).map(|n| format!("{base}{n}")))
@@ -176,12 +165,7 @@ pub fn find_entry(source: &str, doi: Option<&str>, eprint: Option<&str>) -> Opti
     };
     entries(source).find_map(|(entry, body)| {
         let fields = fields(body);
-        let field = |name: &str| {
-            fields
-                .iter()
-                .find(|(n, _)| n == name)
-                .map(|(_, value)| value.trim().to_owned())
-        };
+        let field = |name: &str| field(&fields, name).map(|value| value.trim().to_owned());
         let same_doi = doi
             .zip(field("doi"))
             .is_some_and(|(a, b)| a.eq_ignore_ascii_case(&b));
