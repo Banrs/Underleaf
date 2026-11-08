@@ -193,8 +193,14 @@ final class Core {
     /// instead of leaving it waiting.
     nonisolated static func heard(_ said: Data) throws -> Heard {
         let decoder = JSONDecoder()
-        if let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" { return .reply(replying.value.id) }
-        return .said(try decoder.decode(Said<Unread>.self, from: said))
+        do {
+            let heard = try decoder.decode(Said<Unread>.self, from: said)
+            if case .reply(let reply) = heard { return .reply(reply.id) }
+            return .said(heard)
+        } catch {
+            guard let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" else { throw error }
+            return .reply(replying.value.id)
+        }
     }
 
     private nonisolated static let heard = AsyncStream.makeStream(of: (Heard, Data).self)
