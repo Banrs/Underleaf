@@ -468,6 +468,7 @@ nonisolated struct ImportFiles: SessionRequest {
 
 nonisolated struct Imported: Decodable, Hashable, Sendable {
     var existing: [Clash]
+    var paths: [String]
 }
 
 nonisolated struct IncludeGraphics: SyntaxRequest {

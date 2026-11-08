@@ -267,10 +267,8 @@ final class ProjectModel {
     func copyFigure(_ url: URL) async -> String? {
         let folder = openPath?.parentFolder ?? ""
         let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
-        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
-        else { return nil }
-        let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
-        guard tree.node(at: path) != nil else { return nil }
+        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) }),
+              let path = made.paths.first, tree.node(at: path) != nil else { return nil }
         return includeGraphics(path)
     }
 

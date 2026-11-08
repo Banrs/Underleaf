@@ -31,6 +31,7 @@ pub enum ImportConflict {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Imported {
     pub existing: Vec<Clash>,
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -94,17 +95,26 @@ pub(crate) fn import_files(
     let root = &project.root;
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
-        return Ok(Imported { existing });
+        return Ok(Imported {
+            existing,
+            paths: Vec::new(),
+        });
     }
     let replace = conflict == Some(ImportConflict::Replace);
+    let mut written = Vec::new();
     for (path, source) in files {
         let path = match conflict {
             Some(ImportConflict::KeepBoth) => keep_both(&path, &existing),
             _ => path,
         };
-        save(project, &in_folder(dir, &path), &source, replace)?;
+        let path = in_folder(dir, &path);
+        save(project, &path, &source, replace)?;
+        written.push(path);
     }
-    Ok(Imported { existing })
+    Ok(Imported {
+        existing,
+        paths: written,
+    })
 }
 
 fn validate<'a>(
