@@ -87,3 +87,8 @@ pub fn is_text(name: &str) -> bool {
         FileKind::Tex | FileKind::Bib | FileKind::Text
     )
 }
+
+/// Whether the symbol scan reads the file: its labels, citations and definitions live only in LaTeX and BibTeX.
+pub fn is_source(name: &str) -> bool {
+    matches!(file_kind(name), FileKind::Tex | FileKind::Bib)
+}

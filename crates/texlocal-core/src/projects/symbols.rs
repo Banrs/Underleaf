@@ -2,9 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::sync::Arc;
 
-use texlocal_latex::FileKind;
 use texlocal_latex::facts::Facts;
-use texlocal_latex::file_kind;
+use texlocal_latex::{file_kind, is_source};
 
 use super::skip_unreadable;
 use super::tree::visit_files;
@@ -19,10 +18,10 @@ pub fn scan_facts(
 ) -> Result<BTreeMap<String, Arc<Facts>>, CoreError> {
     let mut files = BTreeMap::new();
     visit_files(project, &mut |abs, rel| {
-        let kind = file_kind(rel);
-        if !matches!(kind, FileKind::Tex | FileKind::Bib) {
+        if !is_source(rel) {
             return Ok(true);
         }
+        let kind = file_kind(rel);
         let found = match open.get(rel) {
             Some(text) => Some(Arc::new(Facts::read(text, kind))),
             None => skip_unreadable(facts.0.get(abs, |abs| {

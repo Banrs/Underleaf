@@ -15,7 +15,7 @@ use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::history::Then;
-use super::scans::{tex, usages_in};
+use super::scans::usages_in;
 use crate::messages;
 use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
@@ -96,7 +96,7 @@ impl Actor {
             return Err(CoreError::conflict(exists(&to)));
         }
         let found = move |rel: &str, text: &str| usages_in(rel, text, kind, &from, |_| None);
-        self.edit_project(tex, found, to)
+        self.edit_project(texlocal_latex::is_source, found, to)
     }
 
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {

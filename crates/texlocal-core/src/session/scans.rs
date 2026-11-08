@@ -5,7 +5,7 @@ use serde::Serialize;
 use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
-use texlocal_latex::{FileKind, file_kind};
+use texlocal_latex::{file_kind, is_source};
 
 use super::actor::Actor;
 use super::{Document, Pending};
@@ -47,7 +47,8 @@ impl Actor {
             let found = |rel: &str, text: &str| {
                 usages_in(rel, text, kind, &name, |file| symbols.spelt(file))
             };
-            let hits = projects::search_project(&project, &texts(&docs), &tex, &found, usize::MAX);
+            let hits =
+                projects::search_project(&project, &texts(&docs), &is_source, &found, usize::MAX);
             let name = match kind {
                 SymbolKind::Label => format!("\\label{{{name}}}"),
                 SymbolKind::Citation => format!("\\cite{{{name}}}"),
@@ -73,10 +74,6 @@ pub(super) fn usages_in(
         return Vec::new();
     }
     syntax::usages(&Facts::read(text, file_kind(rel)), rel, kind, name, spelt)
-}
-
-pub(super) fn tex(rel: &str) -> bool {
-    matches!(file_kind(rel), FileKind::Tex | FileKind::Bib)
 }
 
 pub(super) fn texts(docs: &HashMap<String, Document>) -> HashMap<String, String> {
