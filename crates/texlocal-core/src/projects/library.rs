@@ -43,10 +43,7 @@ impl ProjectInfo {
     pub(super) fn of(id: String, project: &Project) -> Self {
         let settings = read_settings(&project.settings);
         let missing = !project.root.is_dir();
-        let pdf = settings
-            .output(&project.build, "pdf")
-            .ok()
-            .filter(|pdf| !missing && pdf.is_file());
+        let pdf = project.built_pdf().filter(|_| !missing);
         let built = pdf
             .as_ref()
             .and_then(|pdf| fs::metadata(pdf).ok())

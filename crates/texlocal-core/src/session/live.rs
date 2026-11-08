@@ -116,7 +116,7 @@ impl Live {
         let Some(pdf) = cx.pdf.live.as_ref().filter(|_| self.active()) else {
             return Ok(None);
         };
-        if !pdf.with_extension("synctex").is_file() {
+        if synctex::synctex_file(pdf).is_none() {
             return Err(CoreError::not_found(messages::texpresso_unsynced()));
         }
         Ok(Some(pdf.clone()))

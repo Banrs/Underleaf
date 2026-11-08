@@ -20,7 +20,7 @@ use crate::messages;
 use crate::paths::{Project, disk_spelling};
 use crate::process::Tree;
 use crate::service::Service;
-use crate::{settings, synctex};
+use crate::synctex;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 pub(crate) type Compiling = (Tree, Fut<Result<CompileResult, CoreError>>);
@@ -332,8 +332,7 @@ impl Builds {
 }
 
 pub(super) fn built_pdf(project: &Project) -> Option<String> {
-    let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
-    let pdf = pdf.ok().filter(|pdf| pdf.is_file())?;
+    let pdf = project.built_pdf()?;
     Some(pdf.to_string_lossy().into_owned())
 }
 

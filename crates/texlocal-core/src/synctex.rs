@@ -15,7 +15,6 @@ use tokio::task::JoinHandle;
 use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, disk_spelling, source_rel};
-use crate::settings::read_settings;
 use crate::stamp::Kept;
 
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
@@ -45,21 +44,22 @@ pub struct InverseLoc {
 fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
     let pdf = match live {
         Some(live) => live.to_path_buf(),
-        None => Some(read_settings(&project.settings).output(&project.build, "pdf")?)
-            .filter(|pdf| pdf.exists())
+        None => project
+            .built_pdf()
             .ok_or_else(|| CoreError::not_found(messages::no_pdf_yet()))?,
     };
     beside(&pdf).map_err(|_| CoreError::not_found(messages::no_synctex()))
 }
 
+pub(crate) fn synctex_file(pdf: &Path) -> Option<PathBuf> {
+    let plain = pdf.with_extension("synctex");
+    let gzipped = plain.with_extension("synctex.gz");
+    [plain, gzipped].into_iter().find(|file| file.is_file())
+}
+
 fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
     static PARSED: Kept<SyncTex> = Kept::new();
-    let plain = pdf.with_extension("synctex");
-    let file = if plain.is_file() {
-        plain
-    } else {
-        plain.with_extension("synctex.gz")
-    };
+    let file = synctex_file(pdf).ok_or(ErrorKind::NotFound)?;
     PARSED.get(&file, |file| {
         let bytes = std::fs::read(file)?;
         SyncTex::read(bytes).ok_or_else(|| Error::new(ErrorKind::InvalidData, "not a SyncTeX file"))
