@@ -60,7 +60,7 @@ struct ChromePixelTests {
         project.store.apply(.tree(Self.tree))
         project.tree.arrived()
         project.expandedFolders = ["chapters", "figures"]
-        project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex)))
+        project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
         views.pdf.show(try Self.pdf(pages: 3))
         try await settle()
 

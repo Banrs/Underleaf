@@ -25,10 +25,6 @@ nonisolated extension TreeNode: Identifiable {
     }
 }
 
-nonisolated extension FileKind {
-    var isText: Bool { self == .tex || self == .bib || self == .text }
-}
-
 extension [TreeNode] {
     var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
 }

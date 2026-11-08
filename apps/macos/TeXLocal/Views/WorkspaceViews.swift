@@ -175,7 +175,7 @@ final class WorkspaceViews: ProjectViews {
     func focusEditor() { editor.focus() }
 
     private func showOpenFile() {
-        guard let file = project.store.openFile, file.kind.isText, editor.path != file.path || !editor.textView.document.editable,
+        guard let file = project.store.openFile, file.text, editor.path != file.path || !editor.textView.document.editable,
               let source = SourceDocument(session: project.session, path: file.path) else { return }
         editor.open(path: file.path, source: source)
         showIssues()

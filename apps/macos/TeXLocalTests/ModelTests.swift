@@ -154,7 +154,7 @@ struct SectionTests {
             project.handle(.section(.tree([TreeNode(name: "ch", path: "ch", kind: nil, children: files, main: false), file("main.tex")])))
         }
         tree([file("ch/one.tex")])
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
         #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
         project.trail.jumped(from: Place(path: "main.tex", line: 1))
@@ -572,7 +572,7 @@ struct ViewsTests {
         }
         build(true, false)
         #expect(!project.syncsAfterBuild)
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         #expect(project.syncsAfterBuild)
         build(true, true)
         #expect(!project.syncsAfterBuild)
@@ -593,7 +593,7 @@ struct ViewsTests {
         let window = defaults.window()
         let project = ProjectModel(id: "P", window: window)
         let views = Views(project)
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         #expect(!project.canSyncForward())
         views.hasPDF = true
         window.layout = .source
@@ -646,11 +646,11 @@ struct ViewsTests {
         let file = { (name: String, kind: FileKind) in TreeNode(name: name, path: name, kind: kind, children: nil, main: false) }
         project.handle(.section(.project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil))))
         project.handle(.section(.tree([file("main.tex", .tex), file("plot.png", .image), file("refs.bib", .bib)])))
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         let drop = { (path: String) in project.dropAction(for: URL(filePath: path)) }
         #expect(drop("/tmp/Paper/plot.png") == .insert("\\includegraphics{plot.png}") && drop("/tmp/Paper/refs.bib") == .open("refs.bib"))
         #expect(drop("/tmp/Paper/gone.png") == nil && drop("/Users/me/shot.png") == .copy && drop("/Users/me/notes.txt") == nil)
-        project.handle(.section(.openFile(OpenFile(path: "refs.bib", kind: .bib))))
+        project.handle(.section(.openFile(OpenFile(path: "refs.bib", kind: .bib, text: true))))
         #expect(drop("/tmp/Paper/plot.png") == .open("plot.png") && drop("/Users/me/shot.png") == nil)
     }
 

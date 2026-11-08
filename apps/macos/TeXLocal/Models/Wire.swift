@@ -905,6 +905,7 @@ nonisolated struct Open: SessionRequest {
 nonisolated struct OpenFile: Decodable, Hashable, Sendable {
     var path: String
     var kind: FileKind
+    var text: Bool
 }
 
 nonisolated struct OpenPath: LibraryRequest {

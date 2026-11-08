@@ -139,7 +139,7 @@ final class ProjectModel {
     var headingCommand: String { outline.first { isOpenFile($0.file) && $0.line == cursorLine }?.command ?? "" }
 
     func isOpenFile(_ path: String) -> Bool { openPath.map { path.caseInsensitiveCompare($0) == .orderedSame } ?? false }
-    var editsText: Bool { openKind?.isText == true }
+    var editsText: Bool { store.openFile?.text == true }
 
     var saveFailure: String? {
         for document in store.documents {

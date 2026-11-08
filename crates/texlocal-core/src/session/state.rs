@@ -61,6 +61,7 @@ pub(crate) struct DocumentState {
 pub(crate) struct OpenFile {
     pub path: String,
     pub kind: FileKind,
+    pub text: bool,
 }
 
 impl Actor {

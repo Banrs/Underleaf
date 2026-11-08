@@ -138,6 +138,7 @@ impl Docs {
         }
         let open = self.open.clone().map(|path| OpenFile {
             kind: file_kind(&path),
+            text: is_text(&path),
             path,
         });
         cx.publish(SessionSection::OpenFile(open));
