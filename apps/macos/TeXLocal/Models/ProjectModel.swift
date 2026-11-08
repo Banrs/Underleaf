@@ -88,7 +88,6 @@ final class ProjectModel {
     private var answered: Set<String> = []
     private(set) var askingToDiscard: [String]?
     @ObservationIgnored private var discardAnswer: CheckedContinuation<Bool, Never>?
-    @ObservationIgnored private var discarded = false
     private(set) var previewVersion = 0
 
     var importClash: ImportClash?
@@ -291,8 +290,8 @@ final class ProjectModel {
     private func saved(reporting: Bool) async throws -> Bool {
         do {
             return try await session.call(Save(reporting: reporting))
-        } catch _ where discarded || store.lifecycle?.stopped != nil || !initialLoadComplete {
-            return discarded || lostEdits.isEmpty
+        } catch _ where store.lifecycle?.stopped != nil || !initialLoadComplete {
+            return lostEdits.isEmpty
         }
     }
 
@@ -301,20 +300,21 @@ final class ProjectModel {
         store.lifecycle?.stopped?.unsaved ?? store.documents.filter { $0.error != nil }.map(\.path)
     }
 
-    /// Saves, or when a file can't be saved asks whether to close without it.
-    func saveBeforeLeaving() async -> Bool {
+    /// Saves, or when a file can't be saved asks whether to close without it: nil stays open, true closes without it.
+    /// The answer goes to `close` from the Close or Quit that asked, so the next one asks again.
+    func saveBeforeLeaving() async -> Bool? {
         do {
-            if try await saved(reporting: true) { return true }
+            if try await saved(reporting: true) { return false }
         } catch where lostEdits.isEmpty {
             window?.report(notSavedTitle(), error)
-            return error is CancellationError
+            return error is CancellationError ? false : nil
         } catch {}
         let lost = lostEdits
-        guard !lost.isEmpty, conflicts.isEmpty, discardAnswer == nil else { return false }
+        guard !lost.isEmpty, conflicts.isEmpty, discardAnswer == nil else { return nil }
         window?.controller?.show()
         askingToDiscard = lost
-        discarded = await withCheckedContinuation { discardAnswer = $0 }
-        return discarded
+        let discarding = await withCheckedContinuation { discardAnswer = $0 }
+        return discarding ? true : nil
     }
 
     func answerDiscard(_ discard: Bool) {
@@ -474,12 +474,12 @@ final class ProjectModel {
     }
 
     @discardableResult
-    func close() -> Task<Bool, Never> {
+    func close(discarding: Bool = false) -> Task<Bool, Never> {
         if let closing { return closing }
         let task = Task { [self] in
             defer { closing = nil }
             do {
-                guard try await session.close(discarding: discarded) else { return false }
+                guard try await session.close(discarding: discarding) else { return false }
             } catch {
                 window?.report(notSavedTitle(), error)
                 return false

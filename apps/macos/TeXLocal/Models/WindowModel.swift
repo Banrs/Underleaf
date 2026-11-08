@@ -190,11 +190,11 @@ final class WindowModel {
     }
 
     /// Joins a leave already under way, so a second Close waits for the first's questions instead of cancelling them.
-    func end() async -> Bool {
+    func end(discarding: Bool = false) async -> Bool {
         if let ending { return await ending.value }
         let task = Task { [self] in
             defer { ending = nil }
-            return await leave()
+            return await leave(discarding: discarding)
         }
         ending = task
         return await task.value
@@ -202,12 +202,17 @@ final class WindowModel {
 
     func windowClosed() { app.closed(self) }
 
-    private func leave() async -> Bool {
+    /// Discarding when Quit has already been told to close without what can't be saved, and otherwise asking here.
+    private func leave(discarding: Bool) async -> Bool {
         guard let project else { return true }
+        var discarding = discarding
         if project.isOpen {
-            guard await project.saveBeforeLeaving(), !Task.isCancelled else { return false }
+            if !discarding {
+                guard let answer = await project.saveBeforeLeaving(), !Task.isCancelled else { return false }
+                discarding = answer
+            }
             project.savePlace()
         }
-        return await project.close().value && !Task.isCancelled
+        return await project.close(discarding: discarding).value && !Task.isCancelled
     }
 }

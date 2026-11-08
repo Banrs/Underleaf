@@ -257,15 +257,18 @@ final class AppModel {
         return renamed
     }
 
+    /// Asks every project before closing any. Its Close Without Saving answers last only as long as this Quit.
     func quit() async -> Bool {
+        var discarding: Set<ObjectIdentifier> = []
         for window in windows where window.project?.isOpen == true {
-            guard await window.project?.saveBeforeLeaving() != false else {
+            guard let discards = await window.project?.saveBeforeLeaving() else {
                 window.controller?.show()
                 return false
             }
+            if discards { discarding.insert(ObjectIdentifier(window)) }
         }
         for window in windows {
-            guard await window.end() else {
+            guard await window.end(discarding: discarding.contains(ObjectIdentifier(window))) else {
                 for ended in windows where ended.project?.closed == true { ended.controller?.close() }
                 window.controller?.show()
                 return false
