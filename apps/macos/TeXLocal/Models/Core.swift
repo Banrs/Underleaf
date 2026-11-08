@@ -131,7 +131,7 @@ final class Core {
         }
     }
 
-    private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
+    private nonisolated static let log = Logger(subsystem: logSubsystem, category: "core")
 
     private nonisolated static func fault(_ command: String, _ problem: String) -> AppFailure {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")

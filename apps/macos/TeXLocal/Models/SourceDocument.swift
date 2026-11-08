@@ -140,7 +140,7 @@ final class SourceDocument {
 }
 
 nonisolated enum Syntax {
-    static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "source")
+    static let log = Logger(subsystem: logSubsystem, category: "source")
 
     static func call<R: SyntaxRequest>(_ request: R) -> R.Reply? { json(request).flatMap { answer(R.command, tl_syntax_call(R.command, $0)) } }
 
