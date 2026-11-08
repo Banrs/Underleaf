@@ -1,3 +1,20 @@
+//! One actor per open project.
+//!
+//! - Each session runs its actor on its own named OS thread, `texlocal-session-<id>`, with `block_on` on the
+//!   shared runtime, so a slow session never holds up another.
+//! - Handlers are synchronous and may block on disk on purpose: the thread is the session's own, so only that
+//!   session waits.
+//! - Timers are entries in a map of deadlines that the run loop sleeps until, not tasks, so stopping a session
+//!   leaves none behind.
+//! - An actor never awaits another actor or the events hub: it sends and moves on.
+//! - History jobs run on the session's `texlocal-history` thread and never wait on the actor; when done they
+//!   only send.
+//! - `runtime_gone` resolves when the runtime shuts down and drops the task holding its sender, so the actor
+//!   returns instead of waiting on a runtime that will never wake it.
+//! - A `Reply` answers on drop if nothing answered it: the `ACTOR` thread-local tells a session that stopped
+//!   by panicking on its own thread from a side job that failed, and a reply dropped without a panic means the
+//!   session is gone.
+
 mod actor;
 mod build;
 mod document;

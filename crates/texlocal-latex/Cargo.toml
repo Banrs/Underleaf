@@ -17,6 +17,7 @@ ratex-lexer = "=0.1.15"
 ratex-parser = "=0.1.15"
 ratex-svg = { version = "=0.1.15", features = ["embed-fonts"] }
 ratex-types = "=0.1.15"
+# ratex-katex-fonts embeds its fonts only in release builds unless rust-embed has debug-embed on.
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 schemars = "1.2"
 
