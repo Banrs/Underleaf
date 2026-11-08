@@ -427,9 +427,7 @@ impl Docs {
             }
             (DiskConflict::Gone, Resolution::Save) => (doc.asking, doc.conflict) = (false, None),
             (DiskConflict::Gone, Resolution::Close) => return Ok(self.close(cx, path, false)),
-            _ => {
-                return Err(CoreError::bad_request(messages::answer_unfit()));
-            }
+            _ => return Err(CoreError::bad_request(messages::answer_unfit())),
         }
         self.publish(cx);
         match answer {
@@ -462,12 +460,10 @@ impl Docs {
             ..edit
         };
         doc.reloading = Some((version, edit));
-        let path = path.to_owned();
-        let edits = vec![asked];
         cx.emit(Event::Reload(DocumentEdits {
-            path,
+            path: path.to_owned(),
             version,
-            edits,
+            edits: vec![asked],
         }));
     }
 
