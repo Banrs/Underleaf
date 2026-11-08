@@ -65,6 +65,20 @@ TeXpresso inside, copies it to `/Applications` and opens it. To update, pull and
 open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run. To use another TeXpresso for Live Preview, choose
 its folder in Settings ▸ Live Preview.
 
+### Releasing
+
+`tools/release.sh` makes a zip for other Macs in `dist/`. It needs the TeXpresso build above, since a release
+always has Live Preview. Set `TEXLOCAL_SIGN_IDENTITY` to your Developer ID Application certificate and
+`TEXLOCAL_NOTARY_PROFILE` to a keychain profile saved with `xcrun notarytool store-credentials`, then run:
+
+```sh
+tools/release.sh v0.2.0
+```
+
+The tag must match `MARKETING_VERSION` in `apps/macos/Version.xcconfig`. The script archives a Release build,
+notarizes and staples it, and checks it with Gatekeeper. Without `TEXLOCAL_SIGN_IDENTITY` it signs ad hoc and
+skips notarization, which is only useful for trying the script.
+
 ## Projects and security
 
 New projects go in a `TeXLocal` folder in your home folder. A project's settings, such as its main
