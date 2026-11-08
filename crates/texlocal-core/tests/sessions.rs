@@ -1752,6 +1752,35 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn live_preview_runs_texpresso_on_the_tex_path_so_it_reaches_kpsewhich_in_another_folder() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        stub_tex(library);
+        let kpsewhich = "#!/bin/sh\necho '[\"page\",0,\"JVBER\"]'\n";
+        program(&library.path("tex/bin/kpsewhich"), kpsewhich);
+        // As TeXpresso does, this asks kpsewhich on its PATH for the TeX Live tree before typesetting.
+        let texpresso = r#"#!/bin/sh
+echo '["live",4]'
+kpsewhich --all -engine=xetex ls-R || exit
+while read -r _; do :; done
+"#;
+        program(&library.path("texpresso/texpresso"), texpresso);
+        let (tex, texpresso) = (library.path("tex/bin"), library.path("texpresso"));
+        app_settings(library, json!({ "texDir": tex, "texpressoDir": texpresso }));
+    })
+    .await;
+    rig.forget();
+    rig.call("StartLive", json!({}));
+    let typeset_or_stopped = |e: &Value| {
+        let event = &e["value"]["event"];
+        let section = &event["value"];
+        event["type"] == "livePage"
+            || section["type"] == "live" && section["value"]["phase"] == "stopped"
+    };
+    let first = rig.find(typeset_or_stopped)["value"]["event"].take();
+    assert_eq!(first["type"], "livePage", "{first}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn autosave_waits_while_text_is_composed() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");

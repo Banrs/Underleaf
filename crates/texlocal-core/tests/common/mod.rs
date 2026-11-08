@@ -402,7 +402,13 @@ impl Preview for Previewing {
         true
     }
 
-    fn start(&self, _: &Project, _: &str, sink: Sink) -> Result<Arc<dyn LiveRun>, CoreError> {
+    fn start(
+        &self,
+        _: &Project,
+        _: &str,
+        _: &str,
+        sink: Sink,
+    ) -> Result<Arc<dyn LiveRun>, CoreError> {
         *self.0.sink.lock().unwrap() = Some(sink);
         self.0.revision.store(0, Ordering::Relaxed);
         self.0.texts.lock().unwrap().clear();
