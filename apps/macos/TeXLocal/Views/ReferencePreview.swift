@@ -51,7 +51,7 @@ struct ReferencePictureView: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func colorInverted(_ inverted: Bool) -> some View {
         // As the PDF view shows dark paper.
         if inverted { colorInvert().hueRotation(.degrees(180)) } else { self }
