@@ -33,6 +33,19 @@ func onScreen(_ view: NSView, size: NSSize = NSSize(width: 500, height: 600)) as
     return window
 }
 
+/// A project workspace in a laid-out 1400 by 800 window, with the workspace's toolbar when asked.
+func workspaceWindow(_ model: WindowModel, toolbar: Bool = false) -> (NSWindow, WorkspaceController) {
+    let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
+    let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
+                          styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentViewController = workspace
+    if toolbar { window.toolbar = workspace.toolbar.toolbar }
+    window.layoutIfNeeded()
+    return (window, workspace)
+}
+
 /// Draws as the key window would, which a test host can't become on its own.
 final class KeyWindow: NSWindow {
     override var isKeyWindow: Bool { true }

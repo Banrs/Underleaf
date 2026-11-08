@@ -54,7 +54,7 @@ struct PaneTests {
 
     @Test func tabbingOutOfFilesSkipsTheHiddenNavigatorsAndFindGivesUpTheKeyboardAsItHides() throws {
         let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
+        let (window, workspace) = workspaceWindow(defaults.window())
         defer { workspace.close(); window.close() }
         window.autorecalculatesKeyViewLoop = true
         let project = workspace.project
@@ -86,7 +86,7 @@ struct PaneTests {
 
     @Test func aFilterToggleFillsWithTheAccentColourWhileOnAndTheFiltersSymbolStaysItselfWhenPressed() throws {
         let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
+        let (window, workspace) = workspaceWindow(defaults.window())
         defer { workspace.close(); window.close() }
         let bar = try #require(workspace.splitViewItems[0].bottomAlignedAccessoryViewControllers.first?.view as? NavigatorFilterBar)
         bar.layoutSubtreeIfNeeded()
@@ -105,7 +105,7 @@ struct PaneTests {
     @Test func theStandardActionsCollapseAndRestoreTheSidebarAndTheInspectorFromAnywhereInTheWindow() async throws {
         let defaults = TestDefaults()
         let model = defaults.window()
-        let (window, workspace) = open(model)
+        let (window, workspace) = workspaceWindow(model)
         defer { workspace.close(); window.close() }
         let (sidebar, inspector) = (try #require(workspace.splitViewItems.first), try #require(workspace.splitViewItems.last))
         let editor = workspace.views.editor.textView
@@ -134,7 +134,7 @@ struct PaneTests {
 
     @Test func theBuildPanelShownIsWhatItsSplitItemSaysHoweverItCollapsesAndFocusLeavesIt() throws {
         let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
+        let (window, workspace) = workspaceWindow(defaults.window())
         defer { workspace.close(); window.close() }
         let area = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController)
         let panel = try #require(area.splitViewItems.last)
@@ -150,7 +150,7 @@ struct PaneTests {
 
     @Test func onlyTheStatusBarsTopEdgeDragsTheBuildPanelLeavingItsButtonsAndTheEditorTheirClicks() throws {
         let defaults = TestDefaults()
-        let (window, workspace) = open(defaults.window())
+        let (window, workspace) = workspaceWindow(defaults.window())
         defer { workspace.close(); window.close() }
         let split = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController).splitView
         let content = try #require(window.contentView)
@@ -169,7 +169,7 @@ struct PaneTests {
         let model = WindowModel(app: AppModel(core: .shared))
         #expect(model.app.savesLayout)
 
-        let (window, workspace) = open(model)
+        let (window, workspace) = workspaceWindow(model)
         #expect([workspace.splitView, workspace.columns.splitView].map(\.autosaveName) == ["Workspace 2", "Columns"])
         let (sidebar, inspector) = (try #require(workspace.splitViewItems.first), try #require(workspace.splitViewItems.last))
         (sidebar.isCollapsed, inspector.isCollapsed) = (true, false)
@@ -179,7 +179,7 @@ struct PaneTests {
         workspace.close()
         window.close()
 
-        let (again, restored) = open(model)
+        let (again, restored) = workspaceWindow(model)
         defer { restored.close(); again.close() }
         let (sidebarAgain, inspectorAgain) = (try #require(restored.splitViewItems.first), try #require(restored.splitViewItems.last))
         #expect(sidebarAgain.isCollapsed && !inspectorAgain.isCollapsed && forms(in: inspectorAgain) > 0)
@@ -195,17 +195,6 @@ struct PaneTests {
         #expect(controller.supplementalTarget(forAction: Self.toggleInspector, sender: nil) as? WorkspaceController === workspace)
         #expect(controller.supplementalTarget(forAction: Self.toggleSidebar, sender: nil) == nil)
         #expect(controller.undoManager != nil && controller.undoManager === window.undoManager)
-    }
-
-    private func open(_ model: WindowModel) -> (NSWindow, WorkspaceController) {
-        let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
-        let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
-                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentViewController = workspace
-        window.layoutIfNeeded()
-        return (window, workspace)
     }
 
     private func forms(in item: NSSplitViewItem) -> Int {
