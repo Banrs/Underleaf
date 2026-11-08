@@ -371,6 +371,36 @@ fn maths_renders_as_svg_or_nothing() {
     for tex in ["\\text{中}", "😀", "x + \\text{Ω😀}"] {
         assert_eq!(drawn(tex), Value::Null, "{tex}");
     }
+    let sane = |tex: &str| {
+        let svg = drawn(tex);
+        let (width, height) = (svg["width"].as_f64()?, svg["height"].as_f64()?);
+        let sane = |v: f64| v > 0.0 && v < 1000.0;
+        assert!(sane(width) && sane(height), "{tex}: {width} by {height}");
+        Some(())
+    };
+    for tex in [
+        "\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}",
+        "\\begin{cases} 1 & x > 0 \\\\ 0 & \\text{otherwise} \\end{cases}",
+        "\\begin{gathered} a + b \\\\ c \\end{gathered}",
+    ] {
+        assert!(sane(tex).is_some(), "{tex}");
+    }
+    let text = "\\newcommand{\\pair}[2][0]{(#1, #2)} \\newcommand{\\R}{\\mathbb{R}} $\\pair{x} + \\pair[y]{z} \\in \\R$";
+    let facts = Arc::new(Facts::read(text, file_kind("main.tex")));
+    let names = vec!["main.tex".to_owned()];
+    let symbols = Scan::new(
+        [("main.tex".to_owned(), facts)].into(),
+        names,
+        Arc::default(),
+    )
+    .symbols;
+    let mut doc = SourceDocument::named(text, "main.tex");
+    doc.set_symbols(symbols);
+    let caret = text.find("+ ").unwrap();
+    let math = run(&mut doc, "MathAt", json!({ "caret": caret }));
+    let tex = math["tex"].as_str().unwrap();
+    assert!(tex.contains("\\texlocal@optional"), "{tex}");
+    assert!(sane(tex).is_some(), "{tex}");
 }
 
 #[test]
