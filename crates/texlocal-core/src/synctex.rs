@@ -100,12 +100,15 @@ pub(crate) fn forward(
     Ok(first)
 }
 
-/// Finds where lines of a file were typeset, as one box on the page they start on, reading the SyncTeX file and
-/// matching its inputs to the project's files once for every lookup.
+/// Where lines were typeset on one page, as one box, and how far they run past the width TeX set them to, in points.
+pub(crate) type PageArea = (ForwardLoc, f64);
+
+/// Finds where lines of a file were typeset, as one box on each page they're on from the first, reading the SyncTeX
+/// file and matching its inputs to the project's files once for every lookup.
 pub(crate) fn areas(
     project: &Project,
     live: Option<&Path>,
-) -> Result<impl Fn(&str, RangeInclusive<u32>) -> Option<ForwardLoc> + use<>, CoreError> {
+) -> Result<impl Fn(&str, RangeInclusive<u32>) -> Vec<PageArea> + use<>, CoreError> {
     let sync = sync_for(project, live)?;
     let mut tags = HashMap::new();
     for (tag, name) in sync.inputs() {
@@ -114,8 +117,14 @@ pub(crate) fn areas(
         }
     }
     Ok(move |file: &str, lines| {
-        let shown = sync.area(*tags.get(file)?, lines)?;
-        (shown.page >= 1).then(|| located(shown))
+        let Some(&tag) = tags.get(file) else {
+            return Vec::new();
+        };
+        let areas = sync.areas(tag, lines).into_iter();
+        let shown = areas.filter(|(shown, _)| shown.page >= 1);
+        shown
+            .map(|(shown, over)| (located(shown), f64::from(over)))
+            .collect()
     })
 }
 

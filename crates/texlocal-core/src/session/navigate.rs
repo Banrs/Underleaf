@@ -18,7 +18,7 @@ use super::Pending;
 use super::actor::Actor;
 use super::live::{document_lines, typeset_lines};
 use super::watch::Tree;
-use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
+use crate::synctex::{self, ForwardLoc, InverseLoc, PageArea, PageClick};
 use crate::{CoreError, lf, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
@@ -48,7 +48,10 @@ pub(crate) struct BadBoxArea {
     // How far an overfull box runs past the text, in points; none for an underfull one.
     too_wide: Option<f64>,
     message: String,
+    // Where the box is typeset on one of the pages it's on.
     area: ForwardLoc,
+    // How far the lines in the area run past the width TeX set them to, in points.
+    overrun: f64,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -196,8 +199,8 @@ impl Actor {
                         let typeset = |line| map_line(typeset, &text, line);
                         lines = typeset(*lines.start())..=typeset(*lines.end());
                     }
-                    let area = synctex::areas(&project, live.as_deref()).ok()?;
-                    area(file, lines)
+                    let areas = synctex::areas(&project, live.as_deref()).ok()?;
+                    areas(file, lines).into_iter().next().map(|(area, _)| area)
                 }),
                 _ => None,
             };
@@ -265,30 +268,41 @@ impl Actor {
         });
     }
 
-    /// Where the last build's bad boxes are in its PDF; none while Live Preview's is shown, which has its own lines.
+    /// Where the last build's bad boxes are in its PDF; none while Live Preview's is shown, which has its own lines. A
+    /// paragraph can run over pages: an underfull box is marked on each, an overfull one on those where a line runs past
+    /// its width, when SyncTeX shows one does.
     pub fn bad_box_areas(&self, reply: Pending<Vec<BadBoxArea>>) {
         if !matches!(self.live.pdf(&self.core), Ok(None)) {
             return reply.send(Ok(Vec::new()));
         }
         let (boxes, project) = (self.builds.bad_boxes().to_vec(), self.core.project.clone());
         tokio::task::spawn_blocking(move || {
-            let Ok(area) = synctex::areas(&project, None) else {
+            let Ok(areas) = synctex::areas(&project, None) else {
                 return reply.send(Ok(Vec::new()));
             };
-            let areas = boxes.into_iter().filter_map(|item| {
-                let (file, line) = (item.file?, item.line?);
-                let bad = bad_box(&item.message.text)?;
-                let area = area(&file, bad.lines)?;
-                let (too_wide, message) = (bad.too_wide, item.message.text);
-                Some(BadBoxArea {
-                    file,
+            let mut found = Vec::new();
+            for item in boxes {
+                let (Some(file), Some(line)) = (item.file, item.line) else {
+                    continue;
+                };
+                let Some(bad) = bad_box(&item.message.text) else {
+                    continue;
+                };
+                let mut pages = areas(&file, bad.lines);
+                let runs_over = |&(_, overrun): &PageArea| overrun > 0.5;
+                if bad.too_wide.is_some() && pages.iter().any(runs_over) {
+                    pages.retain(runs_over);
+                }
+                found.extend(pages.into_iter().map(|(area, overrun)| BadBoxArea {
+                    file: file.clone(),
                     line,
-                    too_wide,
-                    message,
+                    too_wide: bad.too_wide,
+                    message: item.message.text.clone(),
                     area,
-                })
-            });
-            reply.send(Ok(areas.collect()));
+                    overrun,
+                }));
+            }
+            reply.send(Ok(found));
         });
     }
 

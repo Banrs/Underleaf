@@ -40,7 +40,7 @@ final class BadBoxMark: NSView {
 
     /// Where the bars go on `page`, in its coordinates: beside each line in the box's area whose text runs past the margin,
     /// or beside the whole area when no line does, as for an underfull box or an overfull one of no text. The area reaches
-    /// as far as the overfull line runs, which the log says is past the margin by `tooWide`.
+    /// as far as its lines run, `overrun` past the margin.
     static func rects(for badBox: BadBoxArea, on page: PDFPage) -> [CGRect] {
         let bounds = page.bounds(for: SyncPDFView.box), loc = badBox.area
         guard let h = loc.h, let v = loc.v, let width = loc.width, let height = loc.height else { return [] }
@@ -50,8 +50,8 @@ final class BadBoxMark: NSView {
             let height = max(rect.height, 8)
             return CGRect(x: rect.maxX + 2, y: rect.midY - height / 2, width: 3, height: height)
         }
-        guard let tooWide = badBox.tooWide else { return [beside(area)] }
-        let margin = area.maxX - tooWide
+        guard badBox.tooWide != nil else { return [beside(area)] }
+        let margin = area.maxX - badBox.overrun
         let probe = CGRect(x: area.minX, y: area.minY, width: bounds.maxX - area.minX, height: area.height)
         let lines = (page.selection(for: probe)?.selectionsByLine() ?? []).map { $0.bounds(for: page) }
         let over = lines.filter { $0.maxX > margin + 0.5 && area.minY...area.maxY ~= $0.midY }

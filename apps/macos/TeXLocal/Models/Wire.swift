@@ -75,6 +75,7 @@ nonisolated struct BadBoxArea: Decodable, Hashable, Sendable {
     var tooWide: Double?
     var message: String
     var area: ForwardLoc
+    var overrun: Double
 }
 
 nonisolated struct BadBoxAreas: SessionRequest {

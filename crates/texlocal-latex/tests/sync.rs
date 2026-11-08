@@ -260,6 +260,24 @@ fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
 }
 
 #[test]
+fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its_line_does() {
+    // The log: Overfull \hbox (55.00122pt too wide) in paragraph at lines 5--14, the line on page 2.
+    let synctex = SyncTex::read(include_bytes!("fixtures/overfull.synctex").to_vec()).unwrap();
+    let areas = synctex.areas(1, 5..=14);
+    let pages: Vec<(i32, f32)> = areas
+        .iter()
+        .map(|(area, over)| (area.page, *over))
+        .collect();
+    assert!(
+        matches!(pages[..], [(1, first), (2, second)] if first < 0.5 && (second - 55.0).abs() < 1.0),
+        "{areas:?}"
+    );
+    let width = |page: usize| areas[page].0.width;
+    assert!((width(1) - width(0) - pages[1].1).abs() < 0.5, "{areas:?}");
+    assert_eq!(synctex.area(1, 5..=14).unwrap().page, 1);
+}
+
+#[test]
 fn a_labels_area_holds_what_it_names_and_not_its_neighbours() {
     let synctex = SyncTex::read(include_bytes!("fixtures/labels.synctex").to_vec()).unwrap();
     let text = include_str!("fixtures/labels.tex");
