@@ -67,7 +67,7 @@ final class HoverHelp {
     private var resting: Task<Void, Never>?
     private var monitor: Any?
     /// The key the pointer rests on, in the text view's coordinates.
-    private(set) var anchor: (range: NSRange, rect: NSRect)?
+    private var anchor: (range: NSRange, rect: NSRect)?
 
     init(for text: SourceTextView) {
         self.text = text
@@ -75,8 +75,6 @@ final class HoverHelp {
     }
 
     isolated deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
-
-    var isShown: Bool { popover.isShown }
 
     func moved(to point: NSPoint) {
         if let anchor, anchor.rect.contains(point) { return }
