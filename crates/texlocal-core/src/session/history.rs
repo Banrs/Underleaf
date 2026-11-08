@@ -3,7 +3,6 @@ use std::io::ErrorKind;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use texlocal_latex::diff::{DiffLine, compare, edit_to};
@@ -19,11 +18,6 @@ use crate::{CoreError, lf, lossy_string};
 pub(super) type Then<T> =
     Box<dyn FnOnce(&mut Actor, Option<String>) -> Result<T, CoreError> + Send>;
 
-fn now() -> i64 {
-    let since = SystemTime::now().duration_since(UNIX_EPOCH);
-    since.map_or(0, |since| since.as_millis() as i64)
-}
-
 impl Core {
     fn off_thread<T: 'static>(
         &self,
@@ -37,10 +31,7 @@ impl Core {
 
     pub fn snapshot_soon(&self) {
         let project = self.project.clone();
-        self.off_thread(
-            move |history| history.take(&project, now(), Taken::Auto),
-            drop,
-        );
+        self.off_thread(move |history| history.take(&project, Taken::Auto), drop);
     }
 
     pub fn stop_history(&self) {
@@ -76,7 +67,7 @@ impl Actor {
         }
         let project = self.core.project.clone();
         let save = move |history: &History| {
-            history.take(&project, now(), Taken::Named(name))?;
+            history.take(&project, Taken::Named(name))?;
             Ok(history.list()?.into_iter().next())
         };
         self.then_on_actor(save, |_, saved| Ok(saved), reply);
@@ -152,7 +143,7 @@ impl Actor {
         };
         let project = self.core.project.clone();
         let take = move |history: &History| {
-            let id = history.take(&project, now(), Taken::Before(reason))?;
+            let id = history.take(&project, Taken::Before(reason))?;
             Ok(id.map(|id| id.to_string()))
         };
         self.then_on_actor(take, then, reply);
@@ -175,7 +166,7 @@ impl Actor {
                     .is_none_or(|paths| paths.iter().any(|p| p.0 == path))
             };
             let files = history.files(&id, chosen)?;
-            let snapshot = history.take(&project, now(), Taken::Before(Reason::Restore))?;
+            let snapshot = history.take(&project, Taken::Before(Reason::Restore))?;
             Ok((files, snapshot.map(|id| id.to_string())))
         };
         let put_back = |actor: &mut Self, (files, snapshot): (Vec<(String, Vec<u8>)>, _)| {
