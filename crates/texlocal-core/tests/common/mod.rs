@@ -259,25 +259,35 @@ impl Rig {
 
     #[track_caller]
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        let event = |e: &Value| {
-            let event = &e["value"]["event"];
-            e["type"] == "event" && event["type"] == kind && matching(&event["value"])
-        };
-        self.find(event)["value"]["event"]["value"].take()
+        self.event_matching(None, kind, matching)
     }
 
     #[track_caller]
     pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
-        self.event("section", section)["value"].take()
+        self.section_matching(None, kind, matching)
     }
 
     #[track_caller]
     pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        self.event_matching(Some(session), kind, matching)
+    }
+
+    #[track_caller]
+    pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        self.section_matching(Some(session), kind, matching)
+    }
+
+    #[track_caller]
+    fn event_matching(
+        &self,
+        session: Option<u64>,
+        kind: &str,
+        matching: impl Fn(&Value) -> bool,
+    ) -> Value {
         let event = |e: &Value| {
             let event = &e["value"]["event"];
             e["type"] == "event"
-                && e["value"]["session"] == session
+                && session.is_none_or(|session| e["value"]["session"] == session)
                 && event["type"] == kind
                 && matching(&event["value"])
         };
@@ -285,9 +295,14 @@ impl Rig {
     }
 
     #[track_caller]
-    pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+    fn section_matching(
+        &self,
+        session: Option<u64>,
+        kind: &str,
+        matching: impl Fn(&Value) -> bool,
+    ) -> Value {
         let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
-        self.event_in(session, "section", section)["value"].take()
+        self.event_matching(session, "section", section)["value"].take()
     }
 
     #[track_caller]
