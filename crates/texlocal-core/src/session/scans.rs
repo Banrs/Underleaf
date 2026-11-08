@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -10,6 +12,7 @@ use texlocal_latex::{file_kind, is_source};
 use super::actor::Actor;
 use super::{Document, Pending};
 use crate::projects::{self, SearchGroup};
+use crate::{lf, lossy_string, paths};
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Usages {
@@ -81,4 +84,18 @@ pub(super) fn texts(docs: &HashMap<String, Document>) -> HashMap<String, String>
         .iter()
         .map(|(path, doc)| (path.clone(), doc.snapshot().0));
     texts.collect()
+}
+
+/// A file's text as the session sees it: the open document's, else the file on disk with its line endings made LF.
+pub(super) fn current_text(
+    docs: &HashMap<String, Document>,
+    root: &Path,
+    rel: &str,
+) -> Option<String> {
+    match docs.get(rel) {
+        Some(doc) => Some(doc.snapshot().0),
+        None => fs::read(paths::safe_path(root, rel).ok()?)
+            .ok()
+            .map(|bytes| lf(lossy_string(bytes))),
+    }
 }

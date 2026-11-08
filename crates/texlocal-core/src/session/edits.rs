@@ -1,4 +1,3 @@
-use std::fs;
 use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
@@ -15,11 +14,11 @@ use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::history::Then;
-use super::scans::usages_in;
+use super::scans::{current_text, usages_in};
 use crate::messages;
 use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
-use crate::{CoreError, lf, lossy_string, packages, paths};
+use crate::{CoreError, packages, paths};
 
 type Said = fn(&str) -> Message;
 
@@ -213,12 +212,7 @@ impl Actor {
             bibs.extend(own.into_iter().take(1).cloned());
         }
         let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
-        let text = |rel: &str| match docs.get(rel) {
-            Some(doc) => Some(doc.snapshot().0),
-            None => fs::read(paths::safe_path(&root, rel).ok()?)
-                .ok()
-                .map(|bytes| lf(lossy_string(bytes))),
-        };
+        let text = |rel: &str| current_text(&docs, &root, rel);
         for bib in &bibs {
             let had = text(bib).and_then(|text| {
                 cite::find_entry(&text, tidied.doi.as_deref(), tidied.eprint.as_deref())

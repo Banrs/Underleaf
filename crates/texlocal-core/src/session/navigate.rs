@@ -17,9 +17,10 @@ use texlocal_latex::{bib, project};
 use super::Pending;
 use super::actor::Actor;
 use super::live::{document_lines, typeset_lines};
+use super::scans::current_text;
 use super::watch::Tree;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageArea, PageClick};
-use crate::{CoreError, lf, lossy_string, messages, paths, settings};
+use crate::{CoreError, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
 
@@ -154,16 +155,7 @@ impl Actor {
             let Some((kind, name, defined)) = found else {
                 return reply.send(Ok(None));
             };
-            let text = |file: &str| {
-                let open = docs.get(file).cloned();
-                match open {
-                    Some(doc) => Some(doc.snapshot().0),
-                    None => {
-                        let abs = paths::safe_path(root, file).ok()?;
-                        fs::read(abs).ok().map(|bytes| lf(lossy_string(bytes)))
-                    }
-                }
-            };
+            let text = |file: &str| current_text(&docs, root, file);
             let detail = match (kind, &defined) {
                 (SymbolKind::Citation, Some((file, _))) => {
                     let entry = text(file).and_then(|text| bib::entry(&text, &name));
