@@ -198,9 +198,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private func menu(_ id: NSToolbarItem.Identifier, _ content: some View) -> NSMenu {
         NSHostingMenu(rootView: ToolbarMenuItems(isEnabled: { [project] in
-            project.isOpen && (![.format, .math, .insert].contains(id) || project.sourceToolsEnabled)
+            Self.sourceTools.contains(id) ? project.sourceToolsEnabled : project.isOpen
         }) { content })
     }
+
+    private static let sourceTools: Set<NSToolbarItem.Identifier> = [.format, .math, .insert]
 
     private nonisolated struct State: Equatable {
         let sourceTools, hasPDF, canShare, compiling, canCompile, open: Bool
@@ -211,8 +213,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     private var state: State {
         State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, canShare: project.buildPDF != nil, compiling: project.compiling,
-              canCompile: project.compiling || window.app.isEnabled(.compileRun, on: project), open: project.isOpen, layout: window.layout,
-              zoomLabel: pdf.zoomLabel, canZoomIn: pdf.canZoomIn, canZoomOut: pdf.canZoomOut,
+              canCompile: window.app.isEnabled(project.compiling ? .compileStop : .compileRun, on: project), open: project.isOpen,
+              layout: window.layout, zoomLabel: pdf.zoomLabel,
+              canZoomIn: window.app.isEnabled(.viewZoomIn, on: project), canZoomOut: window.app.isEnabled(.viewZoomOut, on: project),
               canGoBack: window.app.isEnabled(.goBack, on: project), canGoForward: window.app.isEnabled(.goForward, on: project))
     }
 
@@ -261,11 +264,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             update(item, \.isEnabled, state.open)
             guard let group = item as? NSToolbarItemGroup else { return }
             for (subitem, enabled) in zip(group.subitems, [state.canGoBack, state.canGoForward]) {
-                update(subitem, \.isEnabled, state.open && enabled)
+                update(subitem, \.isEnabled, enabled)
             }
-        case .format, .math, .insert:
+        case let id where Self.sourceTools.contains(id):
             update(item, \.isHidden, state.layout == .pdf)
-            update(item, \.isEnabled, state.open && state.sourceTools)
+            update(item, \.isEnabled, state.sourceTools)
         case .pdfSeparator:
             update(item, \.isHidden, state.layout != .split)
         case .zoom:
@@ -285,10 +288,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             update(item, \.label, title)
             update(item.menuFormRepresentation, \.title, title)
             update(item, \.style, state.compiling ? .plain : .prominent)
-            update(item, \.isEnabled, state.open && state.canCompile)
+            update(item, \.isEnabled, state.canCompile)
             update(item, \.visibilityPriority, compilePriority)
             guard item.view === compileButton else { return }
-            update(compileButton, \.isEnabled, state.open && state.canCompile)
+            update(compileButton, \.isEnabled, state.canCompile)
             update(compileButton, \.toolTip, compactCompile ? state.compiling ? "Stop the build" : "Compile the project" : nil)
             compileButton.show(compiling: state.compiling, compact: compactCompile)
         case .layout:
@@ -302,9 +305,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(compile): project.isOpen && state.canCompile
-        case #selector(goBack): project.isOpen && state.canGoBack
-        case #selector(goForward): project.isOpen && state.canGoForward
+        case #selector(compile): state.canCompile
+        case #selector(goBack): state.canGoBack
+        case #selector(goForward): state.canGoForward
         default: project.isOpen
         }
     }

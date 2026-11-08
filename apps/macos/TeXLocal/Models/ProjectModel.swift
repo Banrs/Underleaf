@@ -134,7 +134,7 @@ final class ProjectModel {
         navigator.shown = shown
         window?.controller?.revealSidebar()
     }
-    var sourceToolsEnabled: Bool { isLaTeX && window?.showSource == true }
+    var sourceToolsEnabled: Bool { isOpen && isLaTeX && window?.showSource == true }
 
     var headingCommand: String { outline.first { isOpenFile($0.file) && $0.line == cursorLine }?.command ?? "" }
 
