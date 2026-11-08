@@ -206,7 +206,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
 }
 
 /// A file the guess may pick: one the file tree lists and the settings would accept as main file.
-fn main_candidate(rel: &str) -> bool {
+pub(crate) fn main_candidate(rel: &str) -> bool {
     file_kind(rel) == FileKind::Tex && listed(rel) && safe_rel_file(rel).is_ok()
 }
 

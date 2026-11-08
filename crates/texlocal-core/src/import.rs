@@ -278,7 +278,7 @@ pub(crate) fn guessed_settings(
     root: &Path,
     chosen: Option<&str>,
 ) -> Result<SettingsPatch, CoreError> {
-    let chosen = chosen.filter(|main| !main.starts_with('-'));
+    let chosen = chosen.filter(|main| projects::main_candidate(main));
     let (named_root, program) = chosen
         .map(|chosen| magic_comments(&root.join(chosen)))
         .unwrap_or_default();

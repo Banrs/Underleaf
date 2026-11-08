@@ -23,7 +23,7 @@ pub use library::{
     ProjectInfo, create_project, free_project_name, list_projects, put_back_project,
     rename_project, trash_project,
 };
-pub(crate) use library::{guess_main_file, new_project, real_path};
+pub(crate) use library::{guess_main_file, main_candidate, new_project, real_path};
 pub use opened::{Opening, forget_folder, open_path};
 pub(crate) use opened::{STORE as OPENED_DIR, find as find_opened, is_opened};
 pub(crate) use search::replace_in_files;
