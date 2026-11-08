@@ -9,8 +9,7 @@ use texlocal_latex::{FileKind, file_kind};
 
 use super::skip_unreadable;
 use crate::error::CoreError;
-use crate::messages;
-use crate::paths::{Project, identity, same_folded};
+use crate::paths::{Project, identity, same_folded, utf8_name};
 use crate::settings::read_settings;
 
 #[derive(Serialize, JsonSchema)]
@@ -62,13 +61,10 @@ fn entries(
             continue;
         };
         let path = entry.path();
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            if whole {
-                return Err(CoreError::bad_request(messages::not_utf8_name(
-                    path.display(),
-                )));
-            }
-            continue;
+        let name = match utf8_name(&path) {
+            Ok(name) => name.to_owned(),
+            Err(err) if whole => return Err(err),
+            Err(_) => continue,
         };
         // What `relative` would make of the path, without walking the root's components for every entry.
         let rel = folder.map_or_else(|| name.clone(), |f| format!("{}/{name}", f.rel));
