@@ -5,8 +5,9 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
+use notify::RecursiveMode::{NonRecursive, Recursive};
 use notify::event::ModifyKind;
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{EventKind, RecommendedWatcher, Watcher};
 use texlocal_latex::logparse::LogItem;
 use texlocal_latex::project::{self, Analysis, Scan};
 use tokio::sync::mpsc;
@@ -194,11 +195,7 @@ impl Watching {
             if self.paths.remove(path).is_some() {
                 let _ = self.watcher.unwatch(path);
             }
-            let mode = if *recursive {
-                RecursiveMode::Recursive
-            } else {
-                RecursiveMode::NonRecursive
-            };
+            let mode = if *recursive { Recursive } else { NonRecursive };
             if self.watcher.watch(path, mode).is_ok() {
                 self.paths.insert(path.clone(), *recursive);
             }
