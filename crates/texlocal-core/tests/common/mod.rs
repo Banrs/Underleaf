@@ -133,9 +133,10 @@ impl Rig {
     pub async fn previewing(
         files: &[(&str, &str)],
         prepare: impl FnOnce(&Library),
-        preview: Arc<FakePreview>,
-    ) -> Self {
-        Self::start(files, prepare, Some(preview)).await
+    ) -> (Self, Arc<FakePreview>) {
+        let preview = Arc::new(FakePreview::default());
+        let rig = Self::start(files, prepare, Some(Arc::clone(&preview))).await;
+        (rig, preview)
     }
 
     async fn start(
@@ -186,6 +187,11 @@ impl Rig {
 
     pub fn root(&self) -> PathBuf {
         self.library.project_root(&self.id)
+    }
+
+    #[track_caller]
+    pub fn read(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.root().join(rel)).unwrap()
     }
 
     #[track_caller]
