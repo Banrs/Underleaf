@@ -283,8 +283,13 @@ fn rust_functions(lib: &str) -> BTreeMap<String, Signature> {
 }
 
 fn c_functions(header: &str) -> BTreeMap<String, Signature> {
-    let code: Vec<&str> = header
+    let mut parts = header.split("/*");
+    let first = parts.next().unwrap_or_default();
+    let after = parts.map(|part| part.split_once("*/").unwrap().1);
+    let uncommented: String = std::iter::once(first).chain(after).collect();
+    let code: Vec<&str> = uncommented
         .lines()
+        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
         .filter(|line| !line.starts_with('#'))
         .collect();
     let code = words(&code.join(" ").replace("_Nullable", "").replace('*', " * "));
