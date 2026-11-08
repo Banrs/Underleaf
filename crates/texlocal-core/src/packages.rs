@@ -23,6 +23,7 @@ const AS_ADMINISTRATOR: &str = r#"on run {tlmgr, package}
 do shell script quoted form of tlmgr & " install " & quoted form of package with prompt "TeXLocal wants to install the TeX package “" & package & "”." with administrator privileges
 end run"#;
 const ADMIN_CANCELLED: &str = "(-128)";
+const SAID: usize = 2000;
 
 pub(crate) async fn install_package(
     processes: &Processes,
@@ -45,9 +46,9 @@ pub(crate) async fn install_package(
         .ok_or_else(|| CoreError::not_found(messages::no_package_has(file)))?;
     let mut installed = run_tlmgr(&["install", &package]).await?;
     if installed.0 != 0 && installed.1.contains(NOT_WRITABLE) {
-        let (as_administrator, cancelled) = install_as_administrator(&tlmgr, &package, path_env);
+        let as_administrator = install_as_administrator(&tlmgr, &package, path_env);
         installed = run(processes, Some(owner), as_administrator).await?;
-        if installed.1.contains(cancelled) {
+        if installed.1.contains(ADMIN_CANCELLED) {
             let message = messages::install_cancelled(&package);
             return Err(CoreError::new(crate::ErrorKind::Denied, message));
         }
@@ -56,17 +57,13 @@ pub(crate) async fn install_package(
     Ok(package)
 }
 
-fn install_as_administrator(
-    tlmgr: &Path,
-    package: &str,
-    path_env: &str,
-) -> (Command, &'static str) {
+fn install_as_administrator(tlmgr: &Path, package: &str, path_env: &str) -> Command {
     let mut command = process::tool(Path::new("/usr/bin/osascript"), path_env);
     command
         .args(["-e", AS_ADMINISTRATOR])
         .arg(tlmgr)
         .arg(package);
-    (command, ADMIN_CANCELLED)
+    command
 }
 
 fn holder(found: &str, slashed: &str) -> Option<String> {
@@ -104,9 +101,13 @@ pub(crate) fn checked((code, out): (i32, String)) -> Result<String, CoreError> {
     } else if UNREACHABLE.is_match(&out) {
         Err(CoreError::unavailable(messages::repository_unreachable()))
     } else {
-        let said = crate::tail(out.trim(), 2000);
-        Err(CoreError::internal(messages::tlmgr_failed(said)))
+        Err(CoreError::internal(messages::tlmgr_failed(said(&out))))
     }
+}
+
+/// The end of a tool's output, as much of it as a message to the user carries.
+pub(crate) fn said(out: &str) -> &str {
+    crate::tail(out.trim(), SAID)
 }
 
 fn no_tlmgr(path_env: &str) -> CoreError {
