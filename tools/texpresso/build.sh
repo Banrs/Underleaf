@@ -17,5 +17,5 @@ ICU=$(brew list --formula | grep -E '^icu4c(@[0-9]+)?$' | sort -V | tail -1)
 # Upstream's objects don't track header or Homebrew ABI changes (for example ICU 78 to 79).
 make clean
 make -j4 all BREW_ICU4C="$(brew --prefix "$ICU")" "$@"
-(cd "$HERE" && find underleaf-pdf.patch src -type f | LC_ALL=C sort | xargs shasum -a 256) > build/sources.sha256
+sh "$HERE/sources.sh" > build/sources.sha256
 echo "Built $DEST/build/texpresso."
