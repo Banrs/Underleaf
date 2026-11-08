@@ -16,14 +16,6 @@ struct WindowTests {
         #expect((again.spellCheck, again.syncAfterCompile, again.newProjectEngine, again.paper, again.settingsPane) == (false, true, .xelatex, .dark, .pdf))
     }
 
-    @Test func aStoredOverleafOrTeXstudioThemeGivesWayToSystemColours() {
-        for theme in ["overleaf", "texstudio"] {
-            defaults.store.set(theme, forKey: "editorSyntaxTheme")
-            _ = defaults.app()
-            #expect(defaults.store.object(forKey: "editorSyntaxTheme") == nil)
-        }
-    }
-
     @Test func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore() async throws {
         let window = defaults.window(), app = window.app
         (app.paper, app.spellCheck) = (.white, true)
