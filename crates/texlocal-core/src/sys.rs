@@ -4,6 +4,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use objc2_foundation::{NSFileManager, NSURL};
 use tokio::process::{Child, Command};
@@ -25,6 +26,29 @@ pub(crate) fn latexmkrc(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBu
 
 pub(crate) fn private(builder: &mut tempfile::Builder) {
     builder.permissions(Permissions::from_mode(0o700));
+}
+
+// A new file's usual mode, narrowed by the umask, where tempfile would make it private.
+pub(crate) fn ordinary(builder: &mut tempfile::Builder) {
+    builder.permissions(Permissions::from_mode(0o666));
+}
+
+pub(crate) fn is_executable(meta: &Metadata) -> bool {
+    meta.mode() & 0o111 != 0
+}
+
+pub(crate) fn local_time(time: SystemTime) -> Option<(u16, u8, u8, u8, u8, u8)> {
+    let secs = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let secs = libc::time_t::try_from(secs).ok()?;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&raw const secs, &raw mut tm) }.is_null() {
+        return None;
+    }
+    let field = |value: libc::c_int| u8::try_from(value).ok();
+    let year = u16::try_from(tm.tm_year + 1900).ok()?;
+    let (month, day) = (field(tm.tm_mon + 1)?, field(tm.tm_mday)?);
+    let (hour, minute, second) = (field(tm.tm_hour)?, field(tm.tm_min)?, field(tm.tm_sec)?);
+    Some((year, month, day, hour, minute, second))
 }
 
 pub(crate) fn identity(meta: &Metadata) -> (u64, u64) {

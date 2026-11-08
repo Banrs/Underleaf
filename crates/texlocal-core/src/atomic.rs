@@ -1,6 +1,5 @@
-use std::fs::{self, File, Permissions};
+use std::fs::{self, File};
 use std::io::{self, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use tempfile::TempPath;
@@ -21,7 +20,7 @@ pub(crate) fn temp_builder() -> tempfile::Builder<'static, 'static> {
 
 pub(crate) fn create_temp(dir: &Path) -> io::Result<(File, TempPath)> {
     let mut builder = temp_builder();
-    builder.permissions(Permissions::from_mode(0o666));
+    sys::ordinary(&mut builder);
     Ok(builder.tempfile_in(dir)?.into_parts())
 }
 

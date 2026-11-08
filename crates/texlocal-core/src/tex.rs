@@ -1,5 +1,4 @@
 use std::ffi::OsStr;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -12,7 +11,7 @@ use texlocal_latex::syntax::Installed;
 use crate::process::{self, Processes};
 use crate::settings::AppSettings;
 use crate::stamp::Kept;
-use crate::tinytex;
+use crate::{sys, tinytex};
 
 const TEX_DIRS: [&str; 3] = ["/Library/TeX/texbin", "/usr/local/bin", "/opt/homebrew/bin"];
 const TEXLIVE: &str = "/usr/local/texlive";
@@ -66,7 +65,7 @@ fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
 
 fn executable(dir: &Path, name: &str) -> Option<PathBuf> {
     let runs = |path: &PathBuf| {
-        std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+        std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && sys::is_executable(&meta))
     };
     Some(dir.join(name)).filter(runs)
 }
