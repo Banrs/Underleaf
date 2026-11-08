@@ -239,9 +239,6 @@
 					"@loader_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalTests;
-				SDKROOT = macosx;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal";
 			};
 			name = Release;
@@ -259,9 +256,6 @@
 					"@loader_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.texlocal.TeXLocalTests;
-				SDKROOT = macosx;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TeXLocal.app/Contents/MacOS/TeXLocal";
 			};
 			name = Debug;
@@ -323,6 +317,8 @@
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -379,7 +375,9 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -413,9 +411,6 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(TEXLOCAL_APP_IDENTIFIER)";
 				PRODUCT_NAME = TeXLocal;
-				SDKROOT = macosx;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 			};
 			name = Release;
 		};
@@ -445,9 +440,6 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(TEXLOCAL_APP_IDENTIFIER)";
 				PRODUCT_NAME = TeXLocal;
-				SDKROOT = macosx;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 			};
 			name = Debug;
 		};
