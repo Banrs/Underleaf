@@ -123,6 +123,7 @@ fn preview_tex(environment: Option<&str>, body: &str) -> String {
         None | Some("equation" | "multline") => return clean.to_string(),
         Some("cases") => "cases",
         Some("gather") => "gathered",
+        Some("alignat") => "alignedat",
         Some(_) => "aligned",
     };
     format!("\\begin{{{environment}}}{clean}\\end{{{environment}}}")

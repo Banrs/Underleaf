@@ -369,6 +369,11 @@ fn maths_renders_as_svg_or_nothing() {
     ] {
         assert!(sane(tex).is_some(), "{tex}");
     }
+    let mut doc = SourceDocument::new("\\begin{alignat*}{2} a &= b & c &= d \\end{alignat*}");
+    let math = run(&mut doc, "MathAt", json!({ "caret": 22 }));
+    let tex = math["tex"].as_str().unwrap();
+    assert_eq!(tex, "\\begin{alignedat}{2} a &= b & c &= d\\end{alignedat}");
+    assert!(sane(tex).is_some(), "{tex}");
     let text = "\\newcommand{\\pair}[2][0]{(#1, #2)} \\newcommand{\\R}{\\mathbb{R}} $\\pair{x} + \\pair[y]{z} \\in \\R$";
     let symbols = scan(&[("main.tex", text)], Installed::default()).symbols;
     let mut doc = SourceDocument::named(text, "main.tex");
