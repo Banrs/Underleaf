@@ -400,7 +400,9 @@ final class ProjectModel {
 
     /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
     func addCitation(_ source: CitationSource) async throws {
-        guard let url = URL(string: source.url) else { throw AppFailure(String(localized: "“\(source.id)” isn’t a DOI or arXiv ID.")) }
+        guard let url = URL(string: source.url) else {
+            throw AppFailure(String(localized: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again."))
+        }
         let citing = openPath
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue(source.accept, forHTTPHeaderField: "Accept")
