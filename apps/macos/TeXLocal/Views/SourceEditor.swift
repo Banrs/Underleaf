@@ -42,8 +42,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        text.textContainerInset = NSSize(width: 0, height: 7)
-        text.fontSize = NSFont.systemFontSize
+        text.textContainerInset.height = 7
         text.allowsUndo = true
         text.isGrammarCheckingEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false

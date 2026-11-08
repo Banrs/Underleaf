@@ -30,7 +30,7 @@ private struct EditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView { editor.scrollView }
 
     func updateNSView(_ view: NSScrollView, context: Context) {
-        if editor.textView.fontSize != CGFloat(app.fontSize) { editor.textView.fontSize = CGFloat(app.fontSize) }
+        editor.textView.fontSize = CGFloat(app.fontSize)
         editor.textView.fontName = app.fontName
         editor.textView.showsLineNumbers = app.lineNumbers
         editor.textView.autoPair = app.autoPair
