@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::scan::{blank_line, closing_brace};
+use super::style::TextStyles;
 use super::{
     INDENT, Insertion, Line, NEWLINE, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
     comment_start, complete, edit, indentation, is, span, splice,
@@ -17,6 +18,8 @@ pub(crate) struct Change {
     pub(crate) edits: Vec<TextEdit>,
     pub(crate) selections: Vec<TextRange>,
 }
+
+type Styled = fn(TextStyles) -> Option<Vec<TextEdit>>;
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -301,34 +304,66 @@ impl SourceDocument {
 
     pub(crate) fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
         let (prefix, suffix) = template.split_once("$0").unwrap_or((template, ""));
-        let first = selections.first().copied().unwrap_or_default();
-        let (start, end) = clamp(first, self.text.len()).bounds();
-        let selected = String::from_utf16_lossy(&self.text.units[start..end]);
-        Change {
-            edits: vec![splice(
-                start,
-                end - start,
-                format!("{prefix}{selected}{suffix}"),
-            )],
-            selections: vec![span(start + utf16::len(prefix), end - start)],
-        }
+        let selections = clamped(selections, self.text.len());
+        let wrap = |selection: &TextRange| {
+            let (start, end) = selection.bounds();
+            let selected = String::from_utf16_lossy(&self.text.units[start..end]);
+            splice(start, end - start, format!("{prefix}{selected}{suffix}"))
+        };
+        let edits: Vec<TextEdit> = selections.iter().map(wrap).collect();
+        let selections = placed(&edits, &selections, |_| utf16::len(prefix));
+        Change { edits, selections }
     }
 
     pub(crate) fn toggle_style(&mut self, selections: &[TextRange], style: TextStyle) -> Change {
-        let styles = self.text_styles(selections.first().copied().unwrap_or_default());
-        let (unwrap, template) = match style {
-            TextStyle::Bold => (styles.bold, "\\textbf{$0}"),
-            TextStyle::Italic => (styles.italic, "\\textit{$0}"),
-            TextStyle::Underline => (styles.underline, "\\underline{$0}"),
+        let (styled, command): (Styled, _) = match style {
+            TextStyle::Bold => (|styles| styles.bold, "textbf"),
+            TextStyle::Italic => (|styles| styles.italic, "textit"),
+            TextStyle::Underline => (|styles| styles.underline, "underline"),
         };
-        match unwrap {
-            Some(edits) => Change {
-                selections: map_selections(&edits, selections),
-                edits,
-            },
-            None => self.wrap(selections, template),
+        let selections = clamped(selections, self.text.len());
+        let (mut edits, mut wrapping) = (Vec::new(), Vec::new());
+        for &selection in &selections {
+            match styled(self.text_styles(selection)) {
+                Some(unwrap) => edits.extend(unwrap),
+                None => wrapping.push(selection),
+            }
         }
+        let prefix = format!("\\{command}{{");
+        edits.extend(self.wrap(&wrapping, &format!("{prefix}$0}}")).edits);
+        edits.sort_by_key(|edit| edit.start);
+        edits.dedup();
+        let into = |s| {
+            if wrapping.contains(&s) {
+                utf16::len(&prefix)
+            } else {
+                0
+            }
+        };
+        let selections = placed(&edits, &selections, into);
+        Change { edits, selections }
     }
+}
+
+fn clamped(selections: &[TextRange], len: u32) -> Vec<TextRange> {
+    selections.iter().map(|&s| clamp(s, len)).collect()
+}
+
+/// The selections once `edits` are made: each moved past the edits before it, and `into` an edit of its own.
+fn placed(
+    edits: &[TextEdit],
+    selections: &[TextRange],
+    into: impl Fn(TextRange) -> usize,
+) -> Vec<TextRange> {
+    let place = |selection: TextRange| {
+        let before = edits.iter().filter(|edit| edit.start < selection.start);
+        let moved: i64 = before
+            .map(|e| utf16::len(&e.text) as i64 - i64::from(e.length))
+            .sum();
+        let start = (i64::from(selection.start) + moved).max(0) as usize + into(selection);
+        span(start, selection.length as usize)
+    };
+    selections.iter().copied().map(place).collect()
 }
 
 pub(crate) fn include_graphics(path: &str, into: &str) -> Option<String> {
