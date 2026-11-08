@@ -159,8 +159,7 @@ struct ChromePixelTests {
     private static func build(ok: Bool?, issues: [(error: Bool, file: String)]) -> BuildState {
         let items = issues.enumerated().map { index, issue in
             LogItem(kind: issue.error ? .error : .warning, file: issue.file, line: 10 + index,
-                    message: Message(id: .tex, args: [:], text: issue.error ? "Undefined control sequence." : "Citation undefined."),
-                    explain: nil, fix: nil, topic: nil)
+                    message: Message(id: .tex, args: [:], text: issue.error ? "Undefined control sequence." : "Citation undefined."))
         }
         let result = ok.map { CompileResult(ok: $0, stopped: false, durationMs: 2340, pdf: $0 ? "/tmp/main.pdf" : nil, badBoxes: []) }
         return BuildState(compiling: ok == nil, auto: false, outdated: false, result: result, issues: items, lines: [:])
@@ -179,10 +178,7 @@ struct ChromePixelTests {
     private func write(_ name: String, _ view: NSView, _ rect: NSRect) throws {
         view.displayIfNeeded()
         for scale in [2, 4] {
-            let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(rect.width) * scale, pixelsHigh: Int(rect.height) * scale,
-                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-            rep.size = rect.size
+            let rep = try #require(bitmap(rect.size, scale: scale))
             view.cacheDisplay(in: rect, to: rep)
             try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
         }
