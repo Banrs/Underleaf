@@ -78,7 +78,7 @@ struct StatusBar: View {
                 PagePlace(project: project, detail: detail)
             }
             .fixedSize()
-            if window.showSource && project.editsText || PagePlace.shows(project, window) {
+            if CaretPlace.shows(project, window) || PagePlace.shows(project, window) {
                 Divider().frame(height: 12).padding(.leading, Spacing.divider - Spacing.overhang)
             }
             PanelToggle(project: project)
@@ -192,8 +192,10 @@ private struct CaretPlace: View {
     let project: ProjectModel
     let detail: StatusBar.Detail
 
+    static func shows(_ project: ProjectModel, _ window: WindowModel) -> Bool { window.showSource && project.editsText }
+
     var body: some View {
-        if window.showSource, project.editsText {
+        if Self.shows(project, window) {
             Button { window.perform(.editGotoLine, on: project) } label: {
                 place(detail, "Line: \(String(project.cursorLine))  Col: \(String(project.shownColumn))",
                       short: "\(project.cursorLine):\(project.shownColumn)",
