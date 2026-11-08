@@ -17,7 +17,7 @@ use super::skip_unreadable;
 use super::tree::{listed, shown, walk};
 use crate::error::CoreError;
 use crate::messages;
-use crate::paths::{Project, fold_case, same_folded, sanitize_name, ui_file};
+use crate::paths::{Project, fold_case, safe_rel_file, same_folded, sanitize_name, ui_file};
 use crate::service::Service;
 use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
 use crate::{SETTINGS_FILE, atomic, sys};
@@ -170,10 +170,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if entry.file_type()?.is_file()
-            && file_kind(&name) == FileKind::Tex
-            && !name.starts_with('-')
-        {
+        if entry.file_type()?.is_file() && main_candidate(&name) {
             tex.push(name);
         }
     }
@@ -196,7 +193,7 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
     walk(root, &listed, false, &mut |entry| {
         let (path, rel) = (&entry.path, &entry.rel);
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        if file_kind(name) == FileKind::Tex && !name.starts_with('-') && starts_document(path) {
+        if main_candidate(rel) && starts_document(path) {
             let found = (
                 !same_folded(name, "main.tex"),
                 rel.matches('/').count(),
@@ -209,6 +206,11 @@ pub(crate) fn guess_main_file(root: &Path) -> Result<Option<String>, CoreError> 
         Ok(true)
     })?;
     Ok(nested.map(|(_, _, rel)| rel))
+}
+
+/// A file the guess may pick: one the file tree lists and the settings would accept as main file.
+fn main_candidate(rel: &str) -> bool {
+    file_kind(rel) == FileKind::Tex && listed(rel) && safe_rel_file(rel).is_ok()
 }
 
 pub fn rename_project(service: &Service, id: &str, name: &str) -> Result<ProjectInfo, CoreError> {
@@ -287,4 +289,34 @@ pub fn locate(service: &Service, path: &Path) -> Result<Option<Located>, CoreErr
         let path = segments(real.strip_prefix(&folder.path).ok()?)?.join("/");
         Some(Located { id, path })
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn guessed(files: &[(&str, &str)]) -> Option<String> {
+        let root = tempfile::tempdir().unwrap();
+        for (rel, text) in files {
+            let path = root.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        guess_main_file(root.path()).unwrap()
+    }
+
+    #[test]
+    fn a_document_under_a_dash_folder_is_passed_over() {
+        let files = [
+            ("-drafts/paper.tex", "\\documentclass{article}"),
+            ("text/paper.tex", "\\documentclass{article}"),
+        ];
+        assert_eq!(guessed(&files).as_deref(), Some("text/paper.tex"));
+    }
+
+    #[test]
+    fn a_hidden_top_level_file_is_not_the_main_file() {
+        let files = [("._paper.tex", "x"), ("paper.tex", "x")];
+        assert_eq!(guessed(&files).as_deref(), Some("paper.tex"));
+    }
 }
