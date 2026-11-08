@@ -255,6 +255,8 @@ fn a_command_completes_from_the_project_before_the_catalogue() {
     let fields =
         json!([{ "start": 6, "length": 0, "index": 0 }, { "start": 8, "length": 0, "index": 1 }]);
     assert_eq!(answer["items"][0]["fields"], fields);
+    let mut doc = SourceDocument::new("one\\\\fr");
+    assert_eq!(complete(&mut doc, 7), Value::Null);
 }
 
 #[test]
@@ -291,6 +293,9 @@ fn an_argument_completes_what_the_command_takes() {
     assert_eq!(offered("\\cite[see]{lam"), lamport);
     assert_eq!(offered("\\citep[see][p.~5]{lam"), lamport);
     assert_eq!(offered("\\parencite[a][b]{lam"), lamport);
+    let mut doc = SourceDocument::new("a\\\\cite{lam");
+    doc.set_symbols(symbols.clone());
+    assert_eq!(complete(&mut doc, 11), Value::Null);
     let packages = json!(["file", ["amsmath", "amsthm"]]);
     assert_eq!(offered("\\usepackage{ams"), packages);
     assert_eq!(offered("\\input{"), json!(["file", ["main", "ch/intro"]]));

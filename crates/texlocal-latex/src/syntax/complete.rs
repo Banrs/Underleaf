@@ -162,7 +162,10 @@ impl SourceDocument {
             })
         };
 
-        if let Some(c) = ARGUMENT.captures(&before) {
+        if let Some(c) = ARGUMENT
+            .captures(&before)
+            .filter(|c| unescaped(&before, c.get_match().start()))
+        {
             let start = before.rfind(['{', ',']).map_or(0, |i| i + 1);
             let start = before.len() - before[start..].trim_start().len();
             let typed = &before[start..];
@@ -229,7 +232,9 @@ impl SourceDocument {
             let items = names.map(|name| word(format!("@{name}"), None));
             return offer(at.start(), SymbolKind::EntryType, items.collect());
         }
-        let m = COMMAND.find(&before).filter(|m| m.len() > 1 || explicit)?;
+        let m = COMMAND
+            .find(&before)
+            .filter(|m| (m.len() > 1 || explicit) && unescaped(&before, m.start()))?;
         let complete = |name: &String, snippet: &str| {
             let (text, fields) = expand(text, caret, snippet);
             Completion {
@@ -436,6 +441,12 @@ enum At {
     Start,
     Word,
     Anywhere,
+}
+
+/// Whether the backslash at `at` begins a command, rather than ending an escaped one such as `\\`.
+fn unescaped(text: &str, at: usize) -> bool {
+    let slashes = text[..at].bytes().rev().take_while(|&b| b == b'\\').count();
+    slashes.is_multiple_of(2)
 }
 
 fn finder(typed: &str) -> impl Fn(&str, At) -> bool + '_ {
