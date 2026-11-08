@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.registerServicesMenuSendTypes([], returnTypes: SourceTextView.imported)
         guard app.core.isOpen else {
             for window in app.windows { window.controller?.close() }
             app.showHome()

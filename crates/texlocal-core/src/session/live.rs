@@ -220,8 +220,8 @@ impl Live {
         let sink = Box::new(move |event| {
             let _ = tx.send(Msg::Live(generation, event));
         });
-        let path_env = cx.service.tool_paths().1;
-        match cx.preview.start(&cx.project, &path_env, sink) {
+        let (path_env, texpresso) = cx.service.tool_paths();
+        match cx.preview.start(&cx.project, &texpresso, &path_env, sink) {
             Ok(run) => {
                 (self.run, self.phase) = (Some(Arc::clone(&run)), LivePhase::Running);
                 for path in docs.keys() {

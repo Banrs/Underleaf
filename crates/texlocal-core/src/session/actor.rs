@@ -15,9 +15,9 @@ use tokio::time::Instant;
 
 use super::build::{Builds, Shown, built_pdf};
 use super::documents::{Docs, Resolution};
-use super::edits::{Fixed, ProjectEdits};
+use super::edits::{AddedCitation, Fixed, ProjectEdits};
 use super::live::Live;
-use super::navigate::{QuickHelp, QuickOpenItem};
+use super::navigate::{BadBoxArea, QuickHelp, QuickOpenItem};
 use super::scans::Usages;
 use super::state::{Lifecycle, Stopped};
 use super::watch::Tree;
@@ -59,6 +59,7 @@ requests! {
             actor.before(Reason::Rename, rename, pending);
         },
         ApplyFix { #[schemars(with = "String")] id: Fix } -> Option<Fixed> => actor.fix(id, pending),
+        AddCitation { entry: String } -> AddedCitation => actor.add_citation(entry, pending),
         ListVersions {} -> Vec<Snapshot> => actor.history_list(pending),
         SaveVersion { name: String } -> Option<Snapshot> => actor.history_save(name, pending),
         CompareVersion { id: String, path: RelPath } -> Vec<DiffLine> => actor.history_compare(id, path.0, pending),
@@ -83,6 +84,7 @@ requests! {
             => actor.synctex_inverse(page, x, y, click, pending),
         SynctexMatch { file: RelPath, line: u32, column: usize, pages: Vec<PdfPage> } -> Option<PdfHit>
             => actor.synctex_match(file.0, line, column, pages, pending),
+        BadBoxAreas {} -> Vec<BadBoxArea> => actor.bad_box_areas(pending),
     }
 }
 

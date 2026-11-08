@@ -1,13 +1,15 @@
-use std::sync::Arc;
+use std::fs;
+use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
 use serde::Serialize;
-use texlocal_latex::FileKind;
+
 use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::logparse::Fix;
 use texlocal_latex::message::Message;
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind, Text, TextEdit};
+use texlocal_latex::{FileKind, cite, file_kind, project, utf16};
 
 use super::Pending;
 use super::actor::Actor;
@@ -17,7 +19,7 @@ use super::scans::{tex, usages_in};
 use crate::messages;
 use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
-use crate::{CoreError, packages};
+use crate::{CoreError, lf, lossy_string, packages, paths};
 
 type Said = fn(&str) -> Message;
 
@@ -38,6 +40,14 @@ pub(crate) struct DocumentEdits {
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Fixed {
     edits: Option<DocumentEdits>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct AddedCitation {
+    key: String,
+    file: String,
+    // None when the bibliography had the entry already.
+    edits: Option<ProjectEdits>,
 }
 
 impl Actor {
@@ -138,6 +148,117 @@ impl Actor {
         };
         let main = move |rel: &str| Some(rel) == main.as_deref();
         self.edit_project(main, found, line)
+    }
+
+    /// Adds fetched BibTeX to the bibliography the main file names, else the project's first `.bib`, else a new
+    /// `references.bib`, unless one of them has an entry with its DOI or arXiv identifier already.
+    pub fn add_citation(&mut self, fetched: String, reply: Pending<AddedCitation>) {
+        let added = self.citation(&fetched);
+        let (key, file, new, add) = match added {
+            Ok(Ok(found)) => return reply.send(Ok(found)),
+            Ok(Err(add)) => add,
+            Err(err) => return reply.send(Err(err)),
+        };
+        let then = add.map(|add| -> Then<AddedCitation> {
+            // Made only once the version before is taken and the edit goes ahead.
+            Box::new(move |actor, snapshot| {
+                let root = &actor.core.project.root;
+                if new && paths::safe_path(root, &file).is_ok_and(|path| !path.exists()) {
+                    actor.create_entry("", &file, false)?;
+                }
+                add(actor, snapshot).map(|edits| AddedCitation {
+                    key,
+                    file,
+                    edits: Some(edits),
+                })
+            })
+        });
+        self.before(Reason::AddCitation, then, reply);
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn citation(
+        &mut self,
+        fetched: &str,
+    ) -> Result<
+        Result<AddedCitation, (String, String, bool, Result<Then<ProjectEdits>, CoreError>)>,
+        CoreError,
+    > {
+        self.text_to_edit()?;
+        let scan = Arc::clone(
+            &self
+                .tree
+                .scan
+                .read()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let taken = |key: &str| {
+            let mut files = scan.facts.values();
+            files.any(|facts| {
+                !syntax::definitions(&facts.defined, SymbolKind::Citation, key).is_empty()
+            })
+        };
+        let tidied = cite::tidy(fetched, taken)
+            .ok_or_else(|| CoreError::bad_request(messages::no_bibtex()))?;
+        let mut bibs = (self.tree.main.as_deref())
+            .map_or_else(Vec::new, |main| project::bibliographies(&scan, main));
+        if bibs.is_empty() {
+            let mut own: Vec<&String> = self
+                .tree
+                .files
+                .iter()
+                .filter(|file| file_kind(file) == FileKind::Bib)
+                .collect();
+            own.sort();
+            bibs.extend(own.into_iter().take(1).cloned());
+        }
+        let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
+        let text = |rel: &str| match docs.get(rel) {
+            Some(doc) => Some(doc.snapshot().0),
+            None => fs::read(paths::safe_path(&root, rel).ok()?)
+                .ok()
+                .map(|bytes| lf(lossy_string(bytes))),
+        };
+        for bib in &bibs {
+            let had = text(bib).and_then(|text| {
+                cite::find_entry(&text, tidied.doi.as_deref(), tidied.eprint.as_deref())
+            });
+            if let Some(key) = had {
+                return Ok(Ok(AddedCitation {
+                    key,
+                    file: bib.clone(),
+                    edits: None,
+                }));
+            }
+        }
+        let new = bibs.is_empty();
+        let file = bibs
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "references.bib".to_owned());
+        let before = text(&file).unwrap_or_default();
+        let gap = match () {
+            () if before.is_empty() || before.ends_with("\n\n") => "",
+            () if before.ends_with('\n') => "\n",
+            () => "\n\n",
+        };
+        let target = file.clone();
+        let end = |_: &str, text: &str| {
+            let lines = Text::new(text).lines;
+            let start = lines.last().copied().unwrap_or_default();
+            let column = utf16::len(text) as u32 - start;
+            vec![Place {
+                line: lines.len() as u32,
+                column,
+                length: 0,
+            }]
+        };
+        let add = self.edit_project(
+            move |rel| rel == target,
+            end,
+            format!("{gap}{}", tidied.entry),
+        );
+        Ok(Err((tidied.key, file, new, add)))
     }
 
     /// The shown document's text, after saving every edit and closing documents a failed save had kept open, so every

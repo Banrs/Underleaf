@@ -5,4 +5,5 @@ enum EditorCommand: Equatable {
     case symbol(String)
     case block(id: String, title: String? = nil)
     case inline(template: String, title: String? = nil)
+    case cite(String)
 }

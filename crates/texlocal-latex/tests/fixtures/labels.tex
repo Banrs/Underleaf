@@ -1,0 +1,28 @@
+\documentclass{article}
+\usepackage{amsmath,amsthm,graphicx}
+\newtheorem{theorem}{Theorem}
+\begin{document}
+\section{Introduction}
+\label{sec:intro}
+Energy and mass are related by Equation~\eqref{eq:energy}, and Figure~\ref{fig:box} shows a box.
+Theorem~\ref{thm:main} is the main result; see also Section~\ref{sec:intro} and \cite{einstein1905}.
+\begin{equation}
+  E = mc^2 \label{eq:energy}
+\end{equation}
+\begin{align}
+  a &= b + c \label{eq:first}\\
+  d &= \int_0^1 f(x)\,dx \label{eq:second}
+\end{align}
+\begin{figure}[h]
+  \centering
+  \rule{4cm}{2cm}
+  \caption{A black box.}
+  \label{fig:box}
+\end{figure}
+\begin{theorem}\label{thm:main}
+Every bounded monotone sequence of real numbers converges.
+\end{theorem}
+Equations \eqref{eq:first} and \eqref{eq:second}.
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}

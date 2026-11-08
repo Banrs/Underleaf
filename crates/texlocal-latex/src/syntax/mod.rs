@@ -14,6 +14,7 @@ mod snippet;
 mod stack;
 mod style;
 mod sync;
+mod table;
 mod typing;
 
 use std::sync::Arc;
@@ -28,7 +29,7 @@ pub use complete::{definitions, usages};
 pub use headings::document_class;
 use highlight::Highlight;
 pub use highlight::HighlightKind;
-pub use sync::{SyncLines, sync_lines};
+pub use sync::{SyncLines, labelled_lines, sync_lines};
 
 use crate::utf16;
 

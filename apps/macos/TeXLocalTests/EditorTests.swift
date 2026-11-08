@@ -147,6 +147,70 @@ struct EditorTests {
         #expect(!text.apply([TextEdit(.caret(0), "x")], named: "Edit") && text.string == "text")
     }
 
+    @Test func spreadsheetCellsPasteAsATabularOnALineOfTheirOwnAtItsIndentationInOneUndoStep() {
+        let (editor, window) = Self.editor("  x\n    ")
+        defer { window.close() }
+        let text = editor.textView, board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setString("Name\tScore\r\nAda\t10\r\n", forType: .string)
+        text.selection = .caret(3)
+        #expect(text.pasteTable(from: board, booktabs: false))
+        let table = { (indent: String, rules: [String]) in
+            ["\\begin{tabular}{lr}", "  \(rules[0])", "  Name & Score \\\\", "  \(rules[1])", "  Ada & 10 \\\\", "  \(rules[2])", "\\end{tabular}"]
+                .joined(separator: "\n" + indent)
+        }
+        let pasted = "  x\n  " + table("  ", ["\\hline", "\\hline", "\\hline"])
+        #expect(text.string == pasted + "\n    " && text.document.text == text.string)
+        #expect(text.selection == .caret((pasted as NSString).length) && text.undo.undoActionName == "Paste as Table")
+        text.undo.undo()
+        #expect(text.string == "  x\n    " && text.document.text == text.string)
+        // Text after the caret goes on to a line of its own.
+        text.selection = .caret(2)
+        #expect(text.pasteTable(from: board, booktabs: false))
+        #expect(text.string == "  " + table("  ", ["\\hline", "\\hline", "\\hline"]) + "\n  x\n    ")
+        text.undo.undo()
+        text.selection = .caret(8)
+        #expect(text.pasteTable(from: board, booktabs: true))
+        #expect(text.string == "  x\n    " + table("    ", ["\\toprule", "\\midrule", "\\bottomrule"]) && text.document.text == text.string)
+        board.clearContents()
+        board.setString("one column\nonly", forType: .string)
+        #expect(!text.pasteTable(from: board, booktabs: false))
+        text.isEditable = false
+        #expect(!text.canPasteTable)
+    }
+
+    @Test func continuityCamerasImagesComeInAsFiguresThroughTheFigurePath() async throws {
+        let (editor, window) = Self.editor("")
+        defer { window.close() }
+        let text = editor.textView, jpeg = NSPasteboard.PasteboardType("public.jpeg")
+        for type in [NSPasteboard.PasteboardType.png, .tiff, .pdf, jpeg] {
+            #expect(text.validRequestor(forSendType: nil, returnType: type) as? SourceTextView === text, "\(type)")
+        }
+        var copied: [(name: String, existed: Bool)] = []
+        text.fileDrop = { url in
+            .copy {
+                copied.append((url.lastPathComponent, FileManager.default.fileExists(atPath: url.path(percentEncoded: false))))
+                return "\\includegraphics{\(url.lastPathComponent)}"
+            }
+        }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.declareTypes([jpeg], owner: nil)
+        board.setData(Data([0xFF, 0xD8, 0xFF, 0xD9]), forType: jpeg)
+        #expect(text.readSelection(from: board))
+        try await waitUntil { !copied.isEmpty }
+        #expect(copied.map(\.name) == ["Pasted Graphic.jpg"] && copied[0].existed)
+        #expect(text.string == "\\includegraphics{Pasted Graphic.jpg}" && text.undo.undoActionName == "Insert Figure")
+        board.declareTypes([.string, jpeg], owner: nil)
+        board.setString("words", forType: .string)
+        board.setData(Data([0xFF, 0xD8, 0xFF, 0xD9]), forType: jpeg)
+        Self.event(text) { _ = text.readSelection(from: board) }
+        #expect(copied.count == 1 && text.string == "words")
+        text.isEditable = false
+        #expect(text.validRequestor(forSendType: nil, returnType: .png) == nil)
+    }
+
     @Test func theEditorTakesTheFocusARevealAskedForOnlyTheNextTimeItShows() {
         let (editor, window) = Self.editor("text")
         defer { window.close() }
@@ -417,7 +481,7 @@ struct EditorTests {
         for key in keys { event(text) { text.insertText(String(key), replacementRange: typed) } }
     }
 
-    private static func editor(_ source: String) -> (SourceEditor, NSWindow) {
+    static func editor(_ source: String) -> (SourceEditor, NSWindow) {
         let editor = SourceEditor()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -437,5 +501,50 @@ struct EditorTests {
             return true
         }
         return found
+    }
+}
+
+@MainActor
+struct CitingTests {
+    @Test func aKeyJoinsTheCitationTheCaretIsInElseGetsItsOwn() {
+        let cite = { (before: String, after: String) in
+            let (text, past) = SourceEditor.citing("k", before: before, after: after)
+            return past == 0 ? text : "\(past) \(text)"
+        }
+        #expect(cite("as shown ", "") == "\\cite{k}")
+        #expect(cite("as shown", "here") == "\\cite{k}")
+        #expect(cite("\\cite{", "}") == "k")
+        #expect(cite("\\citep[p.~3]{a", "}") == ",k")
+        #expect(cite("\\parencite{a, ", "}") == "k")
+        #expect(cite("\\textcite*{a,", "}") == "k")
+        #expect(cite("\\cite{a} and ", "") == "\\cite{k}")
+        // Before a key, between two, inside one, and over lines.
+        #expect(cite("\\cite{", "old}") == "k,")
+        #expect(cite("\\cite{first,", "old}") == "k,")
+        #expect(cite("\\cite{first, ", " old}") == "k,")
+        #expect(cite("\\cite{fi", "rst,old}") == "3 ,k")
+        #expect(cite("\\cite{a,\n  ", "b}") == "k,")
+        #expect(cite("\\cite{a\n", "}") == ",k")
+        #expect(cite("\\cite{a,\n\n", "") == "\\cite{k}")
+    }
+
+    @Test func aCitedKeyKeepsTheKeysAroundItApartInOneUndoStep() {
+        let source = "See \\cite{first,old}."
+        let (editor, window) = EditorTests.editor(source)
+        defer { window.close() }
+        let text = editor.textView
+        let cite = { (selection: NSRange) in
+            text.selection = selection
+            #expect(editor.perform(.cite("new")))
+            defer { text.undo.undo() }
+            #expect(text.undo.undoActionName == "Insert Citation" && text.document.text == text.string)
+            return (text.string, text.selection)
+        }
+        #expect(cite(.caret(10)) == ("See \\cite{new,first,old}.", .caret(14)))
+        #expect(cite(.caret(16)) == ("See \\cite{first,new,old}.", .caret(20)))
+        #expect(cite(.caret(12)) == ("See \\cite{first,new,old}.", .caret(19)))
+        #expect(cite(NSRange(location: 16, length: 3)) == ("See \\cite{first,new}.", .caret(19)))
+        #expect(cite(.caret(3)) == ("See\\cite{new} \\cite{first,old}.", .caret(13)))
+        #expect(text.string == source && text.document.text == source)
     }
 }

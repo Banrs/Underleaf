@@ -6,7 +6,7 @@ enum MenuCommand {
     case fileNew, fileNewFolder, fileUpload, fileSave, fileSaveVersion, fileBrowseVersions, pdfSave, pdfOpen, filePrint
     case editBold, editItalic, editUnderline, editMath, editComment, editShiftRight, editShiftLeft, editMoveLineUp, editMoveLineDown
     case editDuplicateLine, editDeleteLine, editGotoLine, goBack, goForward, jumpToDefinition, findUsages, quickHelp, editRename
-    case editFold, editUnfold, editFoldAll, editUnfoldAll, symbolLibrary
+    case editFold, editUnfold, editFoldAll, editUnfoldAll, editPasteTable, symbolLibrary, insertCitation
     case pdfFind, pdfGotoPage
     case viewToggleSource, viewTogglePDF, viewToggleInspector, viewToggleLogs, viewToggleWordCount
     case viewZoomIn, viewZoomOut, viewActualSize, viewFitWidth, viewFitPage
@@ -34,6 +34,7 @@ enum MenuCommand {
         case .pdfSave: ("Export as PDF…", nil)
         case .pdfOpen: ("Open PDF in Default App", KeyboardShortcut("o", modifiers: [.command, .option]))
         case .filePrint: ("Print…", KeyboardShortcut("p"))
+        case .editPasteTable: ("Paste as Table", nil)
         case .editBold: ("Bold", KeyboardShortcut("b"))
         case .editItalic: ("Italic", KeyboardShortcut("i"))
         case .editUnderline: ("Underline", KeyboardShortcut("u"))
@@ -57,6 +58,7 @@ enum MenuCommand {
         case .quickHelp: ("Quick Help for Selected Item", KeyboardShortcut("?", modifiers: [.command, .control]))
         case .editRename: ("Rename…", nil)
         case .symbolLibrary: ("Symbol Library…", KeyboardShortcut("l", modifiers: [.command, .shift]))
+        case .insertCitation: ("Citation from DOI or arXiv…", nil)
         case .pdfFind: ("Find in PDF…", nil)
         case .pdfGotoPage: ("Go to Page…", KeyboardShortcut("g", modifiers: [.command, .option]))
         case .viewToggleSource: ("Source", KeyboardShortcut("s", modifiers: [.command, .option]))
@@ -83,7 +85,7 @@ enum MenuCommand {
         switch self {
         case .editBold, .editItalic, .editUnderline, .editMath, .editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp,
              .editMoveLineDown, .editDuplicateLine, .editDeleteLine, .jumpToDefinition, .findUsages, .quickHelp, .editRename,
-             .editFold, .editUnfold, .editFoldAll, .editUnfoldAll: true
+             .editFold, .editUnfold, .editFoldAll, .editUnfoldAll, .editPasteTable, .insertCitation: true
         default: false
         }
     }
@@ -127,7 +129,7 @@ enum MenuCommand {
 }
 
 enum Prompt: Identifiable, Hashable {
-    case gotoLine, gotoPage, rename(SymbolName), saveVersion, versionHistory
+    case gotoLine, gotoPage, rename(SymbolName), saveVersion, versionHistory, addCitation
 
     var id: Self { self }
 }
@@ -157,8 +159,9 @@ extension AppModel {
              .editGotoLine, .jumpToDefinition, .findUsages, .quickHelp, .editFold, .editUnfold, .editFoldAll, .editUnfoldAll:
             project?.editsText == true
         case .goBack, .goForward: project?.canRetrace(back: command == .goBack) ?? false
-        case .editBold, .editItalic, .editUnderline, .editMath: project?.isLaTeX == true
+        case .editBold, .editItalic, .editUnderline, .editMath, .insertCitation: project?.isLaTeX == true
         case .editRename: project.map { $0.editsText && $0.views?.validates(command) == true } ?? false
+        case .editPasteTable: project.map { $0.isLaTeX && $0.views?.validates(command) == true } ?? false
         case .compileRun: tex?.available == true && project?.compiling == false
         case .compileStop: project?.compiling == true
         case .viewZoomIn, .viewZoomOut: project.map { $0.hasPDF && $0.views?.validates(command) == true } ?? false
@@ -244,6 +247,7 @@ extension WindowModel {
         case .issueNext: project?.goToIssue(next: true)
         case .issuePrevious: project?.goToIssue(next: false)
         case .symbolLibrary: SymbolLibrary.toggle(app: app)
+        case .insertCitation: prompt = .addCitation
         default: project?.views?.perform(command)
         }
     }

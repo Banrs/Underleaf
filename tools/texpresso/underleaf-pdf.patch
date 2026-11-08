@@ -84,10 +84,19 @@ index e2f2105..66527f7 100644
  fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
 diff --git a/src/engine/main/main.c b/src/engine/main/main.c
-index 333408e..33299d3 100644
+index 333408e..2831786 100644
 --- a/src/engine/main/main.c
 +++ b/src/engine/main/main.c
-@@ -62,7 +62,11 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
+@@ -7,6 +7,8 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <fcntl.h>
++#include <sys/file.h>
+ #include <sys/stat.h>
+ #include <time.h>
+ #include <unistd.h>
+@@ -62,7 +64,11 @@ NORETURN PRINTF_FUNC(1, 2) int _tt_abort(const char *format, ...)
    vfprintf(stderr, format, ap);
    va_end(ap);
    fprintf(stderr, "\n");
@@ -100,7 +109,7 @@ index 333408e..33299d3 100644
  }
  
  int ttstub_shell_escape(const unsigned short *cmd, size_t len)
-@@ -229,6 +233,15 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
+@@ -229,6 +235,15 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
  
      char *ipath =
        txp_open(texpresso, id, path, kind_of_ttbc_format(format), TXP_READ);
@@ -116,6 +125,25 @@ index 333408e..33299d3 100644
  
      if (ipath)
      {
+@@ -1036,7 +1051,17 @@ int main(int argc, char **argv)
+ 
+   // Generate format if necessary
+   format_name = "xelatex.ini";
+-  if (!validate_format() && !bootstrap_format())
++  // Engines started together share the cache: one would read the format while another writes it,
++  // load half a format and stop. They check and build it one at a time, and the lock ends with
++  // the process if it does.
++  const char *lock_path = format_path(".lock");
++  int lock = lock_path ? open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600) : -1;
++  if (lock >= 0)
++    flock(lock, LOCK_EX);
++  bool format_ready = validate_format() || bootstrap_format();
++  if (lock >= 0)
++    close(lock);
++  if (!format_ready)
+   {
+     fprintf(stderr, "Failed to generate format.\n");
+     return 1;
 diff --git a/src/frontend/Makefile b/src/frontend/Makefile
 index c922019..10af953 100644
 --- a/src/frontend/Makefile

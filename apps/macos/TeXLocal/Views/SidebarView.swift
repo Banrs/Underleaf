@@ -159,7 +159,6 @@ struct FilesList: View {
                     }
                 }
         }
-        .navigatorRow()
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
@@ -276,7 +275,6 @@ private struct HeadingRow: View {
             .help(heading.title)
             .foregroundStyle(heading.untitled ? .secondary : .primary)
             .lineLimit(1)
-            .navigatorRow()
             .accessibilityValue(heading.level)
             .id(node.id)
     }

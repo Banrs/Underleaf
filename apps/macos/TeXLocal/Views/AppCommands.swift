@@ -46,6 +46,7 @@ struct AppCommands: Commands {
         TextEditingCommands()
         CommandGroup(before: .textEditing) { items(.projectSearch, .projectReplace, .findUsages, .pdfFind) }
         CommandGroup(after: .pasteboard) {
+            items(.editPasteTable)
             Divider()
             items(.editComment, .editShiftRight, .editShiftLeft, .editMoveLineUp, .editMoveLineDown, .editDuplicateLine, .editDeleteLine)
             Menu("Code Folding") { items(.editFold, .editUnfold, .editFoldAll, .editUnfoldAll) }
@@ -89,6 +90,7 @@ struct AppCommands: Commands {
             }
             Divider()
             InsertMenuItems(project: project)
+            items(.insertCitation)
         }
         CommandMenu("Compile") {
             items(.compileRun, .compileStop, .compileClean)

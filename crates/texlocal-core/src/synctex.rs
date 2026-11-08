@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::synctex::{Shown, SyncTex};
 use texlocal_latex::syntax::{SyncLines, sync_lines};
 use texlocal_latex::utf16;
 use texlocal_latex::wordmatch::find_in_source;
@@ -78,23 +80,10 @@ pub(crate) fn forward(
     lines: &SyncLines,
     live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    let sync = sync_for(project, live)?;
-    let tag = sync
-        .inputs()
-        .find(|(_, name)| source_file(project, name).as_deref() == Some(file))
-        .map(|(tag, _)| tag)
-        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
-    let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
+    let (sync, tag) = tagged(project, file, live)?;
     let mut matches: Vec<_> = (sync.forward(tag, lines).into_iter())
         .filter(|shown| shown.page >= 1)
-        .map(|shown| ForwardLoc {
-            page: f64::from(shown.page),
-            h: finite(shown.h),
-            v: finite(shown.v),
-            width: finite(shown.width),
-            height: finite(shown.height),
-            matches: Vec::new(),
-        })
+        .map(located)
         .collect();
     let mut first = matches
         .first()
@@ -109,6 +98,60 @@ pub(crate) fn forward(
     matches.dedup();
     first.matches = matches;
     Ok(first)
+}
+
+/// Where lines were typeset on one page, as one box, and how far they run past the width TeX set them to, in points.
+pub(crate) type PageArea = (ForwardLoc, f64);
+
+/// Finds where lines of a file were typeset, as one box on each page they're on from the first, reading the SyncTeX
+/// file and matching its inputs to the project's files once for every lookup.
+pub(crate) fn areas(
+    project: &Project,
+    live: Option<&Path>,
+) -> Result<impl Fn(&str, RangeInclusive<u32>) -> Vec<PageArea> + use<>, CoreError> {
+    let sync = sync_for(project, live)?;
+    let mut tags = HashMap::new();
+    for (tag, name) in sync.inputs() {
+        if let Some(file) = source_file(project, name) {
+            tags.entry(file).or_insert(tag);
+        }
+    }
+    Ok(move |file: &str, lines| {
+        let Some(&tag) = tags.get(file) else {
+            return Vec::new();
+        };
+        let areas = sync.areas(tag, lines).into_iter();
+        let shown = areas.filter(|(shown, _)| shown.page >= 1);
+        shown
+            .map(|(shown, over)| (located(shown), f64::from(over)))
+            .collect()
+    })
+}
+
+fn tagged(
+    project: &Project,
+    file: &str,
+    live: Option<&Path>,
+) -> Result<(Arc<SyncTex>, i32), CoreError> {
+    let sync = sync_for(project, live)?;
+    let tag = sync
+        .inputs()
+        .find(|(_, name)| source_file(project, name).as_deref() == Some(file))
+        .map(|(tag, _)| tag)
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
+    Ok((sync, tag))
+}
+
+fn located(shown: Shown) -> ForwardLoc {
+    let finite = |value: f32| Some(f64::from(value)).filter(|value| value.is_finite());
+    ForwardLoc {
+        page: f64::from(shown.page),
+        h: finite(shown.h),
+        v: finite(shown.v),
+        width: finite(shown.width),
+        height: finite(shown.height),
+        matches: Vec::new(),
+    }
 }
 
 pub(crate) fn inverse(

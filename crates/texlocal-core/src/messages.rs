@@ -74,6 +74,7 @@ texlocal_latex::messages! {
     bad_citation_name = r"A citation can't be empty or have spaces, commas, braces, % or \ in it.";
     label_exists(name) = "A label “{name}” exists already.";
     citation_exists(name) = "A citation “{name}” exists already.";
+    no_bibtex = "The answer held no BibTeX entry.";
 
     version_needs_name = "A version needs a name.";
     only_text_compared = "Only a text file can be compared.";

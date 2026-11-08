@@ -26,7 +26,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     enum FileDrop { case open(() -> Void), insert(String), copy(() async -> String?) }
     var forwardSync: (_ quietly: Bool) -> (() -> Void)? = { _ in nil }
     var openDefinition: (FilePlace) -> Void = { _ in }
-    var quickHelp: (Int) -> Void = { _ in }
+    var quickHelp: (_ offset: Int, _ hovering: Bool) -> Void = { _, _ in }
     private(set) var loading = false
 
     func show(_ text: String) {
@@ -45,6 +45,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         dismissedMath = nil
         _ = document.endSnippet()
         completions.close()
+        hoverHelp.close()
         mark(nil)
         updateGutterWidth()
         staleColours = 0
@@ -217,7 +218,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         keyWatches = []
-        guard let window else { return }
+        guard let window else { return hoverHelp.close() }
         keyWatches = [
             NotificationCenter.default.addObserver(of: window, for: .didBecomeKey) { [weak self] _ in self?.keyChanged() },
             NotificationCenter.default.addObserver(of: window, for: .didResignKey) { [weak self] _ in self?.keyChanged() },
@@ -251,14 +252,19 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return popover
     }()
 
-    func showQuickHelp(_ help: QuickHelp, at offset: Int) {
-        guard let rect = popoverRect(at: offset) else { return }
+    private(set) lazy var hoverHelp = HoverHelp(for: self)
+
+    func showQuickHelp(_ help: QuickHelp, picture: ReferencePicture?, at offset: Int, hovering: Bool) {
         let bold = NSFontManager.shared.convert(font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular), toHaveTrait: .boldFontMask)
-        let content = NSHostingController(rootView: QuickHelpView(help: help, font: bold) { [weak self] place in
+        let content = NSHostingController(rootView: QuickHelpView(help: help, picture: picture, font: bold) { [weak self] place in
             self?.helpPopover.close()
+            self?.hoverHelp.close()
             self?.openDefinition(place)
         })
         content.sizingOptions = .preferredContentSize
+        if hovering { return helpPopover.isShown ? () : hoverHelp.show(content, at: offset) }
+        guard let rect = popoverRect(at: offset) else { return }
+        hoverHelp.close()
         helpPopover.contentViewController = content
         helpPopover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
     }
@@ -460,12 +466,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     private func issue(at event: NSEvent) -> IssueOverlay.Row? { issues.message(at: convert(event.locationInWindow, from: nil)) }
 
-    override func mouseMoved(with event: NSEvent) { if !setsCursor(with: event) { super.mouseMoved(with: event) } }
+    override func mouseMoved(with event: NSEvent) {
+        guard !setsCursor(with: event) else { return hoverHelp.close() }
+        super.mouseMoved(with: event)
+        hoverHelp.moved(to: convert(event.locationInWindow, from: nil))
+    }
+
     override func mouseEntered(with event: NSEvent) { if !setsCursor(with: event) { super.mouseEntered(with: event) } }
     override func cursorUpdate(with event: NSEvent) { if !setsCursor(with: event) { super.cursorUpdate(with: event) } }
 
     override func mouseExited(with event: NSEvent) {
         gutterHover(false)
+        hoverHelp.exited()
         super.mouseExited(with: event)
     }
 
@@ -483,7 +495,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             return openDefinition(place)
         }
         if event.type == .leftMouseDown, held == .option, release(of: event) != nil {
-            return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
+            return quickHelp(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)), false)
         }
         super.mouseDown(with: event)
         if isDoubleClick(event), !document.selectsCommand(selectedRange()) { forwardSync(true)?() }
@@ -576,11 +588,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
               let png = board.data(forType: .png)
                 ?? board.data(forType: .tiff).flatMap(NSBitmapImageRep.init(data:))?.representation(using: .png, properties: [:])
         else { return nil }
+        return figure(png, as: "png")
+    }
+
+    private func figure(_ data: Data, as type: String) -> FileDrop? {
         let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        let file = folder.appending(path: String(localized: "Pasted Graphic") + ".png")
+        let file = folder.appending(path: String(localized: "Pasted Graphic") + "." + type)
         let gone = { try? FileManager.default.removeItem(at: folder) }
         guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
-              (try? png.write(to: file)) != nil, case .copy(let copy) = fileDrop(file) else {
+              (try? data.write(to: file)) != nil, case .copy(let copy) = fileDrop(file) else {
             gone()
             return nil
         }
@@ -588,6 +604,26 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             defer { gone() }
             return await copy()
         }
+    }
+
+    private static let jpeg = NSPasteboard.PasteboardType("public.jpeg")
+    /// What Continuity Camera's items can come as; Services return only types the app registered at launch.
+    static let imported: [NSPasteboard.PasteboardType] = [.pdf, jpeg, .png, .tiff]
+
+    // Continuity Camera offers Take Photo, Scan Documents and Add Sketch to a requestor for images.
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? {
+        if sendType == nil, let returnType, isEditable, Self.imported.contains(returnType) { return self }
+        return super.validRequestor(forSendType: sendType, returnType: returnType)
+    }
+
+    /// A scan's PDF and a photo's JPEG stay as they come, since LaTeX includes both.
+    override func readSelection(from board: NSPasteboard) -> Bool {
+        guard isEditable, board.string(forType: .string) == nil,
+              let drop = board.data(forType: .pdf).flatMap({ figure($0, as: "pdf") })
+                ?? board.data(forType: Self.jpeg).flatMap({ figure($0, as: "jpg") }) ?? pastedImage(board)
+        else { return super.readSelection(from: board) }
+        Task.immediate { await insertFigure(drop) }
+        return true
     }
 
     func insertFigure(_ drop: FileDrop) async {

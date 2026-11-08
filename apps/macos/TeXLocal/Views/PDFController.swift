@@ -181,6 +181,7 @@ final class PDFController: NSObject {
         loading?.cancel()
         revealing?.cancel()
         view.removeMark()
+        view.clearBadBoxes()
         view.clearSelection()
         let place = view.document == nil ? nil : view.shownPlace
         let autoScales = view.autoScales
@@ -203,6 +204,7 @@ final class PDFController: NSObject {
         pendingReveal = nil
         revealing?.cancel()
         view.removeMark()
+        view.clearBadBoxes()
         view.find.close()
         view.find.pagesChanged()
         view.document = nil

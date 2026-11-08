@@ -7,10 +7,10 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::diff::map_line;
 use texlocal_latex::facts::FilePlace;
-use texlocal_latex::logparse::{aux_inputs, label_number};
+use texlocal_latex::logparse::{aux_inputs, bad_box, label_number};
 use texlocal_latex::search::score;
 use texlocal_latex::syntax::catalog::CATALOG;
-use texlocal_latex::syntax::{SymbolKind, sync_lines};
+use texlocal_latex::syntax::{SymbolKind, labelled_lines, sync_lines};
 use texlocal_latex::wordmatch::{PdfHit, PdfPage, find_in_pdf};
 use texlocal_latex::{bib, project};
 
@@ -18,7 +18,7 @@ use super::Pending;
 use super::actor::Actor;
 use super::live::{document_lines, typeset_lines};
 use super::watch::Tree;
-use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
+use crate::synctex::{self, ForwardLoc, InverseLoc, PageArea, PageClick};
 use crate::{CoreError, lf, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
@@ -41,10 +41,27 @@ pub(crate) enum QuickOpenKind {
 }
 
 #[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BadBoxArea {
+    file: String,
+    line: u32,
+    // How far an overfull box runs past the text, in points; none for an underfull one.
+    too_wide: Option<f64>,
+    message: String,
+    // Where the box is typeset on one of the pages it's on.
+    area: ForwardLoc,
+    // How far the lines in the area run past the width TeX set them to, in points.
+    overrun: f64,
+}
+
+#[derive(Serialize, JsonSchema)]
 pub(crate) struct QuickHelp {
+    kind: SymbolKind,
     title: String,
     detail: String,
     place: Option<FilePlace>,
+    // Where the shown PDF typeset what a label names.
+    shown: Option<ForwardLoc>,
 }
 
 impl Tree {
@@ -122,10 +139,13 @@ impl Actor {
         let Some(doc) = self.docs.get(path).map(|doc| doc.doc.clone()) else {
             return reply.send(Ok(None));
         };
-        let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
-        let settings = settings::read_settings(&self.core.project.settings);
-        let aux = settings.output(&self.core.project.build, "aux");
+        let (project, docs) = (self.core.project.clone(), self.docs.handles());
+        let settings = settings::read_settings(&project.settings);
+        let aux = settings.output(&project.build, "aux");
+        let live = self.live.pdf(&self.core);
+        let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().clone());
         tokio::task::spawn_blocking(move || {
+            let root = &project.root;
             let found = doc.with(|source| {
                 let (kind, name, _) = source.symbol_at(offset)?;
                 let defined = source.defined(kind, &name).into_iter().next();
@@ -139,7 +159,7 @@ impl Actor {
                 match open {
                     Some(doc) => Some(doc.snapshot().0),
                     None => {
-                        let abs = paths::safe_path(&root, file).ok()?;
+                        let abs = paths::safe_path(root, file).ok()?;
                         fs::read(abs).ok().map(|bytes| lf(lossy_string(bytes)))
                     }
                 }
@@ -172,11 +192,25 @@ impl Actor {
                 }
                 _ => None,
             };
+            let shown = match (kind, &defined, live) {
+                (SymbolKind::Label, Some((file, at)), Ok(live)) => text(file).and_then(|text| {
+                    let mut lines = labelled_lines(&text, at.line);
+                    if let Some(typeset) = typeset.as_ref().and_then(|typeset| typeset.get(file)) {
+                        let typeset = |line| map_line(typeset, &text, line);
+                        lines = typeset(*lines.start())..=typeset(*lines.end());
+                    }
+                    let areas = synctex::areas(&project, live.as_deref()).ok()?;
+                    areas(file, lines).into_iter().next().map(|(area, _)| area)
+                }),
+                _ => None,
+            };
             let place = defined.map(|(file, at)| at.in_file(file));
             reply.send(Ok(detail.map(|detail| QuickHelp {
+                kind,
                 title: name,
                 detail,
                 place,
+                shown,
             })));
         });
     }
@@ -231,6 +265,44 @@ impl Actor {
                 }
                 Ok(loc)
             }));
+        });
+    }
+
+    /// Where the last build's bad boxes are in its PDF; none while Live Preview's is shown, which has its own lines. A
+    /// paragraph can run over pages: an underfull box is marked on each, an overfull one on those where a line runs past
+    /// its width, when SyncTeX shows one does.
+    pub fn bad_box_areas(&self, reply: Pending<Vec<BadBoxArea>>) {
+        if !matches!(self.live.pdf(&self.core), Ok(None)) {
+            return reply.send(Ok(Vec::new()));
+        }
+        let (boxes, project) = (self.builds.bad_boxes().to_vec(), self.core.project.clone());
+        tokio::task::spawn_blocking(move || {
+            let Ok(areas) = synctex::areas(&project, None) else {
+                return reply.send(Ok(Vec::new()));
+            };
+            let mut found = Vec::new();
+            for item in boxes {
+                let (Some(file), Some(line)) = (item.file, item.line) else {
+                    continue;
+                };
+                let Some(bad) = bad_box(&item.message.text) else {
+                    continue;
+                };
+                let mut pages = areas(&file, bad.lines);
+                let runs_over = |&(_, overrun): &PageArea| overrun > 0.5;
+                if bad.too_wide.is_some() && pages.iter().any(runs_over) {
+                    pages.retain(runs_over);
+                }
+                found.extend(pages.into_iter().map(|(area, overrun)| BadBoxArea {
+                    file: file.clone(),
+                    line,
+                    too_wide: bad.too_wide,
+                    message: item.message.text.clone(),
+                    area,
+                    overrun,
+                }));
+            }
+            reply.send(Ok(found));
         });
     }
 

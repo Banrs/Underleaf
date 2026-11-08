@@ -24,10 +24,24 @@ nonisolated protocol SourceRequest: WireRequest {}
 
 nonisolated protocol SyntaxRequest: WireRequest {}
 
+nonisolated struct AddCitation: SessionRequest {
+    typealias Reply = AddedCitation
+    static let command = "AddCitation"
+
+    var entry: String
+}
+
+nonisolated struct AddedCitation: Decodable, Hashable, Sendable {
+    var key: String
+    var file: String
+    var edits: ProjectEdits?
+}
+
 nonisolated struct Analysis: Decodable, Hashable, Sendable {
     var tree: [OutlineNode]
     var words: Int
     var headingStyles: [HeadingStyle]
+    var packages: [String]
 }
 
 nonisolated enum Answered<Payload: Decodable & Sendable>: Decodable, Sendable {
@@ -53,6 +67,20 @@ nonisolated struct ApplyFix: SessionRequest {
     static let command = "ApplyFix"
 
     var id: String
+}
+
+nonisolated struct BadBoxArea: Decodable, Hashable, Sendable {
+    var file: String
+    var line: Int
+    var tooWide: Double?
+    var message: String
+    var area: ForwardLoc
+    var overrun: Double
+}
+
+nonisolated struct BadBoxAreas: SessionRequest {
+    typealias Reply = [BadBoxArea]
+    static let command = "BadBoxAreas"
 }
 
 nonisolated struct BuildFinished: Decodable, Hashable, Sendable {
@@ -90,6 +118,12 @@ nonisolated struct CheckTex: LibraryRequest {
 
 nonisolated enum Checker: String, Encodable, CaseIterable, Hashable, Sendable {
     case spelling, writingTools
+}
+
+nonisolated struct CitationSource: Decodable, Hashable, Sendable {
+    var id: String
+    var url: String
+    var accept: String
 }
 
 nonisolated struct Clash: Decodable, Hashable, Sendable {
@@ -603,6 +637,13 @@ nonisolated struct LiveView: SessionRequest {
     var last: Int
 }
 
+nonisolated struct LocateCitation: SyntaxRequest {
+    typealias Reply = CitationSource?
+    static let command = "LocateCitation"
+
+    var text: String
+}
+
 nonisolated struct Log: Decodable, Hashable, Sendable {
     var level: LogLevel
     var text: String
@@ -795,6 +836,7 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case badCitationName = "bad_citation_name"
     case labelExists = "label_exists"
     case citationExists = "citation_exists"
+    case noBibtex = "no_bibtex"
     case versionNeedsName = "version_needs_name"
     case onlyTextCompared = "only_text_compared"
     case versionGone = "version_gone"
@@ -988,9 +1030,11 @@ nonisolated struct PutBackProject: LibraryRequest {
 }
 
 nonisolated struct QuickHelp: Decodable, Hashable, Sendable {
+    var kind: SymbolKind
     var title: String
     var detail: String
     var place: FilePlace?
+    var shown: ForwardLoc?
 }
 
 nonisolated struct QuickOpen: SessionRequest {
@@ -1013,7 +1057,7 @@ nonisolated enum QuickOpenKind: String, Decodable, CaseIterable, Hashable, Senda
 }
 
 nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
-    case replaceAll, rename, addPackage, restore
+    case replaceAll, rename, addPackage, restore, addCitation
 
     var title: String {
         switch self {
@@ -1021,6 +1065,7 @@ nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
         case .rename: "Before Rename"
         case .addPackage: "Before Adding a Package"
         case .restore: "Before Restore"
+        case .addCitation: "Before Adding a Citation"
         }
     }
 }
@@ -1398,6 +1443,15 @@ nonisolated struct SynctexMatch: SessionRequest {
 nonisolated struct Tabbing: Decodable, Hashable, Sendable {
     var field: TextRange?
     var edits: [TextEdit]
+}
+
+nonisolated struct Tabular: SyntaxRequest {
+    typealias Reply = String?
+    static let command = "Tabular"
+
+    var cells: String
+    var indent: String
+    var booktabs: Bool
 }
 
 nonisolated struct Template: Decodable, Hashable, Sendable {

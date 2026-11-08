@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ops::RangeInclusive;
 use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
@@ -245,7 +246,9 @@ static UNDEFINED_REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static ON_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"on input line (\d+)").unwrap());
 static BAD_BOX_LINE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:at lines|detected at line) (\d+)").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:at lines|detected at line) (\d+)(?:--(\d+))?").unwrap());
+static TOO_WIDE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(([\d.]+)pt too wide\)").unwrap());
 static BIBTEX_ERROR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(.*)---line (\d+) of file (.+)$").unwrap());
 static BIBTEX_WARNING_PLACE: LazyLock<Regex> =
@@ -552,6 +555,26 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
     (items, bad_boxes)
 }
 
+#[derive(Debug, PartialEq)]
+pub struct BadBox {
+    pub lines: RangeInclusive<u32>,
+    /// How far past its width an overfull box runs, in points; `None` for an underfull one.
+    pub too_wide: Option<f64>,
+}
+
+/// The source lines a bad box's message names, and how far an overfull one runs over.
+pub fn bad_box(message: &str) -> Option<BadBox> {
+    let found = BAD_BOX_LINE.captures(message)?;
+    let first: u32 = found[1].parse().ok()?;
+    let last = found.get(2).and_then(|last| last.as_str().parse().ok());
+    let too_wide = message.strip_prefix("Overfull").map(|rest| {
+        let wide = TOO_WIDE.captures(rest);
+        wide.and_then(|wide| wide[1].parse().ok()).unwrap_or(0.0)
+    });
+    let lines = first..=last.unwrap_or(first).max(first);
+    Some(BadBox { lines, too_wide })
+}
+
 pub fn parse_blg(blg: &str) -> Vec<LogItem> {
     let mut items: Vec<LogItem> = Vec::new();
     let mut above = "";
@@ -708,6 +731,16 @@ mod tests {
         assert!(items.is_empty());
         assert_eq!(bad_boxes.len(), 1);
         assert_eq!(bad_boxes[0].line, Some(5));
+    }
+
+    #[test]
+    fn a_bad_box_names_its_lines_and_how_far_it_runs_over() {
+        let over = bad_box("Overfull \\hbox (12.5pt too wide) in paragraph at lines 5--6").unwrap();
+        assert_eq!((over.lines, over.too_wide), (5..=6, Some(12.5)));
+        let under = bad_box("Underfull \\hbox (badness 10000) detected at line 23").unwrap();
+        assert_eq!((under.lines, under.too_wide), (23..=23, None));
+        let page = "Underfull \\vbox (badness 10000) has occurred while \\output is active";
+        assert_eq!(bad_box(page), None);
     }
 
     #[test]

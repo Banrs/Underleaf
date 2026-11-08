@@ -1,0 +1,227 @@
+import AppKit
+import PDFKit
+import SwiftUI
+import Testing
+@testable import TeXLocal
+
+/// Writes the window chrome (status bar, navigators and their filter bar, Find header, Logs bar) as PNGs at 2x and 4x,
+/// light and dark: once before and once after a change to how it's drawn, then compare the two folders.
+/// `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ChromePixelTests`. Headless
+/// renders draw no Liquid Glass, list rows or scroll edge effects. With `TEST_RUNNER_TEXLOCAL_SCREEN=<folder>` the window
+/// also goes on a 2x screen, and the harness asks a watcher to capture it (`shot name window`) and to move the pointer
+/// (`move x y`, `click x y`) by writing numbered `.req` files there and waiting for each to become `.done`.
+@MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
+struct ChromePixelTests {
+    private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
+    private let requests = ProcessInfo.processInfo.environment["TEXLOCAL_SCREEN"].map { URL(filePath: $0, directoryHint: .isDirectory) }
+
+    @Test func theChromeIsWrittenOut() async throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let screen = Screen(requests: requests)
+        for dark in [false, true] { try await shoot(dark: dark, screen: screen) }
+        try await screen?.ask("quit")
+    }
+
+    private func shoot(dark: Bool, screen: Screen?) async throws {
+        let defaults = TestDefaults()
+        let model = defaults.window()
+        let views = WorkspaceViews(project: ProjectModel(id: "Pixels", window: model))
+        let project = views.project
+        let size = NSSize(width: 1300, height: 700)
+        let workspace = WorkspaceController(window: model, views: views, size: size)
+        let window = (screen == nil ? ChromeKeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
+                                                                                styleMask: [.titled, .resizable, .fullSizeContentView],
+                                                                                backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        workspace.view.setFrameSize(size)
+        window.contentViewController = workspace
+        window.toolbar = workspace.toolbar.toolbar
+        window.title = "Pixels"
+        if screen != nil, let place = NSScreen.screens.first(where: { $0.backingScaleFactor == 2 }) {
+            window.setFrameOrigin(NSPoint(x: place.visibleFrame.minX + 40, y: place.visibleFrame.maxY - window.frame.height - 40))
+        } else {
+            window.alphaValue = 0.01
+            window.setFrameOrigin(NSPoint(x: 40, y: 40))
+        }
+        window.orderFrontRegardless()
+        defer { workspace.close(); window.close() }
+        let suffix = dark ? "dark" : "light"
+        if let screen {
+            try await settle()
+            // A click in the title bar makes the test host active, with this window key; another app can take it back.
+            for _ in 0..<5 where !(NSApp.isActive && window.isKeyWindow) {
+                try await screen.ask("click", at: NSPoint(x: window.frame.midX, y: window.frame.maxY - 12))
+                try await settle()
+            }
+            try #require(NSApp.isActive && window.isKeyWindow)
+        }
+
+        project.store.apply(.tree(Self.tree))
+        project.tree.arrived()
+        project.expandedFolders = ["chapters", "figures"]
+        project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex)))
+        views.pdf.show(try Self.pdf(pages: 3))
+        try await settle()
+
+        func capture(_ name: String) async throws {
+            guard let screen else { return }
+            // Every capture shows the active window, so before and after compare like for like.
+            try #require(NSApp.isActive && window.isKeyWindow, "\(name) would show an inactive window")
+            try await screen.ask("shot screen-\(name)-\(suffix) \(window.windowNumber)")
+        }
+        func hover(_ view: NSView, _ point: NSPoint) async throws {
+            guard let screen else { return }
+            try await screen.ask("move", at: window.convertPoint(toScreen: view.convert(point, to: nil)))
+            try await settle()
+        }
+
+        let columns = workspace.columns.view
+        func bar(_ name: String) async throws {
+            try await settle()
+            try write("status-\(name)-\(suffix)", columns, NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48))
+            try await capture("status-\(name)")
+        }
+        project.store.apply(.build(Self.build(ok: false, issues: [(true, "main.tex"), (true, "main.tex"), (false, "refs.bib")])))
+        try await bar("failed")
+        if screen != nil {
+            try await hover(columns, NSPoint(x: 40, y: 18))
+            try await capture("status-failed-hover-build")
+            try await hover(columns, NSPoint(x: columns.bounds.width - 80, y: 18))
+            try await capture("status-failed-hover-page")
+            try await hover(columns, NSPoint(x: columns.bounds.width / 2, y: 300))
+        }
+        project.store.apply(.build(Self.build(ok: true, issues: [(false, "main.tex")])))
+        try await bar("succeeded")
+        project.store.apply(.build(Self.build(ok: nil, issues: [])))
+        try await bar("compiling")
+
+        let sidebar = workspace.splitViewItems[0].viewController.view
+        let filterBar = try #require(workspace.splitViewItems[0].bottomAlignedAccessoryViewControllers.first?.view)
+        func navigator(_ name: String) async throws {
+            try await settle()
+            try write("navigator-\(name)-\(suffix)", sidebar, sidebar.bounds)
+            try write("filterbar-\(name)-\(suffix)", filterBar, filterBar.bounds)
+            try await capture("navigator-\(name)")
+        }
+        project.navigator.shown = .files
+        project.navigator.fileSelection = nil
+        try await navigator("files")
+        project.navigator.fileSelection = "refs.bib"
+        try await settle()
+        if let list = sidebar.descendants(of: NSOutlineView.self).first(where: { !$0.isHiddenOrHasHiddenAncestor && $0.alphaValue > 0 }) {
+            window.makeFirstResponder(list)
+        }
+        try await navigator("files-selected")
+        window.makeFirstResponder(nil)
+        try await navigator("files-selected-unfocused")
+        project.navigator.shown = .issues
+        try await navigator("issues")
+        project.navigator.shown = .search
+        project.search.replacing = true
+        try await navigator("search")
+        if screen != nil, let header = sidebar.descendants(of: FindHeader.self).first {
+            try await hover(header, NSPoint(x: 20, y: 10))
+            try await capture("navigator-search-hover-mode")
+            try await hover(header, NSPoint(x: 90, y: 10))
+            try await capture("navigator-search-hover-criteria")
+            try await hover(columns, NSPoint(x: columns.bounds.width / 2, y: 300))
+        }
+
+        project.panel.shown = true
+        try await settle()
+        let area = columns.superview?.superview ?? columns
+        try write("logs-bar-\(suffix)", area, NSRect(x: columns.convert(columns.bounds, to: area).minX, y: 0,
+                                                    width: columns.bounds.width, height: 48))
+        try await capture("logs")
+    }
+
+    private static let tree: [TreeNode] = [
+        folder("chapters", [file("chapters/intro.tex", .tex), file("chapters/method.tex", .tex)]),
+        folder("figures", [file("figures/plot.png", .image), file("figures/diagram.pdf", .pdf)]),
+        file("main.tex", .tex, main: true),
+        file("refs.bib", .bib),
+        file("mystyle.sty", .text),
+        file("notes.txt", .text),
+        file("data.csv", .text),
+        file("archive.zip", .other),
+    ]
+
+    private static func folder(_ path: String, _ children: [TreeNode]) -> TreeNode {
+        TreeNode(name: path.fileName, path: path, kind: nil, children: children, main: false)
+    }
+
+    private static func file(_ path: String, _ kind: FileKind, main: Bool = false) -> TreeNode {
+        TreeNode(name: path.fileName, path: path, kind: kind, children: nil, main: main)
+    }
+
+    /// A finished build when `ok` is set, otherwise one compiling.
+    private static func build(ok: Bool?, issues: [(error: Bool, file: String)]) -> BuildState {
+        let items = issues.enumerated().map { index, issue in
+            LogItem(kind: issue.error ? .error : .warning, file: issue.file, line: 10 + index,
+                    message: Message(id: .tex, args: [:], text: issue.error ? "Undefined control sequence." : "Citation undefined."),
+                    explain: nil, fix: nil, topic: nil)
+        }
+        let result = ok.map { CompileResult(ok: $0, stopped: false, durationMs: 2340, pdf: $0 ? "/tmp/main.pdf" : nil, badBoxes: []) }
+        return BuildState(compiling: ok == nil, auto: false, outdated: false, result: result, issues: items, lines: [:])
+    }
+
+    private static func pdf(pages: Int) throws -> PDFDocument {
+        let document = PDFDocument()
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        for index in 0..<pages {
+            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
+            document.insert(page, at: index)
+        }
+        return document
+    }
+
+    private func write(_ name: String, _ view: NSView, _ rect: NSRect) throws {
+        view.displayIfNeeded()
+        for scale in [2, 4] {
+            let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(rect.width) * scale, pixelsHigh: Int(rect.height) * scale,
+                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            rep.size = rect.size
+            view.cacheDisplay(in: rect, to: rep)
+            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
+        }
+    }
+
+    private func settle() async throws {
+        for _ in 0..<8 {
+            try await Task.sleep(for: .milliseconds(40))
+            await Task.yield()
+        }
+    }
+}
+
+/// Asks the watcher outside the test to capture windows and move the pointer, which the test host may not do itself.
+@MainActor private final class Screen {
+    private let folder: URL
+    private var count = 0
+
+    init?(requests: URL?) {
+        guard let requests else { return nil }
+        folder = requests
+    }
+
+    func ask(_ request: String) async throws {
+        count += 1
+        let name = String(format: "%04d", count)
+        try request.write(to: folder.appending(path: "\(name).req"), atomically: true, encoding: .utf8)
+        try await waitUntil(timeout: .seconds(20)) { FileManager.default.fileExists(atPath: folder.appending(path: "\(name).done").path) }
+    }
+
+    /// A point in AppKit's screen space, sent in the event system's, which starts at the main screen's top left.
+    func ask(_ verb: String, at point: NSPoint) async throws {
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        try await ask("\(verb) \(Int(point.x.rounded())) \(Int((top - point.y).rounded()))")
+    }
+}
+
+/// Draws as the key window would, which a test host can't become on its own.
+private final class ChromeKeyWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+}

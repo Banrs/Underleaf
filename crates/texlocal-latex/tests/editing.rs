@@ -397,3 +397,152 @@ fn a_dropped_figure_is_included_only_where_tex_reads_it() {
         assert_eq!(include(path, "main.tex"), Value::Null, "{path}");
     }
 }
+
+fn table(cells: &str) -> Value {
+    free(
+        "Tabular",
+        json!({ "cells": cells, "indent": "", "booktabs": false }),
+    )
+}
+
+fn lines(lines: &[&str]) -> Value {
+    Value::from(lines.join("\n"))
+}
+
+#[test]
+fn spreadsheet_cells_become_a_tabular_ruled_under_its_header_with_numbers_on_the_right() {
+    let tabular = lines(&[
+        "\\begin{tabular}{lr}",
+        "  \\hline",
+        "  Name & Score \\\\",
+        "  \\hline",
+        "  Ada & 10 \\\\",
+        "  Bob & 9.5 \\\\",
+        "  \\hline",
+        "\\end{tabular}",
+    ]);
+    assert_eq!(table("Name\tScore\nAda\t10\nBob\t9.5"), tabular);
+    assert_eq!(table("Name\tScore\nAda\t10\nBob\t9.5\n"), tabular);
+    assert_eq!(table("Name\tScore\r\nAda\t10\r\nBob\t9.5\r\n"), tabular);
+    assert_eq!(table("Name\tScore\rAda\t10\rBob\t9.5\r"), tabular);
+    assert_eq!(table("\n\nName\tScore\nAda\t10\nBob\t9.5\n\t\n\n"), tabular);
+}
+
+#[test]
+fn a_tabular_takes_booktabs_rules_and_the_lines_indentation_when_asked() {
+    let tabular = free(
+        "Tabular",
+        json!({ "cells": "a\tb\nx\t2\n", "indent": "    ", "booktabs": true }),
+    );
+    let expected = lines(&[
+        "\\begin{tabular}{lr}",
+        "      \\toprule",
+        "      a & b \\\\",
+        "      \\midrule",
+        "      x & 2 \\\\",
+        "      \\bottomrule",
+        "    \\end{tabular}",
+    ]);
+    assert_eq!(tabular, expected);
+}
+
+#[test]
+fn a_single_row_is_ruled_above_and_below_and_aligned_by_its_own_cells() {
+    let tabular = lines(&[
+        "\\begin{tabular}{rl}",
+        "  \\hline",
+        "  1 & x \\\\",
+        "  \\hline",
+        "\\end{tabular}",
+    ]);
+    assert_eq!(table("1\tx\n"), tabular);
+}
+
+#[test]
+fn a_cells_latex_specials_are_escaped() {
+    let tabular = table("a & b\t50% of $5 for #1_x\n{y}\t~ ^ \\ end\n");
+    let row = |n: usize| tabular.as_str().unwrap().lines().nth(n).unwrap().to_owned();
+    assert_eq!(row(2), "  a \\& b & 50\\% of \\$5 for \\#1\\_x \\\\");
+    assert_eq!(
+        row(4),
+        "  \\{y\\} & \\textasciitilde{} \\textasciicircum{} \\textbackslash{} end \\\\"
+    );
+}
+
+#[test]
+fn ragged_rows_are_padded_and_empty_cells_leave_no_doubled_space() {
+    let tabular = lines(&[
+        "\\begin{tabular}{lll}",
+        "  \\hline",
+        "  a & b & c \\\\",
+        "  \\hline",
+        "  d & & \\\\",
+        "  & & \\\\",
+        "  & e & \\\\",
+        "  \\hline",
+        "\\end{tabular}",
+    ]);
+    assert_eq!(table("a\tb\tc\nd\n\t\t\n  \t e \t\n"), tabular);
+}
+
+#[test]
+fn quoted_fields_keep_their_separators_and_quotes_and_line_breaks_become_a_space() {
+    let csv = "name,note\n\"Smith, J.\",\"said \"\"hi\"\"\nthen left\"\r\nLee,\"\"\n";
+    let tabular = lines(&[
+        "\\begin{tabular}{ll}",
+        "  \\hline",
+        "  name & note \\\\",
+        "  \\hline",
+        "  Smith, J. & said \"hi\" then left \\\\",
+        "  Lee & \\\\",
+        "  \\hline",
+        "\\end{tabular}",
+    ]);
+    assert_eq!(table(csv), tabular);
+    let excel = table("a\t\"two\nlines\"\nb\t\"x\ty\"\n");
+    let rows = "  a & two lines \\\\\n  \\hline\n  b & x y \\\\";
+    assert!(excel.as_str().unwrap().contains(rows), "{excel}");
+}
+
+#[test]
+fn tabs_separate_cells_before_commas_do() {
+    let tabular = table("x, y\tz\n1,5\t2\n");
+    let tabular = tabular.as_str().unwrap();
+    assert!(tabular.starts_with("\\begin{tabular}{rr}"), "{tabular}");
+    assert!(tabular.contains("  x, y & z \\\\"), "{tabular}");
+}
+
+#[test]
+fn a_column_is_numeric_when_every_filled_cell_below_the_header_is_a_number() {
+    let columns = |cells: &[&str]| {
+        let rows: Vec<String> = cells.iter().map(|cell| format!("{cell}\tx")).collect();
+        let tabular = table(&format!("Head\tx\n{}", rows.join("\n")));
+        tabular.as_str().unwrap()["\\begin{tabular}{".len()..][..2].to_owned()
+    };
+    for numbers in [
+        &["-1,234.5", "12%", "$3", "1e-3", "\u{2212}2", ".5", "+7"][..],
+        &["1", "", "2"],
+        &["€4.00", "£5", "1E6"],
+    ] {
+        assert_eq!(columns(numbers), "rl", "{numbers:?}");
+    }
+    for words in [
+        &["1", "N/A"][..],
+        &["", ""],
+        &["2024-01-05"],
+        &["12:30"],
+        &["-"],
+        &["e5"],
+        &["1e"],
+        &["5 kg"],
+    ] {
+        assert_eq!(columns(words), "ll", "{words:?}");
+    }
+}
+
+#[test]
+fn text_of_fewer_than_two_columns_is_no_table() {
+    for text in ["", "\n\n", "one line", "one\ntwo\n", "\"a,b\"\n\"c\td\"\n"] {
+        assert_eq!(table(text), Value::Null, "{text:?}");
+    }
+}

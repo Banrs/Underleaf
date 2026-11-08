@@ -1,4 +1,5 @@
 pub mod bib;
+pub mod cite;
 pub mod diff;
 pub mod facts;
 pub mod logparse;

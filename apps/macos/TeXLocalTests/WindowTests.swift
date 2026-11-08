@@ -195,7 +195,7 @@ struct WindowTests {
         let missing = NSKeyedArchiver(requiringSecureCoding: true)
         missing.encode("No Such Project" as NSString, forKey: "project")
         let gone = try #require(try restore(missing.encodedData)).model
-        #expect(await gone.project?.saveBeforeLeaving() == true)
+        #expect(await gone.project?.saveBeforeLeaving() == false)
         await gone.reopen()
         #expect(gone.project?.closed == true && !gone.app.windows.contains { $0 === gone } && gone.alert == nil)
     }

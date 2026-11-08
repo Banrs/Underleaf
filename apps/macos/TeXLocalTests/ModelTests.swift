@@ -434,6 +434,41 @@ struct SwitchTests {
         #expect(await app.quit())
         #expect(window.project?.closed == true && held.closed)
     }
+
+    @Test func aCancelledQuitForgetsCloseWithoutSavingSoSaveStillFailsAndClosingAsksAgain() async throws {
+        let (first, second) = (try await newProject(), try await newProject())
+        let app = defaults.app()
+        app.autoCompile = false
+        let home = app.showHome()
+        await home.open(first.id)
+        await home.open(second.id)
+        let (window, other) = (try #require(app.window(showing: first.id)), try #require(app.window(showing: second.id)))
+        let (project, held) = (try #require(window.project), try #require(other.project))
+        let typed = try [(first, project), (second, held)].map { info, project in
+            try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: info.path + "/main.tex")
+            let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
+            _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
+            return document
+        }
+        let quitting = Task { await app.quit() }
+        try await waitUntil { project.askingToDiscard != nil }
+        project.answerDiscard(true)
+        try await waitUntil { held.askingToDiscard != nil }
+        held.answerDiscard(false)
+        #expect(await !quitting.value && project.isOpen && held.isOpen)
+
+        _ = typed[0].edit(NSRange(location: 0, length: 0), with: "% again\n", changing: nil, mirroring: false)
+        #expect(await !project.save() && window.alert?.title == "“main.tex” Wasn’t Saved")
+        let closing = Task { await window.close() }
+        try await waitUntil { project.askingToDiscard != nil }
+        project.answerDiscard(false)
+        #expect(await !closing.value && project.isOpen && typed[0].text.hasPrefix("% again\n% mine\n"))
+        for info in [first, second] {
+            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: info.path + "/main.tex")
+        }
+        #expect(await window.close())
+        #expect(await other.close())
+    }
 }
 
 struct ViewsTests {

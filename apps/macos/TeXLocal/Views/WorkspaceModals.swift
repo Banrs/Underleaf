@@ -82,6 +82,8 @@ struct WorkspaceModals: ViewModifier {
                     SaveVersionSheet(project: project)
                 case .versionHistory:
                     VersionHistorySheet(project: project)
+                case .addCitation:
+                    CitationSheet(project: project)
                 }
             }
     }
@@ -105,6 +107,36 @@ private struct GoToSheet: View {
             if let number { go(number) }
         } fields: {
             DialogField(label: noun, text: $text, prompt: limit().map { "1–\($0)" } ?? "\(noun) number", focus: $focused)
+        }
+        .defaultFocus($focused, true)
+    }
+}
+
+private struct CitationSheet: View {
+    let project: ProjectModel
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(project: ProjectModel) {
+        self.project = project
+        _text = State(initialValue: Self.copied ?? "")
+    }
+
+    /// A DOI or arXiv ID that was copied, read only where the person lets TeXLocal read the pasteboard without asking.
+    private static var copied: String? {
+        let board = NSPasteboard.general
+        guard board.accessBehavior == .alwaysAllow, let text = board.string(forType: .string) else { return nil }
+        return (Syntax.call(LocateCitation(text: text)) ?? nil)?.id
+    }
+
+    var body: some View {
+        let source = Syntax.call(LocateCitation(text: text)) ?? nil
+        DialogSheet(title: "Add Citation",
+                    message: "TeXLocal fetches the BibTeX from doi.org or arxiv.org, adds it to the project’s bibliography and cites it where the cursor is.",
+                    action: "Add", enabled: source != nil) {
+            if let source { try await project.addCitation(source) }
+        } fields: {
+            DialogField(label: "DOI or arXiv ID", text: $text, prompt: "10.1103/PhysRevLett.116.061102", focus: $focused)
         }
         .defaultFocus($focused, true)
     }

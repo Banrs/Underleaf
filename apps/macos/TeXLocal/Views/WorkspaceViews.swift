@@ -23,6 +23,9 @@ final class WorkspaceViews: ProjectViews {
                 self?.pdf.loading?.cancel()
             },
             track({ [weak project] in project?.window?.app.paper ?? .white }) { [weak self] in self?.pdf.view.paper = $0 },
+            track({ [weak project] in project?.navigator.hiddenIssueKinds.contains(.badBox) == true }) { [weak self] in
+                self?.pdf.view.showsBadBoxes = !$0
+            },
         ]
     }
 
@@ -61,7 +64,7 @@ final class WorkspaceViews: ProjectViews {
             guard let project = self?.project else { return }
             project.session.task { await project.open(place.file, line: place.line, column: place.column, length: place.length, jump: true) }
         }
-        text.quickHelp = { [weak self] in self?.quickHelp(at: $0) }
+        text.quickHelp = { [weak self] in self?.quickHelp(at: $0, hovering: $1) }
         pdf.onVisiblePages = { [weak self] in self?.project.liveView($0) }
         pdf.view.onInverse = { [weak self] page, point, click, quietly in
             guard let project = self?.project else { return }
@@ -78,7 +81,9 @@ final class WorkspaceViews: ProjectViews {
     func heard(_ event: Event) {
         switch event {
         case .section(.openFile): showOpenFile()
-        case .section(.build), .section(.live): showIssues()
+        case .section(.build), .section(.live):
+            showIssues()
+            if pdf.isLoading == false, project.store.build?.result?.badBoxes != markedBadBoxes { project.session.task { await self.markBadBoxes() } }
         case .section(.shownPdf): showPDF()
         case .reload(let edits): reload(edits)
         case .renamed(let renamed): editor.rename(from: renamed.from, to: renamed.to)
@@ -116,7 +121,7 @@ final class WorkspaceViews: ProjectViews {
 
     func perform(_ command: MenuCommand) {
         switch command {
-        case .quickHelp: quickHelp(at: editor.caret)
+        case .quickHelp: quickHelp(at: editor.caret, hovering: false)
         case .filePrint: pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil)
         case .editShiftRight: editor.textView.shiftLines(1)
         case .editShiftLeft: editor.textView.shiftLines(-1)
@@ -124,6 +129,8 @@ final class WorkspaceViews: ProjectViews {
         case .findUsages:
             if let path = editor.path { project.session.task { [project, caret = editor.caret] in await project.findUsages(in: path, at: caret) } }
         case .editRename: project.window?.prompt = renamable.map(Prompt.rename)
+        case .editPasteTable:
+            if !editor.textView.pasteTable(booktabs: project.store.outline?.packages.contains("booktabs") == true) { beep() }
         case .openQuickly: OpenQuickly.show(for: project)
         case .pdfOpen: if let url = project.buildPDF { NSWorkspace.shared.open(url) }
         case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
@@ -134,6 +141,7 @@ final class WorkspaceViews: ProjectViews {
     func validates(_ command: MenuCommand) -> Bool {
         switch command {
         case .editRename: renamable != nil
+        case .editPasteTable: pastesTable
         case .viewZoomIn: pdf.canZoomIn
         case .viewZoomOut: pdf.canZoomOut
         default: true
@@ -162,6 +170,7 @@ final class WorkspaceViews: ProjectViews {
     var lineCount: Int { editor.textView.document.lineCount }
     var textStyles: TextStyles { _ = changes; return editor.textStyles }
     private var renamable: SymbolName? { _ = changes; return editor.renamable }
+    private var pastesTable: Bool { _ = changes; return editor.textView.canPasteTable }
     func words(in selection: NSRange) -> Int { editor.textView.document.words(in: selection) }
     func focusEditor() { editor.focus() }
 
@@ -180,7 +189,28 @@ final class WorkspaceViews: ProjectViews {
 
     private func showPDF() {
         guard let shown = project.store.shownPdf, !shown.live else { return }
-        _ = pdf.load(shown.path.map { URL(filePath: $0) })
+        let loading = pdf.load(shown.path.map { URL(filePath: $0) })
+        project.session.task { [self] in
+            await loading.value
+            await markBadBoxes()
+        }
+    }
+
+    @ObservationIgnored private var markedBadBoxes: [LogItem]?
+
+    /// Marks the last build's bad boxes in the PDF shown, once it has loaded, and again when a build reports others.
+    private func markBadBoxes() async {
+        let badBoxes = project.store.build?.result?.badBoxes ?? []
+        guard let document = pdf.view.document else { return }
+        markedBadBoxes = badBoxes
+        if badBoxes.isEmpty { return pdf.view.clearBadBoxes() }
+        // A PDF that started loading meanwhile is the build's own, and is marked once it has loaded.
+        guard let areas = try? await project.session.call(BadBoxAreas()),
+              pdf.view.document === document, !pdf.isLoading, markedBadBoxes == badBoxes else { return }
+        pdf.view.mark(Dictionary(grouping: areas) { Int($0.area.page) - 1 }) { [weak self] badBox in
+            guard let project = self?.project else { return }
+            project.session.task { await project.open(badBox.file, line: Int(badBox.line), jump: true) }
+        }
     }
 
     /// Takes the disk's text through an undoable edit, which an edit made since the session asked refuses.
@@ -189,11 +219,15 @@ final class WorkspaceViews: ProjectViews {
         if apply(edits, named: String(localized: "Reload")) { top.map(editor.textView.scroll(toShownTop:)) }
     }
 
-    private func quickHelp(at offset: Int) {
+    /// Hovering, only a reference or citation has help worth showing unasked.
+    private func quickHelp(at offset: Int, hovering: Bool) {
         guard let path = editor.path else { return }
         project.session.task { [self] in
-            guard let help = await project.quickHelp(in: path, at: offset), editor.path == path else { return }
-            editor.textView.showQuickHelp(help, at: offset)
+            guard let help = await project.quickHelp(in: path, at: offset), editor.path == path,
+                  !hovering || [.label, .citation].contains(help.kind) else { return }
+            let scale = editor.textView.window?.backingScaleFactor ?? 2
+            let picture = help.shown.flatMap { pdf.picture(of: $0, scale: scale) }
+            editor.textView.showQuickHelp(help, picture: picture, at: offset, hovering: hovering)
         }
     }
 }

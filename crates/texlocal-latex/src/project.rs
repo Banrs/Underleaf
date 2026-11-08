@@ -1,5 +1,5 @@
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -94,6 +94,7 @@ pub struct Analysis {
     tree: Vec<OutlineNode>,
     words: usize,
     heading_styles: Vec<headings::HeadingStyle>,
+    packages: Vec<String>,
 }
 
 pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis {
@@ -104,10 +105,12 @@ pub fn analyze(scan: &Scan, main: Option<&str>, shown: Option<&str>) -> Analysis
         walk = Walk::from(scan, shown);
     }
     let class = main.and_then(|main| scan.facts.get(main)?.class.as_deref());
+    let packages: BTreeSet<&String> = walk.files.iter().flat_map(|(_, f)| &f.packages).collect();
     Analysis {
         tree: outline_tree(&walk.outline),
         words: walk.words,
         heading_styles: headings::heading_styles(class),
+        packages: packages.into_iter().cloned().collect(),
         files: walk
             .files
             .iter()
@@ -242,6 +245,28 @@ fn warning(file: &str, line: u32, message: Message) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
+/// Each `.bib` a bibliography command names, as the project spells it, or `None` for one it doesn't have.
+fn named_bibliographies(walk: &Walk, symbols: &Symbols) -> Vec<Option<String>> {
+    let named = walk
+        .files
+        .iter()
+        .flat_map(|(_, facts)| &facts.bibliographies);
+    let spelt =
+        |name: &String| (symbols.spelt(&format!("{name}.bib"))).or_else(|| symbols.spelt(name));
+    named.map(spelt).collect()
+}
+
+/// The project's `.bib` files that the main file's bibliography commands name, each once.
+pub fn bibliographies(scan: &Scan, main: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let named = named_bibliographies(&Walk::from(scan, main), &scan.symbols);
+    named
+        .into_iter()
+        .flatten()
+        .filter(|bib| seen.insert(bib.clone()))
+        .collect()
+}
+
 pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
     let (walk, symbols) = (Walk::from(scan, main), &scan.symbols);
     let reached = || walk.files.iter().copied();
@@ -276,14 +301,7 @@ pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
         ));
     }
 
-    let named = reached().flat_map(|(_, facts)| &facts.bibliographies);
-    let bibliographies: Vec<Option<String>> = named
-        .map(|name| {
-            symbols
-                .spelt(&format!("{name}.bib"))
-                .or_else(|| symbols.spelt(name))
-        })
-        .collect();
+    let bibliographies = named_bibliographies(&walk, symbols);
     let mut seen = HashSet::new();
     let bibs = bibliographies
         .iter()

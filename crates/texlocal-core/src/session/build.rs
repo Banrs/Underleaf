@@ -123,6 +123,10 @@ impl Builds {
         self.compiling || self.cleaning
     }
 
+    pub fn bad_boxes(&self) -> &[LogItem] {
+        self.result.as_ref().map_or(&[], |result| &result.bad_boxes)
+    }
+
     fn built(&self) -> impl Iterator<Item = &LogItem> {
         let result = self.result.iter();
         result.flat_map(|result| result.errors.iter().chain(&result.warnings))

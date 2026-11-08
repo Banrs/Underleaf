@@ -399,7 +399,6 @@ struct NavigatorPane: View {
                 list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: []).accessibilityHidden(!shown)
             }
         }
-        .environment(\.sidebarRowSize, .small)
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaBar(edge: .top, spacing: 0) {
             Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
@@ -455,7 +454,7 @@ private struct IssueList: View {
                             Text("\(file?.fileName ?? project.name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
                                 .help(file ?? project.name)
                         } icon: {
-                            Image(systemName: file == nil ? "folder.fill" : "text.document")
+                            Image(systemName: file.map { project.tree.node(at: $0)?.symbol ?? "text.document" } ?? "folder.fill")
                                 .overlay(alignment: .bottomLeading) {
                                     if rows.contains(where: { $0.element.isError }) {
                                         Image(systemName: "xmark.circle.fill")
@@ -466,7 +465,6 @@ private struct IssueList: View {
                                 }
                         }
                         .lineLimit(1)
-                        .navigatorRow()
                         .accessibilityElement(children: .combine)
                     }
                 }
@@ -523,12 +521,8 @@ private struct IssueRow: View {
         Label {
             Text(item.message.text).lineLimit(place == project.chosenIssue ? nil : 3)
         } icon: {
-            Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
-                .symbolRenderingMode(.multicolor)
-                .font(.body)
-                .frame(width: 18, height: 18)
+            Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
         }
-        .navigatorRow()
         .help([item.message.text, item.explain?.text].compactMap(\.self).joined(separator: "\n\n"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message.text)")
@@ -547,10 +541,6 @@ private struct IssueRow: View {
     }
 
     private var location: String? { item.file.map { file in item.line.map { "\(file), line \($0)" } ?? file } }
-}
-
-extension View {
-    func navigatorRow() -> some View { font(.body).padding(.vertical, -2.5) }
 }
 
 func filtered<Node>(_ nodes: [Node], _ children: WritableKeyPath<Node, [Node]?>, by text: String, name: (Node) -> String) -> [Node] {

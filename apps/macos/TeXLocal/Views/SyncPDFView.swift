@@ -104,7 +104,11 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     private(set) var mark: (page: PDFPage, rect: CGRect, view: NSView, fading: Task<Void, Never>)?
-    private let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
+    let overlays = NSMapTable<PDFPage, NSView>.weakToWeakObjects()
+    var badBoxMarks: (marks: [Int: [BadBoxArea]], press: (BadBoxArea) -> Void)?
+    var showsBadBoxes = true {
+        didSet { if showsBadBoxes != oldValue { remarkBadBoxes() } }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -146,9 +150,10 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlay: NSView, for page: PDFPage) {
         if let cover = document.flatMap({ covers[$0.index(for: page)] }) { (overlay as? PageOverlay)?.cover(cover) }
         if let mark, mark.page === page { place(mark.view, at: mark.rect, on: page, in: overlay) }
+        markBadBoxes(on: page, in: overlay)
     }
 
-    private func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
+    func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
         let box = page.bounds(for: displayBox)
         let scale = CGAffineTransform(scaleX: overlay.bounds.width / box.width, y: overlay.bounds.height / box.height)
         mark.frame = rect.applying(scale.translatedBy(x: -box.minX, y: -box.minY))
@@ -265,7 +270,7 @@ final class PageOverlay: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) as? BadBoxMark }
 
     /// The cover is the whole page, so it keeps to the overlay, which PDFKit trims by a fraction of a point after a page is
     /// replaced in place.

@@ -576,7 +576,9 @@ async fn usages_and_quick_help_describe_a_label() {
     assert_eq!(usages["groups"][0]["hits"].as_array().unwrap().len(), 2);
     let help = rig.call("LookUp", at);
     assert_eq!(help["title"], "sec:intro");
+    assert_eq!(help["kind"], "label");
     assert_eq!(help["place"]["line"], 3);
+    assert!(help["shown"].is_null(), "nothing is shown before a compile");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1750,6 +1752,35 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn live_preview_runs_texpresso_on_the_tex_path_so_it_reaches_kpsewhich_in_another_folder() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        stub_tex(library);
+        let kpsewhich = "#!/bin/sh\necho '[\"page\",0,\"JVBER\"]'\n";
+        program(&library.path("tex/bin/kpsewhich"), kpsewhich);
+        // As TeXpresso does, this asks kpsewhich on its PATH for the TeX Live tree before typesetting.
+        let texpresso = r#"#!/bin/sh
+echo '["live",4]'
+kpsewhich --all -engine=xetex ls-R || exit
+while read -r _; do :; done
+"#;
+        program(&library.path("texpresso/texpresso"), texpresso);
+        let (tex, texpresso) = (library.path("tex/bin"), library.path("texpresso"));
+        app_settings(library, json!({ "texDir": tex, "texpressoDir": texpresso }));
+    })
+    .await;
+    rig.forget();
+    rig.call("StartLive", json!({}));
+    let typeset_or_stopped = |e: &Value| {
+        let event = &e["value"]["event"];
+        let section = &event["value"];
+        event["type"] == "livePage"
+            || section["type"] == "live" && section["value"]["phase"] == "stopped"
+    };
+    let first = rig.find(typeset_or_stopped)["value"]["event"].take();
+    assert_eq!(first["type"], "livePage", "{first}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn autosave_waits_while_text_is_composed() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
@@ -1948,4 +1979,64 @@ async fn linked_sources_reload_after_external_edits_and_retargeting_the_folder()
     fs::rename(&written, rig.library.path("two/ch.tex")).unwrap();
     take_reload(&rig, &doc);
     assert_eq!(doc.with(|source| source.text()), "second edited\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fetched_citation_is_added_to_the_named_bibliography_once() {
+    let rig = Rig::open(&[
+        ("main.tex", "\\cite{x}\n\\bibliography{refs}\n"),
+        ("refs.bib", "@book{knuth1984, title = {The TeXbook}}"),
+        ("other.bib", ""),
+    ])
+    .await;
+    rig.open_document("main.tex");
+    rig.section("outline", |o| !o.is_null());
+    let fetched = "@article{Abbott_2016, title={Observation of Gravitational Waves}, \
+                   DOI={10.1103/PhysRevLett.116.061102}, author={Abbott, B. P.}, year={2016}}";
+    let added = rig.call("AddCitation", json!({ "entry": fetched }));
+    assert_eq!(added["key"], "abbott2016observation");
+    assert_eq!(added["file"], "refs.bib");
+    assert!(!added["edits"].is_null());
+    let bib = fs::read_to_string(rig.root().join("refs.bib")).unwrap();
+    assert!(
+        bib.starts_with(
+            "@book{knuth1984, title = {The TeXbook}}\n\n@article{abbott2016observation,\n  author"
+        ),
+        "{bib}"
+    );
+    let again = rig.call(
+        "AddCitation",
+        json!({ "entry": fetched.replace("PhysRevLett", "physrevlett") }),
+    );
+    assert_eq!(
+        (again["key"].as_str(), again["edits"].is_null()),
+        (Some("abbott2016observation"), true)
+    );
+    assert_eq!(
+        fs::read_to_string(rig.root().join("refs.bib")).unwrap(),
+        bib
+    );
+    assert_eq!(
+        rig.refuse("AddCitation", json!({ "entry": "<html>" })),
+        ErrorKind::Invalid
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_project_without_a_bibliography_gets_one_for_a_fetched_citation() {
+    let rig = Rig::open(&[("main.tex", "Text.\n")]).await;
+    rig.open_document("main.tex");
+    let added = rig.call(
+        "AddCitation",
+        json!({ "entry": "@misc{k, author={Ada Lovelace}, title={Notes}, year={1843}}" }),
+    );
+    assert_eq!(
+        (added["key"].as_str(), added["file"].as_str()),
+        (Some("lovelace1843notes"), Some("references.bib"))
+    );
+    let bib = fs::read_to_string(rig.root().join("references.bib")).unwrap();
+    assert_eq!(
+        bib,
+        "@misc{lovelace1843notes,\n  author = {Ada Lovelace},\n  title = {Notes},\n  year = {1843}\n}\n"
+    );
 }

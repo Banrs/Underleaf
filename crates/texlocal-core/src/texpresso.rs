@@ -61,10 +61,13 @@ pub struct PageRange {
 pub type Sink = Box<dyn Fn(LiveEvent) + Send + Sync>;
 
 pub trait Preview: Send + Sync {
-    fn available(&self, path_env: &str) -> bool;
+    fn available(&self, texpresso_path: &str) -> bool;
+    /// Starts the TeXpresso found in `texpresso_path`; it runs with `path_env`, the PATH compiles run
+    /// with, since it asks kpsewhich there for the TeX Live tree.
     fn start(
         &self,
         project: &Project,
+        texpresso_path: &str,
         path_env: &str,
         sink: Sink,
     ) -> Result<Arc<dyn LiveRun>, CoreError>;
@@ -320,12 +323,13 @@ fn remove_other_caches(kept: &Path) {
 }
 
 impl Preview for Manager {
-    fn available(&self, path_env: &str) -> bool {
-        discover(path_env).is_some()
+    fn available(&self, texpresso_path: &str) -> bool {
+        discover(texpresso_path).is_some()
     }
     fn start(
         &self,
         project: &Project,
+        texpresso_path: &str,
         path_env: &str,
         sink: Sink,
     ) -> Result<Arc<dyn LiveRun>, CoreError> {
@@ -336,7 +340,7 @@ impl Preview for Manager {
             return Err(CoreError::bad_request(messages::live_no_main()));
         }
         let none = || CoreError::not_found(messages::no_texpresso());
-        let executable = discover(path_env).ok_or_else(none)?;
+        let executable = discover(texpresso_path).ok_or_else(none)?;
         fs::create_dir_all(&project.build)?;
         let build = fs::canonicalize(&project.build)?;
         let mut folder = tempfile::Builder::new();
@@ -704,8 +708,8 @@ mod tests {
         let manager = Manager::new(Arc::default(), dir.path().join("cache"));
         let helpers = std::env::var_os("TEXLOCAL_TEXPRESSO")
             .and_then(|program| Some(Path::new(&program).parent()?.to_path_buf()));
-        let path = tool_paths(&AppSettings::default(), helpers.as_ref()).1;
-        let run = manager.start(&project, &path, sink).unwrap();
+        let (path, texpresso) = tool_paths(&AppSettings::default(), helpers.as_ref());
+        let run = manager.start(&project, &texpresso, &path, sink).unwrap();
         run.open("main.tex", &text);
         run.view(0, 0);
         let mut started = std::iter::from_fn(|| events.recv_timeout(Duration::from_secs(120)).ok());

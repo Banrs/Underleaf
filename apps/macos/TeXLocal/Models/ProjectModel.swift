@@ -88,7 +88,6 @@ final class ProjectModel {
     private var answered: Set<String> = []
     private(set) var askingToDiscard: [String]?
     @ObservationIgnored private var discardAnswer: CheckedContinuation<Bool, Never>?
-    @ObservationIgnored private var discarded = false
     private(set) var previewVersion = 0
 
     var importClash: ImportClash?
@@ -291,8 +290,8 @@ final class ProjectModel {
     private func saved(reporting: Bool) async throws -> Bool {
         do {
             return try await session.call(Save(reporting: reporting))
-        } catch _ where discarded || store.lifecycle?.stopped != nil || !initialLoadComplete {
-            return discarded || lostEdits.isEmpty
+        } catch _ where store.lifecycle?.stopped != nil || !initialLoadComplete {
+            return lostEdits.isEmpty
         }
     }
 
@@ -301,20 +300,21 @@ final class ProjectModel {
         store.lifecycle?.stopped?.unsaved ?? store.documents.filter { $0.error != nil }.map(\.path)
     }
 
-    /// Saves, or when a file can't be saved asks whether to close without it.
-    func saveBeforeLeaving() async -> Bool {
+    /// Saves, or when a file can't be saved asks whether to close without it: nil stays open, true closes without it.
+    /// The answer goes to `close` from the Close or Quit that asked, so the next one asks again.
+    func saveBeforeLeaving() async -> Bool? {
         do {
-            if try await saved(reporting: true) { return true }
+            if try await saved(reporting: true) { return false }
         } catch where lostEdits.isEmpty {
             window?.report(notSavedTitle(), error)
-            return error is CancellationError
+            return error is CancellationError ? false : nil
         } catch {}
         let lost = lostEdits
-        guard !lost.isEmpty, conflicts.isEmpty, discardAnswer == nil else { return false }
+        guard !lost.isEmpty, conflicts.isEmpty, discardAnswer == nil else { return nil }
         window?.controller?.show()
         askingToDiscard = lost
-        discarded = await withCheckedContinuation { discardAnswer = $0 }
-        return discarded
+        let discarding = await withCheckedContinuation { discardAnswer = $0 }
+        return discarding ? true : nil
     }
 
     func answerDiscard(_ discard: Bool) {
@@ -400,6 +400,32 @@ final class ProjectModel {
         try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), named: String(localized: "Rename"))
     }
 
+    /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
+    func addCitation(_ source: CitationSource) async throws {
+        guard let url = URL(string: source.url) else { throw AppFailure(String(localized: "“\(source.id)” isn’t a DOI or arXiv ID.")) }
+        let citing = openPath
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue(source.accept, forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status), let fetched = String(data: data, encoding: .utf8) else {
+            throw AppFailure(status == 404 ? String(localized: "No record of “\(source.id)” was found at \(url.host() ?? "").")
+                             : String(localized: "\(url.host() ?? "") couldn’t be reached (HTTP \(status)). Try again later."))
+        }
+        let added = try await session.call(AddCitation(entry: fetched))
+        let name = String(localized: "Add Citation")
+        if let edits = added.edits, !apply(edits.edits, named: name) {
+            if let snapshot = edits.snapshot, !edits.written.isEmpty {
+                try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
+            }
+            throw Self.unchanged
+        }
+        // Only where it was asked for: the person may have moved to another file while it was fetched.
+        if openPath == citing { views?.perform(.cite(added.key)) }
+        notices.note(added.edits == nil ? String(localized: "Cited “\(added.key)” from “\(added.file)”")
+                     : String(localized: "Added “\(added.key)” to “\(added.file)”"))
+    }
+
     func saveVersion(named name: String) async throws {
         if let saved = try await session.call(SaveVersion(name: name)) { notices.note(String(localized: "Saved Version “\(saved.title)”")) }
     }
@@ -448,12 +474,12 @@ final class ProjectModel {
     }
 
     @discardableResult
-    func close() -> Task<Bool, Never> {
+    func close(discarding: Bool = false) -> Task<Bool, Never> {
         if let closing { return closing }
         let task = Task { [self] in
             defer { closing = nil }
             do {
-                guard try await session.close(discarding: discarded) else { return false }
+                guard try await session.close(discarding: discarding) else { return false }
             } catch {
                 window?.report(notSavedTitle(), error)
                 return false
