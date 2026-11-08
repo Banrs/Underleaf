@@ -42,7 +42,6 @@ typedef void (*TlCallback)(void *_Nullable ctx, const char *json);
 TlHandle *_Nullable tl_open(const char *_Nullable data_dir, const char *_Nullable state_dir,
                             const char *_Nullable helpers_dir, TlCallback _Nullable listener, void *_Nullable ctx);
 
-// Frees a JSON string returned by tl_source_edit, tl_source_call or tl_syntax_call.
 void tl_free(char *_Nullable text);
 
 // Asynchronous: the answer arrives through the listener with the same id.
