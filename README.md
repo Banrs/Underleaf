@@ -72,7 +72,7 @@ always has Live Preview. Set `TEXLOCAL_SIGN_IDENTITY` to your Developer ID Appli
 `TEXLOCAL_NOTARY_PROFILE` to a keychain profile saved with `xcrun notarytool store-credentials`, then run:
 
 ```sh
-tools/release.sh v0.2.0
+tools/release.sh v<MARKETING_VERSION>
 ```
 
 The tag must match `MARKETING_VERSION` in `apps/macos/Version.xcconfig`. The script archives a Release build,
