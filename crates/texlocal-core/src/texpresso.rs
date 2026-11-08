@@ -284,27 +284,6 @@ impl Manager {
     }
 }
 
-fn command(
-    executable: &Path,
-    path_env: &str,
-    cache: &Path,
-    build: &Path,
-    main: &Path,
-    root: &Path,
-    pdf: &Path,
-) -> tokio::process::Command {
-    let mut command = process::tool(executable, path_env);
-    command
-        .args(["-json", "-texlive", "-I"])
-        .arg(build)
-        .arg(main)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .env("XDG_CACHE_HOME", cache)
-        .env("TEXPRESSO_PDF_OUTPUT", pdf);
-    command
-}
-
 fn engine_cache(root: &Path, executable: &Path) -> PathBuf {
     let key = Stamp::at(&executable.with_file_name("texpresso-xetex")).map_or_else(
         |_| "unknown".into(),
@@ -350,7 +329,15 @@ impl Preview for Manager {
         let cache = engine_cache(&self.cache, &executable);
         let kept = cache.clone();
         tokio::task::spawn_blocking(move || remove_other_caches(&kept));
-        let mut command = command(&executable, path_env, &cache, &build, &main, &root, &pdf);
+        let mut command = process::tool(&executable, path_env);
+        command
+            .args(["-json", "-texlive", "-I"])
+            .arg(&build)
+            .arg(&main)
+            .current_dir(&root)
+            .stdin(Stdio::piped())
+            .env("XDG_CACHE_HOME", &cache)
+            .env("TEXPRESSO_PDF_OUTPUT", &pdf);
         let (mut child, tree) = self.processes.spawn(None, &mut command).map_err(|err| {
             remove_pdf_folder(&pdf);
             CoreError::internal(messages::texpresso_unstarted(err))

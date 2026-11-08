@@ -99,11 +99,6 @@ fn take(text: *mut c_char) -> Value {
     value
 }
 
-fn refused(mut answer: Value) -> Value {
-    assert_eq!(answer["type"], "error", "{answer}");
-    answer["value"].take()
-}
-
 #[test]
 fn opening_needs_two_folders_and_a_listener() {
     let dir = c("/tmp");
@@ -187,7 +182,8 @@ fn a_panic_answers_an_error_and_a_new_source_survives_one() {
     let source = own(|| panic!("a broken editor"));
     assert_eq!(source_text(source), "");
     let answer = take(unsafe { answer_on(source, |_| panic!("a broken edit")) });
-    assert_eq!(refused(answer)["kind"], "internal");
+    assert_eq!(answer["type"], "error", "{answer}");
+    assert_eq!(answer["value"]["kind"], "internal");
     let text = "kept";
     unsafe { tl_source_restore(source, text.as_ptr(), text.len()) };
     assert_eq!(source_text(source), text);

@@ -16,23 +16,18 @@ fn the_generated_files_are_current() {
     );
 }
 
-fn read<T: JsonSchema>() -> Ir {
-    let mut ir = Ir::default();
-    for (way, settings) in [
-        (Way::Out, SchemaSettings::draft2020_12().for_serialize()),
-        (Way::In, SchemaSettings::draft2020_12().for_deserialize()),
-    ] {
-        let mut generator = settings.into_generator();
-        generator.subschema_for::<T>();
-        ir.add(generator.definitions(), way);
-    }
-    ir.check();
-    ir
-}
-
 fn refused<T: JsonSchema>() -> String {
     let panic = catch_unwind(|| {
-        read::<T>();
+        let mut ir = Ir::default();
+        for (way, settings) in [
+            (Way::Out, SchemaSettings::draft2020_12().for_serialize()),
+            (Way::In, SchemaSettings::draft2020_12().for_deserialize()),
+        ] {
+            let mut generator = settings.into_generator();
+            generator.subschema_for::<T>();
+            ir.add(generator.definitions(), way);
+        }
+        ir.check();
     })
     .expect_err("the shape was refused");
     panic.downcast_ref::<String>().cloned().unwrap_or_default()

@@ -206,9 +206,7 @@ impl Actor {
             })));
         });
     }
-}
 
-impl Actor {
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
         if line < 1 {
             return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
@@ -306,10 +304,8 @@ impl Actor {
         pages: Vec<PdfPage>,
         reply: Pending<Option<PdfHit>>,
     ) {
-        let (doc, root) = (
-            self.docs.get(&file).map(|doc| doc.doc.clone()),
-            self.core.project.root.clone(),
-        );
+        let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
+        let root = self.core.project.root.clone();
         tokio::task::spawn_blocking(move || {
             let text = match doc {
                 Some(doc) => Ok(doc.with(|source| source.line(line))),

@@ -5,47 +5,44 @@ import Testing
 struct SearchTests {
     @Test(arguments: [false, true], [false, true])
     func anOlderReplyCannotReplaceNewerResultsOrTheirSelection(fails: Bool, changesQuery: Bool) async throws {
-        let search = ProjectSearch()
-        search.query = "needle"
-        var reply: CheckedContinuation<[SearchGroup], any Error>?
-        let old = Task { await search.run { _ in try await withCheckedThrowingContinuation { reply = $0 } } }
-        try await waitUntil { reply != nil }
+        let (search, old, reply) = try await pending()
         if changesQuery { search.query = "other"; search.query = "needle" }
         let current = groups("new.tex")
         await search.run { _ in current }
         search.chosen = current[0].hits[0].id
-        if fails { reply?.resume(throwing: AppFailure("Old failure")) } else { reply?.resume(returning: groups("old.tex")) }
+        if fails { reply.resume(throwing: AppFailure("Old failure")) } else { reply.resume(returning: groups("old.tex")) }
         #expect(await old.value == false)
         #expect(search.groups == current && search.chosen == current[0].hits[0].id && search.failure == nil)
     }
 
     @Test(arguments: [false, true])
     func cancellationAndUsagesPreventAPendingSearchFromPublishing(showUsages: Bool) async throws {
-        let search = ProjectSearch()
-        search.query = "needle"
-        var reply: CheckedContinuation<[SearchGroup], any Error>?
-        let old = Task { await search.run { _ in try await withCheckedThrowingContinuation { reply = $0 } } }
-        try await waitUntil { reply != nil }
+        let (search, old, reply) = try await pending()
         if showUsages { search.show(Usages(name: "needle", groups: groups("usages.tex"))) } else { old.cancel() }
-        reply?.resume(returning: groups("old.tex"))
+        reply.resume(returning: groups("old.tex"))
         #expect(await old.value == false)
         #expect(search.groups == (showUsages ? groups("usages.tex") : nil))
     }
 
     @Test func clearingAQueryInvalidatesItsPendingReply() async throws {
-        let search = ProjectSearch()
-        search.query = "needle"
-        var reply: CheckedContinuation<[SearchGroup], any Error>?
-        let old = Task { await search.run { _ in try await withCheckedThrowingContinuation { reply = $0 } } }
-        try await waitUntil { reply != nil }
+        let (search, old, reply) = try await pending()
         search.query = ""
         await search.run { _ in Issue.record("An empty query must not reach the core"); return [] }
-        reply?.resume(returning: groups("old.tex"))
+        reply.resume(returning: groups("old.tex"))
         #expect(await old.value == false && search.groups == nil && search.chosen == nil)
     }
 
     private func groups(_ file: String) -> [SearchGroup] {
         [SearchGroup(file: file, hits: [SearchHit(file: file, line: 1, column: 0, length: 6, before: "", match: "needle", after: "")])]
+    }
+
+    private func pending() async throws -> (ProjectSearch, Task<Bool, Never>, CheckedContinuation<[SearchGroup], any Error>) {
+        let search = ProjectSearch()
+        search.query = "needle"
+        var reply: CheckedContinuation<[SearchGroup], any Error>?
+        let old = Task { await search.run { _ in try await withCheckedThrowingContinuation { reply = $0 } } }
+        try await waitUntil { reply != nil }
+        return (search, old, reply!)
     }
 }
 

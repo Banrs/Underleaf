@@ -50,7 +50,7 @@ struct FieldPixelTests {
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = true } }
             for field in fields { field.needsDisplay = true }
             box.displayIfNeeded()
-            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", fourTimes(box.bounds.size))] {
+            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
                 guard let rep else { continue }
                 box.cacheDisplay(in: box.bounds, to: rep)
                 try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)-\(suffix)@\(scale)x-\(label).png"))
@@ -90,13 +90,6 @@ struct FieldPixelTests {
             }
         }
         return written
-    }
-
-    private func fourTimes(_ size: NSSize) -> NSBitmapImageRep? {
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * 4, pixelsHigh: Int(size.height) * 4, bitsPerSample: 8,
-                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-        rep?.size = size
-        return rep
     }
 
     private func settle() async throws {

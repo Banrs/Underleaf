@@ -113,10 +113,7 @@ final class NavigatorFilterBar: NSView {
             (toggle.target, toggle.action) = (self, action)
         }
         let content = NSView()
-        content.addSubview(field)
-        content.addSubview(recentOnly)
-        content.addSubview(recentIssues)
-        content.addSubview(onlyErrors)
+        for view in [field, recentOnly, recentIssues, onlyErrors] { content.addSubview(view) }
         fieldGlass.contentView = content
 
         // Stock glass, so the symbol takes the label colour and dims with the window.

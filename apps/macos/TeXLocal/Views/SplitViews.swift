@@ -2,7 +2,6 @@ import AppKit
 import PDFKit
 
 extension NSView {
-    @discardableResult
     func updateDividerCursor(with event: NSEvent) -> Bool {
         guard let window, window.isKeyWindow, let workspace = window.contentView, let content = workspace.superview,
               let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }

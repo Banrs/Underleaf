@@ -473,7 +473,6 @@ final class ProjectModel {
         }
     }
 
-    @discardableResult
     func close(discarding: Bool = false) -> Task<Bool, Never> {
         if let closing { return closing }
         let task = Task { [self] in

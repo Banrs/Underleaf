@@ -1,5 +1,3 @@
-import Foundation
-
 nonisolated extension Menus {
     static let shared = Syntax.call(ListMenus()) ?? Menus(templates: Templates(math: [], insert: [], list: [], references: []), symbolGroups: [])
 }

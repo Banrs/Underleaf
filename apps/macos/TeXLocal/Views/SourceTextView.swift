@@ -128,7 +128,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         defaultParagraphStyle = style
         textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
-        gutter.font = EditorGutter.font(forText: fontSize)
+        gutter.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
         issues.fontChanged(size: fontSize, text: font)
         updateGutterWidth()
     }

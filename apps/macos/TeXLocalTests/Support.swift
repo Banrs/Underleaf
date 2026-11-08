@@ -46,6 +46,14 @@ func workspaceWindow(_ model: WindowModel, toolbar: Bool = false) -> (NSWindow, 
     return (window, workspace)
 }
 
+func bitmap(_ size: NSSize, scale: Int) -> NSBitmapImageRep? {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * scale, pixelsHigh: Int(size.height) * scale,
+                               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                               bytesPerRow: 0, bitsPerPixel: 0)
+    rep?.size = size
+    return rep
+}
+
 /// Draws as the key window would, which a test host can't become on its own.
 final class KeyWindow: NSWindow {
     override var isKeyWindow: Bool { true }

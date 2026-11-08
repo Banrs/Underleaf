@@ -21,8 +21,5 @@ ratex-types = "=0.1.15"
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 schemars = "1.2"
 
-[lints]
-workspace = true
-
 [package.metadata.cargo-shear]
 ignored = ["rust-embed"]
