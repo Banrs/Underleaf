@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
@@ -126,8 +126,9 @@ async fn opening_reopens_the_last_open_file_before_its_reply_or_else_the_main_fi
     let last = |file: &'static str| {
         move |library: &Library| {
             let ui = json!({ "ui": { "file": file } });
-            let settings = library.project_root("P").join(".texlocal.json");
-            fs::write(settings, ui.to_string()).unwrap();
+            let device = library.path("state/.ui");
+            fs::create_dir_all(&device).unwrap();
+            fs::write(device.join("P.json"), ui.to_string()).unwrap();
         }
     };
     let reopened = |rig: Rig| {
@@ -1084,45 +1085,6 @@ async fn ui_state_is_written_to_the_state_folder_before_the_close_and_never_to_t
     assert_eq!(ui["foldedHeadings"], json!(["main.tex\tIntro"]));
     let opened = json!({ "id": rig.id, "autoCompile": false });
     assert_eq!(rig.call_to(2, "OpenProject", opened)["pdfPlace"], shown);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_old_files_place_and_grant_move_out_at_open_and_leave_it_at_a_settings_write() {
-    let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], |library| {
-        let root = library.project_root("P");
-        let folder = fs::metadata(&root).unwrap();
-        let old = json!({
-            "mainFile": "main.tex",
-            "theirs": 1,
-            "shellEscapeFor": [folder.dev(), folder.ino()],
-            "ui": { "file": "ch.tex", "line": 3, "openFile": "ch.tex" },
-        });
-        fs::write(root.join(".texlocal.json"), old.to_string()).unwrap();
-    })
-    .await;
-    let settings = rig.root().join(".texlocal.json");
-    let old = fs::read(&settings).unwrap();
-    assert_eq!(rig.section("openFile", |_| true)["path"], "ch.tex");
-    let project = rig.section("project", |_| true);
-    assert_eq!(project["settings"]["shellEscape"], true);
-    let moved = read_json(&rig.library.path("state/.ui/P.json"));
-    assert_eq!(moved["ui"]["line"], 3);
-    assert_eq!(moved["ui"]["openFile"], "ch.tex");
-    assert!(moved["shellEscapeFor"].is_array());
-    assert_eq!(moved["theirs"], Value::Null);
-    let folders = json!({ "patch": { "expandedFolders": ["figs"] } });
-    rig.call("SetUiState", folders);
-    assert_eq!(fs::read(&settings).unwrap(), old);
-    rig.call("SetSettings", json!({ "patch": { "engine": "xelatex" } }));
-    let facts = json!({
-        "mainFile": "main.tex",
-        "engine": "xelatex",
-        "stopOnFirstError": false,
-        "theirs": 1,
-    });
-    assert_eq!(read_json(&settings), facts);
-    let project = rig.section("project", |p| p["settings"]["engine"] == "xelatex");
-    assert_eq!(project["settings"]["shellEscape"], true);
 }
 
 #[tokio::test(flavor = "multi_thread")]

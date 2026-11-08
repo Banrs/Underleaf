@@ -71,7 +71,7 @@ struct ProjectFile {
     rest: Map<String, Value>,
 }
 
-#[derive(Default, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct DeviceFile {
     #[serde(skip_serializing_if = "StoredUi::is_default")]
@@ -126,27 +126,7 @@ fn update_device(
     }
 }
 
-pub(crate) fn migrate(project: &Project) {
-    if project.ui == project.settings || project.ui.exists() {
-        return;
-    }
-    let Ok(old) = load::<DeviceFile>(&project.settings) else {
-        return;
-    };
-    let moved = DeviceFile {
-        rest: Map::new(),
-        ..old
-    };
-    if moved != DeviceFile::default() {
-        let _ = update_device(&project.ui, |device| {
-            *device = moved;
-            Ok(())
-        });
-    }
-}
-
 pub(crate) fn copy_ui(from: &Project, to: &Path) {
-    migrate(from);
     if let Ok(device) = load::<DeviceFile>(&from.ui) {
         let _ = update_device(to, |copy| {
             *copy = DeviceFile {
@@ -166,19 +146,14 @@ pub fn write_settings(
     project: &Project,
     patch: &SettingsPatch,
 ) -> Result<StoredSettings, CoreError> {
-    let moved = project.ui != project.settings && project.ui.exists();
-    store_settings(&project.settings, patch, moved)
+    store_settings(&project.settings, patch)
 }
 
 pub(crate) fn new_settings(file: &Path, patch: &SettingsPatch) -> Result<(), CoreError> {
-    store_settings(file, patch, false).map(drop)
+    store_settings(file, patch).map(drop)
 }
 
-fn store_settings(
-    file: &Path,
-    patch: &SettingsPatch,
-    moved: bool,
-) -> Result<StoredSettings, CoreError> {
+fn store_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettings, CoreError> {
     let file = update(file, |file: &mut ProjectFile| {
         let settings = &mut file.settings;
         if let Some(main_file) = &patch.main_file {
@@ -188,11 +163,6 @@ fn store_settings(
         settings.stop_on_first_error = patch
             .stop_on_first_error
             .unwrap_or(settings.stop_on_first_error);
-        file.rest.remove("shellEscape");
-        if moved {
-            file.rest.remove("ui");
-            file.rest.remove("shellEscapeFor");
-        }
         Ok(())
     })?;
     Ok(file.settings)

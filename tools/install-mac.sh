@@ -19,7 +19,6 @@ if [[ $NAME != TeXLocal ]]; then
   for key in CFBundleName CFBundleDisplayName; do plutil -replace $key -string $NAME $APP/Contents/Info.plist; done
   plutil -replace LSEnvironment -json "{\"TEXLOCAL_DATA\": \"$HOME/$NAME\"}" $APP/Contents/Info.plist
 fi
-plutil -replace TeXLocalRevision -string $REV $APP/Contents/Info.plist
 codesign --force --deep --sign - $APP
 
 xcrun swift -e "import AppKit

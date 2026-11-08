@@ -8,10 +8,10 @@ pub(crate) use texlocal_latex::{fold_case, same_folded};
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::projects::{self, OPENED_DIR, is_opened};
+use crate::projects::{self, is_opened};
 use crate::service::Service;
-use crate::settings::{APP_SETTINGS_FILE, read_settings};
-use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, atomic, sys};
+use crate::settings::read_settings;
+use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, sys};
 
 pub(crate) fn normalize_segments(
     rel: &str,
@@ -76,42 +76,6 @@ const UI_DIR: &str = ".ui";
 
 pub(crate) fn ui_file(state_dir: &Path, name: &str) -> PathBuf {
     state_dir.join(UI_DIR).join(format!("{name}.json"))
-}
-
-pub(crate) fn move_device_state(data_dir: &Path, state_dir: &Path) {
-    for name in [OPENED_DIR, APP_SETTINGS_FILE] {
-        let (from, to) = (data_dir.join(name), state_dir.join(name));
-        if !to.exists()
-            && let Err(err) = sys::rename_exclusive(&from, &to)
-            && err.kind() == io::ErrorKind::CrossesDevices
-        {
-            let _ = copy_over(&from, &to);
-        }
-    }
-}
-
-fn copy_over(from: &Path, to: &Path) -> io::Result<()> {
-    let temp = atomic::temp_builder().tempdir_in(to.parent().expect("in the state folder"))?;
-    let copy = temp.path().join("copy");
-    copy_all(from, &copy)?;
-    sys::rename_exclusive(&copy, to)?;
-    if from.is_dir() {
-        fs::remove_dir_all(from)
-    } else {
-        fs::remove_file(from)
-    }
-}
-
-fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
-    if !fs::symlink_metadata(from)?.is_dir() {
-        return fs::copy(from, to).map(drop);
-    }
-    fs::create_dir(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        copy_all(&entry.path(), &to.join(entry.file_name()))?;
-    }
-    Ok(())
 }
 
 pub(crate) fn identity(path: &Path) -> Option<(u64, u64)> {
@@ -265,7 +229,6 @@ pub(crate) fn disk_spelling(root: &Path, rel: &str) -> Option<String> {
 mod tests {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
@@ -281,33 +244,5 @@ mod tests {
         let refused = utf8_name(latin1.parent().unwrap()).unwrap_err();
         assert_eq!(refused.kind, crate::ErrorKind::Invalid);
         assert_eq!(utf8_name(&nested).unwrap(), "b.tex");
-    }
-
-    #[test]
-    fn a_copy_lands_whole_or_not_at_all_and_its_source_goes_only_once_it_has() {
-        let dir = tempfile::tempdir().unwrap();
-        let (data, state) = (dir.path().join("data"), dir.path().join("state"));
-        let (from, to) = (data.join(".opened"), state.join(".opened"));
-        let read = |path: &Path| fs::read_to_string(path).unwrap();
-        fs::create_dir_all(from.join("a/history")).unwrap();
-        fs::create_dir(&state).unwrap();
-        let unreadable = from.join("a/history/1.json");
-        fs::write(&unreadable, "[]").unwrap();
-        let mode = |mode| fs::set_permissions(&unreadable, fs::Permissions::from_mode(mode));
-        mode(0).unwrap();
-        assert!(copy_over(&from, &to).is_err());
-        assert!(fs::read_dir(&state).unwrap().next().is_none());
-        mode(0o644).unwrap();
-        copy_over(&from, &to).unwrap();
-        assert!(!from.exists());
-        assert_eq!(read(&to.join("a/history/1.json")), "[]");
-        let (settings, copied) = (data.join("app.json"), state.join("app.json"));
-        fs::write(&settings, "old").unwrap();
-        copy_over(&settings, &copied).unwrap();
-        fs::write(&settings, "new").unwrap();
-        let refused = copy_over(&settings, &copied).unwrap_err();
-        assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!([read(&settings), read(&copied)], ["new", "old"]);
-        assert_eq!(fs::read_dir(&state).unwrap().count(), 2);
     }
 }
