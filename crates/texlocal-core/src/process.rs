@@ -144,12 +144,8 @@ pub(crate) fn tool(program: &Path, path_env: &str) -> Command {
 }
 
 async fn read_capped(mut reader: impl AsyncRead + Unpin, kept: &mut Vec<u8>) {
-    if (&mut reader)
-        .take(MAX_OUTPUT)
-        .read_to_end(kept)
-        .await
-        .is_ok()
-    {
+    let read = (&mut reader).take(MAX_OUTPUT).read_to_end(kept).await;
+    if read.is_ok() {
         let _ = tokio::io::copy(&mut reader, &mut tokio::io::sink()).await;
     }
 }
