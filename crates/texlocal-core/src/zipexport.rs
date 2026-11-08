@@ -76,13 +76,13 @@ fn arxiv_files(project: &Project) -> Result<Vec<(String, Vec<u8>)>, CoreError> {
     });
     let readme = serde_json::to_vec_pretty(&readme).expect("JSON from JSON");
     let mut added = vec![("00README.json".to_owned(), readme)];
-    let stem = Path::new(&main)
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
     for ext in ["ind", "gls", "acr", "nls", "glstex"] {
-        match fs::read(settings.output(&project.build, ext)?) {
-            Ok(bytes) => added.push((format!("{stem}.{ext}"), bytes)),
+        let output = settings.output(&project.build, ext)?;
+        match fs::read(&output) {
+            Ok(bytes) => {
+                let name = output.file_name().unwrap_or_default().to_string_lossy();
+                added.push((name.into_owned(), bytes));
+            }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
