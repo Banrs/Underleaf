@@ -49,6 +49,12 @@ pub(crate) struct AddedCitation {
     edits: Option<ProjectEdits>,
 }
 
+/// A fetched citation: the entry a bibliography has already, or the edit that adds it.
+enum Citation {
+    Had(AddedCitation),
+    Add(Then<AddedCitation>),
+}
+
 impl Actor {
     pub fn replace(&mut self, query: Query, to: String) -> Result<Then<ProjectEdits>, CoreError> {
         let found = move |_: &str, text: &str| query.places(text);
@@ -152,37 +158,14 @@ impl Actor {
     /// Adds fetched BibTeX to the bibliography the main file names, else the project's first `.bib`, else a new
     /// `references.bib`, unless one of them has an entry with its DOI or arXiv identifier already.
     pub fn add_citation(&mut self, fetched: String, reply: Pending<AddedCitation>) {
-        let added = self.citation(&fetched);
-        let (key, file, new, add) = match added {
-            Ok(Ok(found)) => return reply.send(Ok(found)),
-            Ok(Err(add)) => add,
-            Err(err) => return reply.send(Err(err)),
-        };
-        let then = add.map(|add| -> Then<AddedCitation> {
-            // Made only once the version before is taken and the edit goes ahead.
-            Box::new(move |actor, snapshot| {
-                let root = &actor.core.project.root;
-                if new && paths::safe_path(root, &file).is_ok_and(|path| !path.exists()) {
-                    actor.create_entry("", &file, false)?;
-                }
-                add(actor, snapshot).map(|edits| AddedCitation {
-                    key,
-                    file,
-                    edits: Some(edits),
-                })
-            })
-        });
-        self.before(Reason::AddCitation, then, reply);
+        match self.citation(&fetched) {
+            Ok(Citation::Had(found)) => reply.send(Ok(found)),
+            Ok(Citation::Add(then)) => self.before(Reason::AddCitation, Ok(then), reply),
+            Err(err) => reply.send(Err(err)),
+        }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn citation(
-        &mut self,
-        fetched: &str,
-    ) -> Result<
-        Result<AddedCitation, (String, String, bool, Result<Then<ProjectEdits>, CoreError>)>,
-        CoreError,
-    > {
+    fn citation(&mut self, fetched: &str) -> Result<Citation, CoreError> {
         self.text_to_edit()?;
         let scan = Arc::clone(
             &self
@@ -218,7 +201,7 @@ impl Actor {
                 cite::find_entry(&text, tidied.doi.as_deref(), tidied.eprint.as_deref())
             });
             if let Some(key) = had {
-                return Ok(Ok(AddedCitation {
+                return Ok(Citation::Had(AddedCitation {
                     key,
                     file: bib.clone(),
                     edits: None,
@@ -251,8 +234,20 @@ impl Actor {
             move |rel| rel == target,
             end,
             format!("{gap}{}", tidied.entry),
-        );
-        Ok(Err((tidied.key, file, new, add)))
+        )?;
+        let key = tidied.key;
+        // Made only once the version before is taken and the edit goes ahead.
+        Ok(Citation::Add(Box::new(move |actor, snapshot| {
+            let root = &actor.core.project.root;
+            if new && paths::safe_path(root, &file).is_ok_and(|path| !path.exists()) {
+                actor.create_entry("", &file, false)?;
+            }
+            add(actor, snapshot).map(|edits| AddedCitation {
+                key,
+                file,
+                edits: Some(edits),
+            })
+        })))
     }
 
     /// The shown document's text, after saving every edit and closing documents a failed save had kept open, so every
