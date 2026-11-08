@@ -83,7 +83,10 @@ fn zip_names(path: &Path) -> Vec<String> {
         .map(|name| name.unwrap().into_owned())
         .collect();
     names.sort();
-    let _ = archive.by_index(0).unwrap().read(&mut [0; 1]);
+    for entry in 0..archive.len() {
+        let mut entry = archive.by_index(entry).unwrap();
+        entry.read_to_end(&mut Vec::new()).unwrap();
+    }
     names
 }
 
