@@ -481,7 +481,7 @@ struct EditorTests {
         for key in keys { event(text) { text.insertText(String(key), replacementRange: typed) } }
     }
 
-    private static func editor(_ source: String) -> (SourceEditor, NSWindow) {
+    static func editor(_ source: String) -> (SourceEditor, NSWindow) {
         let editor = SourceEditor()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -507,12 +507,44 @@ struct EditorTests {
 @MainActor
 struct CitingTests {
     @Test func aKeyJoinsTheCitationTheCaretIsInElseGetsItsOwn() {
-        let cite = { SourceEditor.citing("k", after: $0) }
-        #expect(cite("as shown ") == "\\cite{k}")
-        #expect(cite("\\cite{") == "k")
-        #expect(cite("\\citep[p.~3]{a") == ",k")
-        #expect(cite("\\parencite{a, ") == "k")
-        #expect(cite("\\textcite*{a,") == "k")
-        #expect(cite("\\cite{a} and ") == "\\cite{k}")
+        let cite = { (before: String, after: String) in
+            let (text, past) = SourceEditor.citing("k", before: before, after: after)
+            return past == 0 ? text : "\(past) \(text)"
+        }
+        #expect(cite("as shown ", "") == "\\cite{k}")
+        #expect(cite("as shown", "here") == "\\cite{k}")
+        #expect(cite("\\cite{", "}") == "k")
+        #expect(cite("\\citep[p.~3]{a", "}") == ",k")
+        #expect(cite("\\parencite{a, ", "}") == "k")
+        #expect(cite("\\textcite*{a,", "}") == "k")
+        #expect(cite("\\cite{a} and ", "") == "\\cite{k}")
+        // Before a key, between two, inside one, and over lines.
+        #expect(cite("\\cite{", "old}") == "k,")
+        #expect(cite("\\cite{first,", "old}") == "k,")
+        #expect(cite("\\cite{first, ", " old}") == "k,")
+        #expect(cite("\\cite{fi", "rst,old}") == "3 ,k")
+        #expect(cite("\\cite{a,\n  ", "b}") == "k,")
+        #expect(cite("\\cite{a\n", "}") == ",k")
+        #expect(cite("\\cite{a,\n\n", "") == "\\cite{k}")
+    }
+
+    @Test func aCitedKeyKeepsTheKeysAroundItApartInOneUndoStep() {
+        let source = "See \\cite{first,old}."
+        let (editor, window) = EditorTests.editor(source)
+        defer { window.close() }
+        let text = editor.textView
+        let cite = { (selection: NSRange) in
+            text.selection = selection
+            #expect(editor.perform(.cite("new")))
+            defer { text.undo.undo() }
+            #expect(text.undo.undoActionName == "Insert Citation" && text.document.text == text.string)
+            return (text.string, text.selection)
+        }
+        #expect(cite(.caret(10)) == ("See \\cite{new,first,old}.", .caret(14)))
+        #expect(cite(.caret(16)) == ("See \\cite{first,new,old}.", .caret(20)))
+        #expect(cite(.caret(12)) == ("See \\cite{first,new,old}.", .caret(19)))
+        #expect(cite(NSRange(location: 16, length: 3)) == ("See \\cite{first,new}.", .caret(19)))
+        #expect(cite(.caret(3)) == ("See\\cite{new} \\cite{first,old}.", .caret(13)))
+        #expect(text.string == source && text.document.text == source)
     }
 }

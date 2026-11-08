@@ -49,21 +49,33 @@ extension SourceEditor {
             let block = document.insertBlock(id, replacing: selection)
             guard textView.insert(block, named: Self.insertion(titled: title)) else { return false }
         case .cite(let key):
-            let start = document.lineStart(document.line(at: selection.location))
-            let before = textView.source.substring(with: NSRange(location: start, length: selection.location - start))
-            let text = Self.citing(key, after: before)
-            textView.apply([TextEdit(selection, text)], named: String(localized: "Insert Citation"),
-                           selecting: [.caret(selection.location + (text as NSString).length)])
+            let source = textView.source, end = NSMaxRange(selection)
+            let near = { (range: NSRange) in source.substring(with: source.rangeOfComposedCharacterSequences(for: range)) }
+            let before = near(NSRange(location: max(0, selection.location - 1000), length: min(selection.location, 1000)))
+            let after = near(NSRange(location: end, length: min(source.length - end, 1000)))
+            let (text, past) = Self.citing(key, before: before, after: after)
+            let at = past > 0 ? NSRange.caret(end + past) : selection
+            textView.apply([TextEdit(at, text)], named: String(localized: "Insert Citation"),
+                           selecting: [.caret(at.location + (text as NSString).length)])
         }
         focus()
         return true
     }
 
-    /// The key alone inside a citation's braces, after a comma unless one is there; a `\cite` of it elsewhere.
-    static func citing(_ key: String, after before: String) -> String {
-        guard let open = before.firstMatch(of: /\\[A-Za-z]*cite[A-Za-z]*\*?(?:\[[^\]]*\])*\{([^{}]*)$/) else { return "\\cite{\(key)}" }
-        let keys = open.1.trimmingCharacters(in: .whitespaces)
-        return keys.isEmpty || keys.hasSuffix(",") ? key : ",\(key)"
+    /// What cites `key` between `before` and `after`: inside a citation's braces, the key alone with the commas that keep it
+    /// apart from the keys either side, placed `past` characters on when the caret is inside a key so as not to split it;
+    /// a `\cite` of it elsewhere. A citation's keys can run over lines but not past a blank one.
+    static func citing(_ key: String, before: String, after: String) -> (text: String, past: Int) {
+        let paragraph = before.ranges(of: /\n[ \t]*\n/).last.map { before[$0.upperBound...] } ?? before[...]
+        guard let open = paragraph.firstMatch(of: /\\[A-Za-z]*cite[A-Za-z]*\*?(?:\[[^\]]*\])*\{([^{}]*)$/) else {
+            return ("\\cite{\(key)}", 0)
+        }
+        let inKey = { (c: Character) in !c.isWhitespace && !",{}".contains(c) }
+        let rest = before.last.map(inKey) == true ? after.prefix(while: inKey) : ""
+        let keys = (open.1 + rest).trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = after.dropFirst(rest.count).first { !$0.isWhitespace }
+        let (leading, trailing) = (!keys.isEmpty && !keys.hasSuffix(","), next.map(inKey) == true)
+        return ((leading ? "," : "") + key + (trailing ? "," : ""), rest.utf16.count)
     }
 
     private static func insertion(titled title: String?) -> String {
