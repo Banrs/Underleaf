@@ -771,17 +771,11 @@ impl SyncTex {
         }
     }
 
-    /// Everything typeset from `lines` on the page where the first of them shows, as one box. Only lines of type that
-    /// show something count, and only those mostly set from `lines`, unless none is: a line that a paragraph runs into,
-    /// as one before a display does, takes the paragraph's lines along, and an environment's first line can bring an
+    /// Everything typeset from `lines`, as one box on each page it's on, the first page first, with how far the lines
+    /// there run past the width TeX set them to, as an overfull one's contents do. Only lines of type that show
+    /// something count, and only those mostly set from `lines`, unless none is: a line that a paragraph runs into, as
+    /// one before a display does, takes the paragraph's lines along, and an environment's first line can bring an
     /// empty box from before a float.
-    pub fn area(&self, tag: i32, lines: RangeInclusive<u32>) -> Option<Shown> {
-        let mut areas = self.areas(tag, lines).into_iter();
-        areas.next().map(|(area, _)| area)
-    }
-
-    /// What `area` joins, on each page it's on from the first, with how far the lines there run past the width TeX set
-    /// them to, as an overfull one's contents do.
     pub fn areas(&self, tag: i32, lines: RangeInclusive<u32>) -> Vec<(Shown, f32)> {
         let ids: Vec<u32> = (lines.clone())
             .filter_map(|line| self.hits(tag, line))
