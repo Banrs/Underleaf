@@ -114,13 +114,8 @@ private struct GoToSheet: View {
 
 private struct CitationSheet: View {
     let project: ProjectModel
-    @State private var text: String
+    @State private var text = CitationSheet.copied ?? ""
     @FocusState private var focused: Bool
-
-    init(project: ProjectModel) {
-        self.project = project
-        _text = State(initialValue: Self.copied ?? "")
-    }
 
     /// A DOI or arXiv ID that was copied, read only where the person lets TeXLocal read the pasteboard without asking.
     private static var copied: String? {
