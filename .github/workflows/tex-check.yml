@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - 'crates/texlocal-core/**'
-      - 'crates/texlocal-latex/src/logparse.rs'
-      - 'crates/texlocal-latex/src/synctex.rs'
+      - 'crates/texlocal-latex/**'
       - 'tools/texpresso/**'
       - '.github/workflows/tex-check.yml'
 
@@ -64,3 +65,38 @@ jobs:
       - run: cargo test --locked --no-fail-fast -p texlocal-core -- --ignored --nocapture
         env:
           TEXLOCAL_TEXPRESSO: ${{ env.TEXPRESSO }}/Helpers/texpresso
+
+  advisories:
+    name: Advisories
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check advisories
+
+  # Whether underleaf-pdf.patch still applies to TeXpresso's latest commit. A pass
+  # means the patch text applies, not that the patched TeXpresso builds or works;
+  # the replacement files in tools/texpresso/src are copied, not patched, so they
+  # aren't checked here.
+  texpresso-drift:
+    name: TeXpresso drift
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: git clone --quiet https://github.com/let-def/texpresso "$RUNNER_TEMP/texpresso"
+      - name: Upstream commits since the pinned one
+        run: |
+          commit=$(sed -n 's/^COMMIT=//p' tools/texpresso/build.sh)
+          cd "$RUNNER_TEMP/texpresso"
+          git cat-file -e "$commit^{commit}" 2>/dev/null || git fetch --quiet origin "$commit"
+          echo "$(git rev-list --count "$commit..HEAD") upstream commits since $commit"
+          git log --oneline "$commit..HEAD"
+      - name: Patch applies to upstream HEAD
+        run: git -C "$RUNNER_TEMP/texpresso" apply --check "$GITHUB_WORKSPACE/tools/texpresso/underleaf-pdf.patch"
