@@ -243,11 +243,7 @@ impl SourceDocument {
             let caret = start + utf16::len(&next);
             return key(start, rest.len(), next, caret);
         }
-        while start + length < line.end
-            && (is(units[start + length], ' ') || is(units[start + length], '\t'))
-        {
-            length += 1;
-        }
+        length += units.get(start + length..line.end).map_or(0, indentation);
         let before = &units[line.start..start];
         if !before.is_empty() && indentation(before) == before.len() {
             length += start - line.start;
@@ -312,13 +308,10 @@ impl SourceDocument {
     pub fn select(&mut self, selection: TextRange, mirroring: bool) {
         let typing = &mut self.typing;
         let (start, end) = selection.bounds();
-        if !mirroring
-            && typing
+        if !mirroring {
+            typing
                 .snippet
-                .as_ref()
-                .is_some_and(|snippet| !snippet.contains(start, end))
-        {
-            typing.snippet = None;
+                .take_if(|snippet| !snippet.contains(start, end));
         }
         let line = self.text.around(start).start;
         typing.closers.retain(|&p| p >= line);

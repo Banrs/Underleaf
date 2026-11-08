@@ -70,11 +70,7 @@ impl SourceDocument {
         let open = scanner.groups().filter(|g| display(g)).last();
         let open = open.or_else(|| scanner.groups().find(|g| inline(g)));
         if let Some(open) = open.map(|g| g.open) {
-            close = Close {
-                open: Some(open),
-                at: caret,
-                found: None,
-            };
+            (close.open, close.found) = (Some(open), None);
             while close.found.is_none() && scanner.i < ahead {
                 scanner.run(units, (scanner.i + 1024).min(ahead), &[], &mut close);
             }
