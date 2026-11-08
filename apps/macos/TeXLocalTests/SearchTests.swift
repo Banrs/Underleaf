@@ -63,7 +63,6 @@ struct SearchIntegrationTests {
             try text.write(toFile: info.path + "/" + path, atomically: true, encoding: .utf8)
         }
         let defaults = TestDefaults(), window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window), views = WorkspaceViews(project: project)
         try await project.load()
         await project.open("a.tex", focus: false)

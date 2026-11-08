@@ -288,7 +288,6 @@ struct WindowTests {
 
     private func windowedApp() -> AppModel {
         let app = defaults.app()
-        app.autoCompile = false
         app.newWindow = { [app] id in id.map { MainWindowController(app: app, project: $0).model } ?? HomeWindowController(app: app).model }
         return app
     }

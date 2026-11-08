@@ -37,7 +37,11 @@ nonisolated final class TestDefaults {
     private let name = "TeXLocalTests." + UUID().uuidString
     let store: UserDefaults
 
-    init() { store = UserDefaults(suiteName: name)! }
+    /// Starts with automatic compile off, so no test starts latexmk unless it turns compile on itself.
+    init() {
+        store = UserDefaults(suiteName: name)!
+        store.set(false, forKey: DefaultsKey.autoCompile)
+    }
 
     @MainActor func app() -> AppModel { AppModel(core: .shared, defaults: store) }
 

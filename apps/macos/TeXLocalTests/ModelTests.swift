@@ -312,7 +312,6 @@ struct SwitchTests {
     @Test func eachProjectOpensInAWindowOfItsOwnOnceEvenWhenOpenedTwiceAtOnceAndHomeNeverHoldsOne() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         async let opened: Void = home.open(first.id)
         async let again: Void = home.open(first.id)
@@ -333,7 +332,6 @@ struct SwitchTests {
     @Test func aProjectStillOpensWhenTheWindowThatAskedHasClosedMeanwhile() async throws {
         let info = try await newProject()
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         home.windowClosed()
         await home.open(info.id)
@@ -408,7 +406,6 @@ struct SwitchTests {
     @Test func aProjectOpenInAnotherWindowIsntMovedToTheTrash() async throws {
         let info = try await newProject()
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         await home.open(info.id)
         await home.delete(info)
@@ -419,7 +416,6 @@ struct SwitchTests {
     @Test func quitLeavesEveryProjectOpenWhileOneHasADocumentItCantSave() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         await home.open(first.id)
         await home.open(second.id)
@@ -438,7 +434,6 @@ struct SwitchTests {
     @Test func aCancelledQuitForgetsCloseWithoutSavingSoSaveStillFailsAndClosingAsksAgain() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         await home.open(first.id)
         await home.open(second.id)
@@ -477,7 +472,6 @@ struct ViewsTests {
     @Test func aProjectOnItsCoreTellsItsViewsWhatTheStoreShows() async throws {
         let info = try await newProject()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try #"{ "ui": { "file": "main.tex", "line": 3 } }"#.write(toFile: info.path + "/.texlocal.json", atomically: true, encoding: .utf8)
@@ -500,7 +494,6 @@ struct ViewsTests {
     @Test func movingToTheTrashUndoesAndRedoesThroughTheCore() async throws {
         let info = try await newProject()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         let path = try #require(await project.createEntry(in: "", directory: false))
@@ -530,7 +523,6 @@ struct ViewsTests {
     @Test func aRestoreOrAFixTheEditorRefusesSaysSoAndTheFixDoesntCompile() async throws {
         let info = try await newProject()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try await project.load()

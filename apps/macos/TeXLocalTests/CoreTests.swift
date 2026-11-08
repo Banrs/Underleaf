@@ -28,7 +28,6 @@ struct CoreTests {
         let info = try await newProject()
         let defaults = TestDefaults()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), editor = views.editor
         try await project.load()
@@ -57,7 +56,6 @@ struct CoreTests {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = WorkspaceViews(project: project), text = views.editor.textView
         try await project.load()
@@ -81,7 +79,6 @@ struct CoreTests {
     @Test func anAcceptedEditSurvivesAnExternalReloadWithItsUndoAndAConflict() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults(), window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window), views = WorkspaceViews(project: project)
         try await project.load()
         let text = views.editor.textView, before = text.string, undo = text.undo
@@ -113,7 +110,6 @@ struct CoreTests {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         project.engine = .xelatex
@@ -194,7 +190,6 @@ struct CoreTests {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         let zip = try await project.exportZip()
