@@ -72,7 +72,7 @@ extension ProjectModel {
         }
     }
 
-    /// The issues Next and Previous Issue step through: those the Issues list shows that have a file.
+    /// The issues Next and Previous Issue step through: errors and warnings the Issues list shows that have a file; bad boxes are listed but not stepped through.
     var issuePlaces: [Int] {
         let issues = issues
         return navigator.rows(of: listed).map(\.offset).filter { $0 < issues.count && issues[$0].file != nil }
