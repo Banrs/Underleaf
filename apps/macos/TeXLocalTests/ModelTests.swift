@@ -520,6 +520,30 @@ struct ViewsTests {
         #expect(await project.close().value)
     }
 
+    @Test func deletingAnEntryMovesItToTheTrashWithItsUndoOnTheWindow() async throws {
+        let info = try await newProject()
+        let window = defaults.window(), host = UndoHost()
+        window.controller = host
+        let project = ProjectModel(id: info.id, window: window)
+        try await project.load()
+        let path = try #require(await project.createEntry(in: "", directory: false))
+        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        let undo = try #require(host.undoManager)
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        await project.deleteEntry(path)
+        undo.endUndoGrouping()
+        #expect(!shown() && undo.undoActionName == "Move to Trash" && window.alert == nil)
+        undo.undo()
+        try await waitUntil { shown() }
+        undo.redo()
+        try await waitUntil { !shown() }
+        undo.undo()
+        try await waitUntil { shown() }
+        #expect(window.alert == nil)
+        #expect(await project.close().value)
+    }
+
     @Test func aRestoreOrAFixTheEditorRefusesSaysSoAndTheFixDoesntCompile() async throws {
         let info = try await newProject()
         let window = defaults.window()
@@ -680,6 +704,15 @@ struct ViewsTests {
         func perform(_ command: EditorCommand) {}
         func perform(_ command: MenuCommand) {}
         func validates(_ command: MenuCommand) -> Bool { false }
+    }
+
+    private final class UndoHost: AppWindow {
+        let undoManager: UndoManager? = UndoManager()
+        func performPDF(_ action: PDFAction) {}
+        func revealSidebar() {}
+        func focusSearch() {}
+        func show() {}
+        func close() {}
     }
 }
 
