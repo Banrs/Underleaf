@@ -42,9 +42,8 @@ final class BadBoxMark: NSView {
     /// or beside the whole area when no line does, as for an underfull box or an overfull one of no text. The area reaches
     /// as far as its lines run, `overrun` past the margin.
     static func rects(for badBox: BadBoxArea, on page: PDFPage) -> [CGRect] {
-        let bounds = page.bounds(for: SyncPDFView.box), loc = badBox.area
-        guard let h = loc.h, let v = loc.v, let width = loc.width, let height = loc.height else { return [] }
-        let area = CGRect(x: bounds.minX + h, y: bounds.maxY - v, width: width, height: height)
+        let bounds = page.bounds(for: SyncPDFView.box)
+        guard let area = SyncTeXGeometry.area(badBox.area, pageBounds: bounds) else { return [] }
         // At least a click's height, as beside a thin rule.
         let beside = { (rect: CGRect) in
             let height = max(rect.height, 8)

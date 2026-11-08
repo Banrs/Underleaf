@@ -12,12 +12,11 @@ struct ReferencePicture {
 
 extension PDFController {
     func picture(of loc: ForwardLoc, scale: CGFloat) -> ReferencePicture? {
-        guard let page = view.document?.page(ifAt: Int(loc.page) - 1), let h = loc.h, let v = loc.v, let width = loc.width,
-              let height = loc.height else { return nil }
+        guard let page = view.document?.page(number: Int(loc.page)) else { return nil }
         let bounds = page.bounds(for: SyncPDFView.box)
+        guard let box = SyncTeXGeometry.area(loc, pageBounds: bounds) else { return nil }
         let margin: CGFloat = 6
-        let area = CGRect(x: bounds.minX + h, y: bounds.maxY - v, width: width, height: height)
-            .insetBy(dx: -margin, dy: -margin).intersection(bounds)
+        let area = box.insetBy(dx: -margin, dy: -margin).intersection(bounds)
         guard area.width > 1, area.height > 1 else { return nil }
         let zoom = min(1.5, ReferencePicture.maxSize.width / area.width, ReferencePicture.maxSize.height / area.height)
         let size = CGSize(width: (area.width * zoom).rounded(), height: (area.height * zoom).rounded())

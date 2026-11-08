@@ -121,7 +121,7 @@ final class PDFController: NSObject {
     }
 
     func go(toPage number: Int) {
-        if let document = view.document, let page = document.page(ifAt: min(max(number, 1), document.pageCount) - 1) { view.go(to: page) }
+        if let document = view.document, let page = document.page(number: min(max(number, 1), document.pageCount)) { view.go(to: page) }
     }
 
     func fitWidth() {
@@ -219,6 +219,8 @@ nonisolated struct LoadedPDF {
 
 nonisolated extension PDFDocument {
     func page(ifAt index: Int) -> PDFPage? { (0..<pageCount).contains(index) ? page(at: index) : nil }
+
+    func page(number: Int) -> PDFPage? { page(ifAt: number - 1) }
 
     func number(of page: PDFPage) -> Int? {
         let index = index(for: page)
