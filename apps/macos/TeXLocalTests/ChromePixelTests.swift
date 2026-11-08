@@ -29,9 +29,9 @@ struct ChromePixelTests {
         let project = views.project
         let size = NSSize(width: 1300, height: 700)
         let workspace = WorkspaceController(window: model, views: views, size: size)
-        let window = (screen == nil ? ChromeKeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
-                                                                                styleMask: [.titled, .resizable, .fullSizeContentView],
-                                                                                backing: .buffered, defer: false)
+        let window = (screen == nil ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
+                                                                          styleMask: [.titled, .resizable, .fullSizeContentView],
+                                                                          backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         workspace.view.setFrameSize(size)
@@ -218,10 +218,4 @@ struct ChromePixelTests {
         let top = NSScreen.screens.first?.frame.maxY ?? 0
         try await ask("\(verb) \(Int(point.x.rounded())) \(Int((top - point.y).rounded()))")
     }
-}
-
-/// Draws as the key window would, which a test host can't become on its own.
-private final class ChromeKeyWindow: NSWindow {
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
 }

@@ -254,7 +254,7 @@ struct FieldTests {
 
     @Test func aNameFieldSelectsTheBaseNameAndTakesFastTypingInOrder() async throws {
         let rename = InPlaceRename<String>()
-        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = KeyOnlyWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: Renaming(rename: rename))
         window.makeKeyAndOrderFront(nil)
@@ -272,7 +272,7 @@ struct FieldTests {
 
     @Test func aDialogFieldShowsATypedSpaceAtOnce() async throws {
         let defaults = TestDefaults(), model = defaults.window()
-        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = KeyOnlyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: NewProjectSheet(draft: NewProjectDraft(template: .blank, name: "water"))
             .environment(model.app).environment(model))
@@ -292,7 +292,7 @@ struct FieldTests {
     }
 }
 
-private final class KeyWindow: NSWindow {
+private final class KeyOnlyWindow: NSWindow {
     override var isKeyWindow: Bool { true }
 }
 

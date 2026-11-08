@@ -33,6 +33,12 @@ func onScreen(_ view: NSView, size: NSSize = NSSize(width: 500, height: 600)) as
     return window
 }
 
+/// Draws as the key window would, which a test host can't become on its own.
+final class KeyWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+}
+
 nonisolated final class TestDefaults {
     private let name = "TeXLocalTests." + UUID().uuidString
     let store: UserDefaults

@@ -46,7 +46,7 @@ struct FieldPixelTests {
             window.contentView = box
             window.setContentSize(box.frame.size)
             try await settle()
-            let fields = descendants(of: view).compactMap { $0 as? NSSearchField }
+            let fields = view.descendants(of: NSSearchField.self)
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = true } }
             for field in fields { field.needsDisplay = true }
             box.displayIfNeeded()
@@ -105,14 +105,6 @@ struct FieldPixelTests {
             await Task.yield()
         }
     }
-
-    private func descendants(of view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-}
-
-/// Draws as the key window would, which a test host can't become on its own.
-private final class KeyWindow: NSWindow {
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
 }
 
 private extension Navigator {
