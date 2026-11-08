@@ -4,7 +4,7 @@ use serde_json::Value;
 use texlocal_latex::facts::{self, Facts, Place};
 use texlocal_latex::project::Scan;
 use texlocal_latex::syntax::Installed;
-use texlocal_latex::{FileKind, file_kind, is_text};
+use texlocal_latex::{FileKind, file_kind};
 use texlocal_latex::{bib, project};
 
 fn project(files: &[(&str, &str)], installed: &[&str]) -> Scan {
@@ -20,17 +20,6 @@ fn project(files: &[(&str, &str)], installed: &[&str]) -> Scan {
     };
     let names = files.iter().map(|(name, _)| (*name).to_owned()).collect();
     Scan::new(files.iter().map(read).collect(), names, Arc::new(installed))
-}
-
-#[test]
-fn classes_packages_and_styles_are_text_of_their_own_kind() {
-    for name in ["article.cls", "mystyle.STY", "plain.bst", "biblatex.cfg"] {
-        assert!(
-            file_kind(name) == FileKind::Package && is_text(name),
-            "{name}"
-        );
-    }
-    assert!(file_kind("notes.txt") == FileKind::Text && file_kind("main.tex") == FileKind::Tex);
 }
 
 fn found(scan: &Scan) -> Vec<(String, u32, String)> {

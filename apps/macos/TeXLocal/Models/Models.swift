@@ -12,10 +12,21 @@ nonisolated extension ProjectTemplate: Identifiable {
 nonisolated extension TreeNode: Identifiable {
     var id: String { path }
     var isDirectory: Bool { children != nil }
+
+    var symbol: String {
+        switch kind {
+        case _ where isDirectory: "folder.fill"
+        case .tex: "text.document"
+        case .bib: "books.vertical"
+        case .image: "photo"
+        case .pdf: "richtext.page"
+        default: "document"
+        }
+    }
 }
 
 nonisolated extension FileKind {
-    var isText: Bool { [.tex, .bib, .package, .text].contains(self) }
+    var isText: Bool { self == .tex || self == .bib || self == .text }
 }
 
 extension [TreeNode] {

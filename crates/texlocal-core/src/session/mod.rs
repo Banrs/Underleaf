@@ -570,10 +570,7 @@ mod tests {
         drop(release);
         assert!(replied(&heard, 1).is_ok());
         let changed = replied(&heard, 2).unwrap()["changed"].take();
-        assert_eq!(
-            changed,
-            json!([{ "path": "ch.tex", "kind": "tex", "change": "changed" }])
-        );
+        assert_eq!(changed, json!([{ "path": "ch.tex", "change": "changed" }]));
     }
 
     #[tokio::test(flavor = "multi_thread")]

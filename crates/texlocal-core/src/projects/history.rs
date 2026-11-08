@@ -7,7 +7,6 @@ use std::sync::mpsc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use texlocal_latex::{FileKind, file_kind};
 
 use super::files::{Planned, inside, write_all};
 use super::tree::visit_files;
@@ -67,7 +66,6 @@ pub struct Snapshot {
 #[derive(Serialize, JsonSchema)]
 pub struct ChangedFile {
     path: String,
-    kind: FileKind,
     change: ChangeKind,
 }
 
@@ -280,8 +278,8 @@ fn changes(
             (was, now) if was != now => ChangeKind::Changed,
             _ => return None,
         };
-        let (path, kind) = (path.clone(), file_kind(path));
-        Some(ChangedFile { path, kind, change })
+        let path = path.clone();
+        Some(ChangedFile { path, change })
     });
     changed.collect()
 }

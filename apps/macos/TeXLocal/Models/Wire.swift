@@ -108,7 +108,6 @@ nonisolated enum ChangeKind: String, Decodable, CaseIterable, Hashable, Sendable
 
 nonisolated struct ChangedFile: Decodable, Hashable, Sendable {
     var path: String
-    var kind: FileKind
     var change: ChangeKind
 }
 
@@ -367,7 +366,7 @@ nonisolated struct ExportZip: SessionRequest {
 }
 
 nonisolated enum FileKind: String, Decodable, CaseIterable, Hashable, Sendable {
-    case tex, bib, image, pdf, package, text, other
+    case tex, bib, image, pdf, text, other
 }
 
 nonisolated struct FilePlace: Decodable, Hashable, Sendable {

@@ -252,9 +252,8 @@ struct SearchResults: View {
             Text("\(Text(group.file.fileName).fontWeight(.medium)) \(Text(group.file.parentFolder.replacing("/", with: " ▸ ")).foregroundStyle(.secondary))")
                 .lineLimit(1)
         } icon: {
-            FileIcon(project.tree.node(at: group.file)?.kind ?? .text)
+            Image(systemName: project.tree.node(at: group.file)?.symbol ?? "text.document")
         }
-        .navigatorRow()
         .help(group.file)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(group.file), \(Self.matches(group.hits.count))")
@@ -266,7 +265,6 @@ struct SearchResults: View {
         } icon: {
             Image(systemName: "line.3.horizontal").foregroundStyle(.secondary).accessibilityHidden(true)
         }
-        .navigatorRow()
         .accessibilityValue("Line \(hit.line)")
     }
 

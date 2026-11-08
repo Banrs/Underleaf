@@ -183,7 +183,6 @@ struct ChoiceList<Item, Row: View>: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, CompletionRowsView.textInset)
                             .frame(height: height)
-                            .environment(\.backgroundProminence, selected ? .increased : .standard)
                             .background(selected ? Self.accent : .clear, in: .rect(cornerRadius: corner - CompletionRowsView.margin))
                             .padding(.horizontal, CompletionRowsView.margin)
                             .contentShape(.rect)
