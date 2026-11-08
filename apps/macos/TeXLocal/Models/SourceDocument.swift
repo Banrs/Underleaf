@@ -146,7 +146,7 @@ nonisolated enum Syntax {
 
     static func json<R: WireRequest>(_ request: R) -> String? {
         do {
-            return String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+            return try request.json()
         } catch {
             log.error("\(R.command, privacy: .public): \(String(describing: error), privacy: .public)")
             return nil
@@ -157,8 +157,11 @@ nonisolated enum Syntax {
         defer { tl_free(out) }
         do {
             return try Core.decoded(command) { try JSONDecoder().decode(Answered<T>.self, from: Data(bytes: out, count: strlen(out))) }
-        } catch {
+        } catch let error as CoreError {
             log.error("\(command, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return nil
+        } catch {
+            // Core.decoded has already logged the fault.
             return nil
         }
     }

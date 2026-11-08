@@ -16,6 +16,10 @@ nonisolated extension Answered {
     }
 }
 
+nonisolated extension WireRequest {
+    func json() throws -> String { String(decoding: try JSONEncoder().encode(self), as: UTF8.self) }
+}
+
 nonisolated extension Lifecycle {
     var stopped: Stopped? { if case .stopped(let stopped) = self { stopped } else { nil } }
 }
@@ -96,7 +100,7 @@ final class Core {
 
     private func prepared<R: WireRequest>(_ request: R) throws -> (OpaquePointer, String) {
         guard let handle else { throw Self.unavailable }
-        return (handle, String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
+        return (handle, try request.json())
     }
 
     private var pending: [UInt64: (Data) -> Void] = [:]
