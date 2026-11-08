@@ -1,25 +1,18 @@
-use std::sync::Arc;
+mod common;
 
 use serde_json::Value;
+use texlocal_latex::FileKind;
 use texlocal_latex::facts::{self, Facts, Place};
 use texlocal_latex::project::Scan;
 use texlocal_latex::syntax::Installed;
-use texlocal_latex::{FileKind, file_kind};
 use texlocal_latex::{bib, project};
 
 fn project(files: &[(&str, &str)], installed: &[&str]) -> Scan {
-    let read = |&(name, text): &(&str, &str)| {
-        (
-            name.to_owned(),
-            Arc::new(Facts::read(text, file_kind(name))),
-        )
-    };
     let installed = Installed {
         inputs: installed.iter().map(|&input| input.to_owned()).collect(),
         ..Installed::default()
     };
-    let names = files.iter().map(|(name, _)| (*name).to_owned()).collect();
-    Scan::new(files.iter().map(read).collect(), names, Arc::new(installed))
+    common::scan(files, installed)
 }
 
 fn found(scan: &Scan) -> Vec<(String, u32, String)> {
