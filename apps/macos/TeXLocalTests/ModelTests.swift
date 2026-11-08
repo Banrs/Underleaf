@@ -720,8 +720,7 @@ struct FilterKindTests {
     private let defaults = TestDefaults()
 
     private func item(_ kind: Severity, _ text: String, _ topic: Topic? = nil) -> LogItem {
-        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), explain: nil, fix: nil,
-                topic: topic)
+        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), topic: topic)
     }
 
     @Test func aKindTheMenuHidesLeavesTheIssueListAndComesBackWhenShownAgain() {

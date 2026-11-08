@@ -46,7 +46,6 @@ struct PDFPerformanceTests {
         #expect(replaces.sorted()[replaces.count / 2] <= .milliseconds(8) && passes.max()! <= .milliseconds(16))
     }
 
-
     private func busiest(_ work: () async -> Void) async throws -> Duration {
         let busy = MainBusy()
         defer { busy.stop() }
@@ -94,7 +93,6 @@ struct EditorPerformanceTests {
         print("EditorPerformance indenting 2,000 lines \(ms(indent)), its undo \(ms(undo)), redo \(ms(redo))")
         #expect(indent <= .seconds(3) && undo <= .seconds(3) && redo <= .seconds(3))
     }
-
 }
 
 private func ms(_ duration: Duration) -> String {
