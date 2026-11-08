@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - 'crates/texlocal-core/**'
-      - 'crates/texlocal-latex/src/logparse.rs'
-      - 'crates/texlocal-latex/src/synctex.rs'
+      - 'crates/texlocal-latex/**'
       - 'tools/texpresso/**'
       - '.github/workflows/tex-check.yml'
 
