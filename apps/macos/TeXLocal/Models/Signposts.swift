@@ -1,3 +1,6 @@
+import Foundation
 import os
 
-nonisolated let signposts = OSSignposter(subsystem: "com.texlocal.mac", category: .pointsOfInterest)
+nonisolated let logSubsystem = Bundle.main.bundleIdentifier ?? "TeXLocal"
+
+nonisolated let signposts = OSSignposter(subsystem: logSubsystem, category: .pointsOfInterest)

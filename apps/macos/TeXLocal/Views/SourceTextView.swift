@@ -12,6 +12,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         view.textStorage?.delegate = view
         (view.textLayoutManager?.textContentManager as? NSTextContentStorage)?.delegate = view
         view.installColouring()
+        view.applyFont()
         view.displayOptionsWatch = NSWorkspace.shared.notificationCenter.addObserver(
             of: NSWorkspace.self, for: .accessibilityDisplayOptionsDidChange) { [weak view] _ in view?.needsDisplay = true }
         return view
@@ -99,7 +100,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return true
     }
 
-    var fontSize = NSFont.systemFontSize { didSet { applyFont() } }
+    var fontSize = NSFont.systemFontSize { didSet { if fontSize != oldValue { applyFont() } } }
     var fontName = "" { didSet { if fontName != oldValue { applyFont() } } }
     private(set) var rowShift: CGFloat = 0
     private var applied: NSFont?
@@ -127,7 +128,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         defaultParagraphStyle = style
         textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
-        gutter.font = EditorGutter.font(forText: fontSize)
+        gutter.font = .monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
         issues.fontChanged(size: fontSize, text: font)
         updateGutterWidth()
     }

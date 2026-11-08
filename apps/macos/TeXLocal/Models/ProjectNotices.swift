@@ -6,9 +6,7 @@ import Observation
 final class ProjectNotices {
     private(set) var current: String?
     @ObservationIgnored private var clearing: Task<Void, Never>?
-    @ObservationIgnored private let lasting: Duration
-
-    init(lasting: Duration = .seconds(3)) { self.lasting = lasting }
+    @ObservationIgnored private let lasting = Duration.seconds(3)
 
     func note(_ text: String) {
         current = text

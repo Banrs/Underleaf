@@ -10,7 +10,7 @@ use crate::error::CoreError;
 use crate::messages;
 use crate::projects::{self, OPENED_DIR, is_opened};
 use crate::service::Service;
-use crate::settings::APP_SETTINGS_FILE;
+use crate::settings::{APP_SETTINGS_FILE, read_settings};
 use crate::{BUILD_DIR, HISTORY_DIR, SETTINGS_FILE, atomic, sys};
 
 pub(crate) fn normalize_segments(
@@ -46,6 +46,14 @@ impl Project {
     pub fn name(&self) -> String {
         let name = self.root.file_name().unwrap_or(self.root.as_os_str());
         name.to_string_lossy().into_owned()
+    }
+
+    /// The PDF the project's settings name in its build folder, if a build left one there.
+    pub(crate) fn built_pdf(&self) -> Option<PathBuf> {
+        let pdf = read_settings(&self.settings)
+            .output(&self.build, "pdf")
+            .ok()?;
+        pdf.is_file().then_some(pdf)
     }
 
     pub(crate) fn builds_in(&self, rel: &str) -> bool {

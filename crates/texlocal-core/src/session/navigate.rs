@@ -17,9 +17,10 @@ use texlocal_latex::{bib, project};
 use super::Pending;
 use super::actor::Actor;
 use super::live::{document_lines, typeset_lines};
+use super::scans::current_text;
 use super::watch::Tree;
 use crate::synctex::{self, ForwardLoc, InverseLoc, PageArea, PageClick};
-use crate::{CoreError, lf, lossy_string, messages, paths, settings};
+use crate::{CoreError, lossy_string, messages, paths, settings};
 
 const LISTED: usize = 50;
 
@@ -154,16 +155,7 @@ impl Actor {
             let Some((kind, name, defined)) = found else {
                 return reply.send(Ok(None));
             };
-            let text = |file: &str| {
-                let open = docs.get(file).cloned();
-                match open {
-                    Some(doc) => Some(doc.snapshot().0),
-                    None => {
-                        let abs = paths::safe_path(root, file).ok()?;
-                        fs::read(abs).ok().map(|bytes| lf(lossy_string(bytes)))
-                    }
-                }
-            };
+            let text = |file: &str| current_text(&docs, root, file);
             let detail = match (kind, &defined) {
                 (SymbolKind::Citation, Some((file, _))) => {
                     let entry = text(file).and_then(|text| bib::entry(&text, &name));
@@ -171,7 +163,7 @@ impl Actor {
                 }
                 (SymbolKind::Label, Some(_)) => {
                     let number = aux.ok().and_then(|aux| numbered(&aux, &name));
-                    let number = number.unwrap_or_else(|| "Compile to number it".to_owned());
+                    let number = number.unwrap_or_else(|| messages::label_unnumbered().text);
                     let symbols = doc.symbols();
                     let what = symbols.labels().find(|label| label.name == name);
                     Some(match what.and_then(|label| label.detail.as_ref()) {
@@ -188,7 +180,7 @@ impl Actor {
                 }
                 (SymbolKind::Command, None) => {
                     let package = CATALOG.packages.get(&name);
-                    package.map(|package| format!("From the {package} package"))
+                    package.map(|package| messages::from_package(package).text)
                 }
                 _ => None,
             };
@@ -214,9 +206,7 @@ impl Actor {
             })));
         });
     }
-}
 
-impl Actor {
     pub fn synctex_forward(&self, file: String, line: u32, reply: Pending<ForwardLoc>) {
         if line < 1 {
             return reply.send(Err(CoreError::bad_request(messages::invalid_line())));
@@ -314,10 +304,8 @@ impl Actor {
         pages: Vec<PdfPage>,
         reply: Pending<Option<PdfHit>>,
     ) {
-        let (doc, root) = (
-            self.docs.get(&file).map(|doc| doc.doc.clone()),
-            self.core.project.root.clone(),
-        );
+        let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
+        let root = self.core.project.root.clone();
         tokio::task::spawn_blocking(move || {
             let text = match doc {
                 Some(doc) => Ok(doc.with(|source| source.line(line))),

@@ -16,6 +16,10 @@ nonisolated extension Answered {
     }
 }
 
+nonisolated extension WireRequest {
+    func json() throws -> String { String(decoding: try JSONEncoder().encode(self), as: UTF8.self) }
+}
+
 nonisolated extension Lifecycle {
     var stopped: Stopped? { if case .stopped(let stopped) = self { stopped } else { nil } }
 }
@@ -96,7 +100,7 @@ final class Core {
 
     private func prepared<R: WireRequest>(_ request: R) throws -> (OpaquePointer, String) {
         guard let handle else { throw Self.unavailable }
-        return (handle, String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
+        return (handle, try request.json())
     }
 
     private var pending: [UInt64: (Data) -> Void] = [:]
@@ -127,7 +131,7 @@ final class Core {
         }
     }
 
-    private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TeXLocal", category: "core")
+    private nonisolated static let log = Logger(subsystem: logSubsystem, category: "core")
 
     private nonisolated static func fault(_ command: String, _ problem: String) -> AppFailure {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")
@@ -189,8 +193,14 @@ final class Core {
     /// instead of leaving it waiting.
     nonisolated static func heard(_ said: Data) throws -> Heard {
         let decoder = JSONDecoder()
-        if let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" { return .reply(replying.value.id) }
-        return .said(try decoder.decode(Said<Unread>.self, from: said))
+        do {
+            let heard = try decoder.decode(Said<Unread>.self, from: said)
+            if case .reply(let reply) = heard { return .reply(reply.id) }
+            return .said(heard)
+        } catch {
+            guard let replying = try? decoder.decode(Replying.self, from: said), replying.type == "reply" else { throw error }
+            return .reply(replying.value.id)
+        }
     }
 
     private nonisolated static let heard = AsyncStream.makeStream(of: (Heard, Data).self)
@@ -270,7 +280,7 @@ final class SessionClient {
 
     func close(discarding: Bool = false) async throws -> Bool {
         do {
-            guard try await call(CloseProject(discard: discarding ? true : nil)) else { return false }
+            guard try await call(CloseProject(discard: discarding)) else { return false }
         } catch let error where error is CancellationError || lifecycle?.stopped != nil {}
         end()
         return true

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use texlocal_latex::{FileKind, file_kind, is_text};
+use texlocal_latex::{is_source, is_text};
 
 use super::Pending;
 use super::actor::{Actor, Later, Timer};
@@ -65,8 +65,7 @@ impl Actor {
             .iter()
             .filter(|p| !self.docs.contains_key(*p))
             .collect();
-        let scan = |path: &&String| matches!(file_kind(path), FileKind::Tex | FileKind::Bib);
-        if meaning.tree || others.iter().any(scan) {
+        if meaning.tree || others.iter().any(|path| is_source(path)) {
             self.core.after(Timer::Symbols);
         }
         if !others.is_empty() {

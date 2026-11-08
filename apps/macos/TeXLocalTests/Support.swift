@@ -33,11 +33,42 @@ func onScreen(_ view: NSView, size: NSSize = NSSize(width: 500, height: 600)) as
     return window
 }
 
+/// A project workspace in a laid-out 1400 by 800 window, with the workspace's toolbar when asked.
+func workspaceWindow(_ model: WindowModel, toolbar: Bool = false) -> (NSWindow, WorkspaceController) {
+    let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
+    let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
+                          styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentViewController = workspace
+    if toolbar { window.toolbar = workspace.toolbar.toolbar }
+    window.layoutIfNeeded()
+    return (window, workspace)
+}
+
+func bitmap(_ size: NSSize, scale: Int) -> NSBitmapImageRep? {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * scale, pixelsHigh: Int(size.height) * scale,
+                               bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                               bytesPerRow: 0, bitsPerPixel: 0)
+    rep?.size = size
+    return rep
+}
+
+/// Draws as the key window would, which a test host can't become on its own.
+final class KeyWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
+}
+
 nonisolated final class TestDefaults {
     private let name = "TeXLocalTests." + UUID().uuidString
     let store: UserDefaults
 
-    init() { store = UserDefaults(suiteName: name)! }
+    /// Starts with automatic compile off, so no test starts latexmk unless it turns compile on itself.
+    init() {
+        store = UserDefaults(suiteName: name)!
+        store.set(false, forKey: DefaultsKey.autoCompile)
+    }
 
     @MainActor func app() -> AppModel { AppModel(core: .shared, defaults: store) }
 

@@ -17,7 +17,7 @@ extension NSColor {
         return Self.srgb(raised)
     }
 
-    func legible(ratio: Double) -> NSColor {
+    func legible(ratio: Double? = nil) -> NSColor {
         .adapting(Dictionary(uniqueKeysWithValues: Self.textAppearances.map { ($0, legibleAsText(in: $0, ratio: ratio)) }), fallback: self)
     }
 

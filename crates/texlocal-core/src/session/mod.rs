@@ -325,7 +325,7 @@ mod tests {
 
     type Heard = std::sync::mpsc::Receiver<Value>;
 
-    async fn panicking() -> (Arc<Sessions>, Heard, tempfile::TempDir) {
+    pub(super) async fn panicking() -> (Arc<Sessions>, Heard, tempfile::TempDir) {
         compiling_with(Arc::new(Panics)).await
     }
 

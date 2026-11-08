@@ -468,6 +468,7 @@ nonisolated struct ImportFiles: SessionRequest {
 
 nonisolated struct Imported: Decodable, Hashable, Sendable {
     var existing: [Clash]
+    var paths: [String]
 }
 
 nonisolated struct IncludeGraphics: SyntaxRequest {
@@ -857,6 +858,8 @@ nonisolated enum MessageID: String, Decodable, CaseIterable, Hashable, Sendable 
     case invalidPdfPlace = "invalid_pdf_place"
     case noMatchInSource = "no_match_in_source"
     case noSourceFile = "no_source_file"
+    case labelUnnumbered = "label_unnumbered"
+    case fromPackage = "from_package"
     case noLatexmk = "no_latexmk"
     case noTexpressoThere = "no_texpresso_there"
     case notAFileName = "not_a_file_name"
@@ -905,6 +908,7 @@ nonisolated struct Open: SessionRequest {
 nonisolated struct OpenFile: Decodable, Hashable, Sendable {
     var path: String
     var kind: FileKind
+    var text: Bool
 }
 
 nonisolated struct OpenPath: LibraryRequest {

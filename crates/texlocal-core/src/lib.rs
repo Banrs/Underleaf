@@ -26,6 +26,8 @@ pub use events::Answered;
 pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const SETTINGS_FILE: &str = ".texlocal.json";
 pub(crate) const HISTORY_DIR: &str = ".texlocal-history";
+/// Begins the names of what the app leaves in a project, which exports and copies leave out.
+pub(crate) const LITTER: &str = ".texlocal-";
 
 pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex

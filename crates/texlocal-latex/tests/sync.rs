@@ -1,7 +1,8 @@
 use std::io::Write;
+use std::ops::RangeInclusive;
 
 use serde_json::{Value, json};
-use texlocal_latex::synctex::SyncTex;
+use texlocal_latex::synctex::{Shown, SyncTex};
 use texlocal_latex::syntax::{SourceDocument, SyncLines, labelled_lines, sync_lines};
 use texlocal_latex::wordmatch::{PdfPage, find_in_pdf, find_in_source};
 
@@ -12,6 +13,14 @@ fn at(line: u32) -> SyncLines {
         line,
         range: line..=line,
     }
+}
+
+fn first_area(synctex: &SyncTex, tag: i32, lines: RangeInclusive<u32>) -> Option<Shown> {
+    synctex
+        .areas(tag, lines)
+        .into_iter()
+        .next()
+        .map(|(area, _)| area)
 }
 
 fn pages(pages: Value) -> Vec<PdfPage> {
@@ -250,13 +259,13 @@ fn a_label_names_its_innermost_environment_its_item_or_its_heading() {
 #[test]
 fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
     let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
-    let one = synctex.area(1, 4..=4).unwrap();
+    let one = first_area(&synctex, 1, 4..=4).unwrap();
     let line = synctex.forward(1, &at(4)).remove(0);
     assert_eq!((one.page, one.h, one.v), (line.page, line.h, line.v));
-    let both = synctex.area(1, 1..=9).unwrap();
+    let both = first_area(&synctex, 1, 1..=9).unwrap();
     assert_eq!(both.page, 1);
     assert!(both.height >= one.height && both.width >= one.width);
-    assert!(synctex.area(1, 900..=901).is_none());
+    assert!(first_area(&synctex, 1, 900..=901).is_none());
 }
 
 #[test]
@@ -274,15 +283,15 @@ fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its
     );
     let width = |page: usize| areas[page].0.width;
     assert!((width(1) - width(0) - pages[1].1).abs() < 0.5, "{areas:?}");
-    assert_eq!(synctex.area(1, 5..=14).unwrap().page, 1);
+    assert_eq!(first_area(&synctex, 1, 5..=14).unwrap().page, 1);
 }
 
 #[test]
 fn a_labels_area_holds_what_it_names_and_not_its_neighbours() {
     let synctex = SyncTex::read(include_bytes!("fixtures/labels.synctex").to_vec()).unwrap();
     let text = include_str!("fixtures/labels.tex");
-    let area = |line| synctex.area(1, labelled_lines(text, line)).unwrap();
-    let top = |shown: &texlocal_latex::synctex::Shown| shown.v - shown.height;
+    let area = |line| first_area(&synctex, 1, labelled_lines(text, line)).unwrap();
+    let top = |shown: &Shown| shown.v - shown.height;
     let paragraph = synctex.forward(1, &at(8)).remove(0);
     let equation = area(10);
     assert!(

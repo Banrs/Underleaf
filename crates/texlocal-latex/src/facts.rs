@@ -87,16 +87,11 @@ impl Place {
     }
 
     pub fn in_file(self, file: String) -> FilePlace {
-        let Self {
-            line,
-            column,
-            length,
-        } = self;
         FilePlace {
             file,
-            line,
-            column,
-            length,
+            line: self.line,
+            column: self.column,
+            length: self.length,
         }
     }
 }

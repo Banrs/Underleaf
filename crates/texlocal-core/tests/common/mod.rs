@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use texlocal_core::service::Service;
-use texlocal_core::session::{LiveEvent, LiveRun, Preview, Project, Sessions, Sink};
+use texlocal_core::session::{LiveEvent, LiveRun, Preview, Project, RunEnd, Sessions, Sink};
 use texlocal_core::{CoreError, ErrorKind};
 
 #[derive(Debug, Deserialize)]
@@ -133,9 +133,10 @@ impl Rig {
     pub async fn previewing(
         files: &[(&str, &str)],
         prepare: impl FnOnce(&Library),
-        preview: Arc<FakePreview>,
-    ) -> Self {
-        Self::start(files, prepare, Some(preview)).await
+    ) -> (Self, Arc<FakePreview>) {
+        let preview = Arc::new(FakePreview::default());
+        let rig = Self::start(files, prepare, Some(Arc::clone(&preview))).await;
+        (rig, preview)
     }
 
     async fn start(
@@ -186,6 +187,11 @@ impl Rig {
 
     pub fn root(&self) -> PathBuf {
         self.library.project_root(&self.id)
+    }
+
+    #[track_caller]
+    pub fn read(&self, rel: &str) -> String {
+        std::fs::read_to_string(self.root().join(rel)).unwrap()
     }
 
     #[track_caller]
@@ -259,25 +265,35 @@ impl Rig {
 
     #[track_caller]
     pub fn event(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        let event = |e: &Value| {
-            let event = &e["value"]["event"];
-            e["type"] == "event" && event["type"] == kind && matching(&event["value"])
-        };
-        self.find(event)["value"]["event"]["value"].take()
+        self.event_matching(None, kind, matching)
     }
 
     #[track_caller]
     pub fn section(&self, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
-        self.event("section", section)["value"].take()
+        self.section_matching(None, kind, matching)
     }
 
     #[track_caller]
     pub fn event_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        self.event_matching(Some(session), kind, matching)
+    }
+
+    #[track_caller]
+    pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+        self.section_matching(Some(session), kind, matching)
+    }
+
+    #[track_caller]
+    fn event_matching(
+        &self,
+        session: Option<u64>,
+        kind: &str,
+        matching: impl Fn(&Value) -> bool,
+    ) -> Value {
         let event = |e: &Value| {
             let event = &e["value"]["event"];
             e["type"] == "event"
-                && e["value"]["session"] == session
+                && session.is_none_or(|session| e["value"]["session"] == session)
                 && event["type"] == kind
                 && matching(&event["value"])
         };
@@ -285,9 +301,14 @@ impl Rig {
     }
 
     #[track_caller]
-    pub fn section_in(&self, session: u64, kind: &str, matching: impl Fn(&Value) -> bool) -> Value {
+    fn section_matching(
+        &self,
+        session: Option<u64>,
+        kind: &str,
+        matching: impl Fn(&Value) -> bool,
+    ) -> Value {
         let section = |s: &Value| s["type"] == kind && matching(&s["value"]);
-        self.event_in(session, "section", section)["value"].take()
+        self.event_matching(session, "section", section)["value"].take()
     }
 
     #[track_caller]
@@ -392,6 +413,16 @@ impl FakePreview {
         if let Some(sink) = &*self.sink.lock().unwrap() {
             sink(event);
         }
+    }
+
+    pub fn typeset(&self, pdf: &Path, pages: u32, revision: u64) {
+        self.send(LiveEvent::Document {
+            path: pdf.to_string_lossy().into_owned(),
+            pages,
+            run: RunEnd::Complete,
+            changed: Vec::new(),
+            revision,
+        });
     }
 }
 

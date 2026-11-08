@@ -202,14 +202,7 @@ struct WindowTests {
 
     @Test func theToolbarFollowsTheLayoutAndCompileTurnsCompactBeforeAnythingOverflows() async throws {
         let model = defaults.window()
-        let views = WorkspaceViews(project: ProjectModel(id: "P", window: model))
-        let workspace = WorkspaceController(window: model, views: views, size: CGSize(width: 1400, height: 800))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
-                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentViewController = workspace
-        window.toolbar = workspace.toolbar.toolbar
-        window.layoutIfNeeded()
+        let (window, workspace) = workspaceWindow(model, toolbar: true)
         defer { workspace.close(); window.close() }
         let items = workspace.toolbar.toolbar.items
         let navigation = try #require(items.first { $0.itemIdentifier == .navigation } as? NSToolbarItemGroup)
@@ -288,7 +281,6 @@ struct WindowTests {
 
     private func windowedApp() -> AppModel {
         let app = defaults.app()
-        app.autoCompile = false
         app.newWindow = { [app] id in id.map { MainWindowController(app: app, project: $0).model } ?? HomeWindowController(app: app).model }
         return app
     }

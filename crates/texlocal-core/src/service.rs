@@ -9,7 +9,6 @@ use texlocal_latex::message::Message;
 use texlocal_latex::templates::ProjectTemplate;
 use tokio::sync::oneshot;
 
-use crate::compile::CompileManager;
 use crate::events::{Log, LogLevel, Said, Sent};
 use crate::messages;
 use crate::paths::{self, Project};
@@ -26,7 +25,6 @@ pub struct Service {
     pub(crate) state_dir: PathBuf,
     helpers: Option<PathBuf>,
     pub(crate) processes: Arc<Processes>,
-    pub(crate) compile: CompileManager,
     pub(crate) texpresso: Arc<texpresso::Manager>,
     pub(crate) library: Mutex<Vec<(String, PathBuf)>>,
     pub(crate) tex_found: tokio::sync::watch::Sender<bool>,
@@ -103,7 +101,6 @@ impl Service {
             data_dir,
             state_dir,
             helpers,
-            compile: CompileManager::new(Arc::clone(&processes)),
             texpresso: Arc::new(texpresso::Manager::new(Arc::clone(&processes), cache)),
             processes,
             library: Mutex::default(),

@@ -36,7 +36,7 @@ extension PDFController {
         }
         pendingReveal = nil
         revealing?.cancel()
-        guard let document = view.document, let located = document.page(ifAt: Int(loc.page) - 1) else { return }
+        guard let document = view.document, let located = document.page(number: Int(loc.page)) else { return }
         guard let source else { return showFound(loc, on: located, hit: nil) }
         let pages = syncPages(loc.matches, in: document)
         let read = pages.map(\.page) + [located]
@@ -51,7 +51,7 @@ extension PDFController {
 
     private func showFound(_ loc: ForwardLoc, on located: PDFPage, hit: PdfHit?) {
         var found: (page: PDFPage, selection: PDFSelection)?
-        if let hit, hit.end > hit.start, let page = view.document?.page(ifAt: hit.page - 1),
+        if let hit, hit.end > hit.start, let page = view.document?.page(number: hit.page),
            let selection = page.selection(for: NSRange(hit.start..<hit.end)) {
             found = (page, selection)
         }
@@ -66,7 +66,7 @@ extension PDFController {
         let interval = signposts.beginInterval("follow")
         defer { signposts.endInterval("follow", interval) }
         guard view.hasShownArea else { return }
-        guard let page = view.document?.page(ifAt: Int(loc.page) - 1) else {
+        guard let page = view.document?.page(number: Int(loc.page)) else {
             if later { feed.follow = loc }
             return
         }
@@ -87,7 +87,7 @@ extension PDFController {
         let first = max(1, lowest - 1), last = min(document.pageCount, highest + 1)
         guard first <= last else { return [] }
         return (first...last).compactMap { number in
-            guard let page = document.page(ifAt: number - 1), let text = page.string else { return nil }
+            guard let page = document.page(number: number), let text = page.string else { return nil }
             let bounds = page.bounds(for: view.displayBox)
             var near: [TextRange] = []
             for box in boxes where Int(box.page) == number {
@@ -107,6 +107,11 @@ enum SyncTeXGeometry {
         CGRect(x: pageBounds.minX + (loc.h ?? 0), y: pageBounds.maxY - (loc.v ?? 0),
                width: max(24, CGFloat(loc.width ?? 0)), height: CGFloat(loc.height ?? 12))
             .insetBy(dx: -2, dy: -2)
+    }
+
+    static func area(_ loc: ForwardLoc, pageBounds: CGRect) -> CGRect? {
+        guard let h = loc.h, let v = loc.v, let width = loc.width, let height = loc.height else { return nil }
+        return CGRect(x: pageBounds.minX + h, y: pageBounds.maxY - v, width: width, height: height)
     }
 
     static func synctexPoint(_ point: CGPoint, pageBounds: CGRect) -> CGPoint {

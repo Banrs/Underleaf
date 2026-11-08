@@ -56,7 +56,7 @@ pub(crate) fn fields(body: &str) -> Vec<(String, String)> {
     fields
 }
 
-fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
+pub(crate) fn field<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
     let (_, value) = fields.iter().find(|(n, _)| n == name)?;
     Some(value)
 }

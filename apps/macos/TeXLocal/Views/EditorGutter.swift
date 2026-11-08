@@ -1,8 +1,6 @@
 import AppKit
 
 struct EditorGutter {
-    static func font(forText size: CGFloat) -> NSFont { .monospacedDigitSystemFont(ofSize: size, weight: .regular) }
-
     static let numberColor: NSColor = {
         let raised: [NSAppearance.Name] = [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         return .adapting(Dictionary(uniqueKeysWithValues: raised.map { ($0, NSColor.tertiaryLabelColor.legibleAsText(in: $0)) }),

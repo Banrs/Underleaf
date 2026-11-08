@@ -2,7 +2,7 @@
 set -e
 [[ $# == 2 && -n $2 ]] || { echo "usage: bundle.sh <TeXpresso build> <app>/Contents" >&2; exit 1 }
 B=$1 H=$2/Helpers F=$2/Frameworks
-sources=$(cd ${0:A:h} && find underleaf-pdf.patch src -type f | LC_ALL=C sort | xargs shasum -a 256)
+sources=$(sh ${0:A:h}/sources.sh)
 [[ $sources == "$(<$B/sources.sha256)" ]] 2>/dev/null || {
   echo "bundle.sh: $B wasn't built from the current tools/texpresso sources; run tools/texpresso/build.sh" >&2; exit 1 }
 identity=${EXPANDED_CODE_SIGN_IDENTITY:-"-"}

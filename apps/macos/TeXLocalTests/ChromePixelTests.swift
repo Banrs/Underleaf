@@ -29,9 +29,9 @@ struct ChromePixelTests {
         let project = views.project
         let size = NSSize(width: 1300, height: 700)
         let workspace = WorkspaceController(window: model, views: views, size: size)
-        let window = (screen == nil ? ChromeKeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
-                                                                                styleMask: [.titled, .resizable, .fullSizeContentView],
-                                                                                backing: .buffered, defer: false)
+        let window = (screen == nil ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
+                                                                          styleMask: [.titled, .resizable, .fullSizeContentView],
+                                                                          backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         workspace.view.setFrameSize(size)
@@ -60,7 +60,7 @@ struct ChromePixelTests {
         project.store.apply(.tree(Self.tree))
         project.tree.arrived()
         project.expandedFolders = ["chapters", "figures"]
-        project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex)))
+        project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
         views.pdf.show(try Self.pdf(pages: 3))
         try await settle()
 
@@ -159,8 +159,7 @@ struct ChromePixelTests {
     private static func build(ok: Bool?, issues: [(error: Bool, file: String)]) -> BuildState {
         let items = issues.enumerated().map { index, issue in
             LogItem(kind: issue.error ? .error : .warning, file: issue.file, line: 10 + index,
-                    message: Message(id: .tex, args: [:], text: issue.error ? "Undefined control sequence." : "Citation undefined."),
-                    explain: nil, fix: nil, topic: nil)
+                    message: Message(id: .tex, args: [:], text: issue.error ? "Undefined control sequence." : "Citation undefined."))
         }
         let result = ok.map { CompileResult(ok: $0, stopped: false, durationMs: 2340, pdf: $0 ? "/tmp/main.pdf" : nil, badBoxes: []) }
         return BuildState(compiling: ok == nil, auto: false, outdated: false, result: result, issues: items, lines: [:])
@@ -179,10 +178,7 @@ struct ChromePixelTests {
     private func write(_ name: String, _ view: NSView, _ rect: NSRect) throws {
         view.displayIfNeeded()
         for scale in [2, 4] {
-            let rep = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(rect.width) * scale, pixelsHigh: Int(rect.height) * scale,
-                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-            rep.size = rect.size
+            let rep = try #require(bitmap(rect.size, scale: scale))
             view.cacheDisplay(in: rect, to: rep)
             try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
         }
@@ -218,10 +214,4 @@ struct ChromePixelTests {
         let top = NSScreen.screens.first?.frame.maxY ?? 0
         try await ask("\(verb) \(Int(point.x.rounded())) \(Int((top - point.y).rounded()))")
     }
-}
-
-/// Draws as the key window would, which a test host can't become on its own.
-private final class ChromeKeyWindow: NSWindow {
-    override var isKeyWindow: Bool { true }
-    override var isMainWindow: Bool { true }
 }

@@ -380,13 +380,10 @@ impl Reader {
         node.parent = self.parent;
         node.page = self.sheet.map_or(-1, |sheet| self.s.sheets[sheet].page);
         let id = self.add(node);
-        match self.child {
-            Some(child) => self.s.nodes[child as usize].sibling = Some(id),
-            None => {
-                if let Some(parent) = self.parent {
-                    self.s.nodes[parent as usize].child = Some(id);
-                }
-            }
+        match (self.child, self.parent) {
+            (Some(child), _) => self.s.nodes[child as usize].sibling = Some(id),
+            (None, Some(parent)) => self.s.nodes[parent as usize].child = Some(id),
+            (None, None) => {}
         }
         self.child = Some(id);
         id
@@ -729,6 +726,15 @@ struct Near {
     distance: i64,
 }
 
+impl Near {
+    fn at(node: u32, distance: i64) -> Self {
+        Self {
+            node: Some(node),
+            distance,
+        }
+    }
+}
+
 const NOWHERE: Near = Near {
     node: None,
     distance: FAR,
@@ -771,17 +777,11 @@ impl SyncTex {
         }
     }
 
-    /// Everything typeset from `lines` on the page where the first of them shows, as one box. Only lines of type that
-    /// show something count, and only those mostly set from `lines`, unless none is: a line that a paragraph runs into,
-    /// as one before a display does, takes the paragraph's lines along, and an environment's first line can bring an
+    /// Everything typeset from `lines`, as one box on each page it's on, the first page first, with how far the lines
+    /// there run past the width TeX set them to, as an overfull one's contents do. Only lines of type that show
+    /// something count, and only those mostly set from `lines`, unless none is: a line that a paragraph runs into, as
+    /// one before a display does, takes the paragraph's lines along, and an environment's first line can bring an
     /// empty box from before a float.
-    pub fn area(&self, tag: i32, lines: RangeInclusive<u32>) -> Option<Shown> {
-        let mut areas = self.areas(tag, lines).into_iter();
-        areas.next().map(|(area, _)| area)
-    }
-
-    /// What `area` joins, on each page it's on from the first, with how far the lines there run past the width TeX set
-    /// them to, as an overfull one's contents do.
     pub fn areas(&self, tag: i32, lines: RangeInclusive<u32>) -> Vec<(Shown, f32)> {
         let ids: Vec<u32> = (lines.clone())
             .filter_map(|line| self.hits(tag, line))
@@ -905,13 +905,9 @@ impl SyncTex {
             if chain.is_empty() || weight > chain[0].1 {
                 chain.insert(0, (id, weight));
             } else if weight > 0 {
-                let mut at = 0;
-                while at + 1 < chain.len() {
-                    at += 1;
-                    if weight >= chain[at].1 {
-                        break;
-                    }
-                }
+                let at = (1..chain.len())
+                    .find(|&k| weight >= chain[k].1)
+                    .unwrap_or(chain.len() - 1);
                 chain.insert(at + 1, (id, weight));
             }
         }
@@ -1110,13 +1106,8 @@ impl SyncTex {
                 to_box(h, h, top, bottom).min(to_box(right, right, top, bottom))
             }
             Kind::Kern => {
-                let other = h - i64::from(at.width);
-                to_box(h, h, v - parent_height(), v).min(to_box(
-                    other,
-                    other,
-                    v - parent_height(),
-                    v,
-                ))
+                let (other, top) = (h - i64::from(at.width), v - parent_height());
+                to_box(h, h, top, v).min(to_box(other, other, top, v))
             }
             Kind::Glue | Kind::Math | Kind::Boundary | Kind::BoxBoundary => {
                 to_box(h, h, v - parent_height(), v)
@@ -1140,10 +1131,7 @@ impl SyncTex {
             for child in self.children(id).filter(|&c| self.node(c).child.is_some()) {
                 let distance = self.distance(hit, child);
                 if distance < best.distance || (!anywhere && distance == best.distance) {
-                    best = Near {
-                        node: Some(child),
-                        distance,
-                    };
+                    best = Near::at(child, distance);
                 }
             }
             if best.node.is_some() {
@@ -1151,10 +1139,7 @@ impl SyncTex {
             }
         }
         if self.contains(hit, id) {
-            Near {
-                node: Some(id),
-                distance: 0,
-            }
+            Near::at(id, 0)
         } else {
             NOWHERE
         }
@@ -1166,10 +1151,7 @@ impl SyncTex {
             let near = if self.node(child).kind.is_box() {
                 self.closest_deep_child(hit, child)
             } else {
-                Near {
-                    node: Some(child),
-                    distance: self.distance(hit, child),
-                }
+                Near::at(child, self.distance(hit, child))
             };
             let kern = near.node.is_some_and(|n| self.node(n).kind == Kind::Kern);
             if near.distance < best.distance || (near.distance == best.distance && !kern) {
@@ -1194,10 +1176,7 @@ impl SyncTex {
                 if self.node(child).child.is_some() {
                     return self.closest_children(hit, child);
                 }
-                left = Near {
-                    node: Some(child),
-                    distance: 0,
-                };
+                left = Near::at(child, 0);
                 continue;
             }
             let side = if distance > 0 { &mut right } else { &mut left };
@@ -1205,10 +1184,7 @@ impl SyncTex {
             if side.distance > distance
                 || (side.distance == distance && side.node.is_some_and(|than| earlier(child, than)))
             {
-                *side = Near {
-                    node: Some(child),
-                    distance,
-                };
+                *side = Near::at(child, distance);
             }
         }
         for side in [&mut left, &mut right] {

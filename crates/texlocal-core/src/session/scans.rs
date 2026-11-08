@@ -1,15 +1,18 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::Serialize;
 use texlocal_latex::facts::{Facts, Place};
 use texlocal_latex::search::Query;
 use texlocal_latex::syntax::{self, SymbolKind};
-use texlocal_latex::{FileKind, file_kind};
+use texlocal_latex::{file_kind, is_source};
 
 use super::actor::Actor;
 use super::{Document, Pending};
 use crate::projects::{self, SearchGroup};
+use crate::{lf, lossy_string, paths};
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Usages {
@@ -47,7 +50,8 @@ impl Actor {
             let found = |rel: &str, text: &str| {
                 usages_in(rel, text, kind, &name, |file| symbols.spelt(file))
             };
-            let hits = projects::search_project(&project, &texts(&docs), &tex, &found, usize::MAX);
+            let hits =
+                projects::search_project(&project, &texts(&docs), &is_source, &found, usize::MAX);
             let name = match kind {
                 SymbolKind::Label => format!("\\label{{{name}}}"),
                 SymbolKind::Citation => format!("\\cite{{{name}}}"),
@@ -75,13 +79,23 @@ pub(super) fn usages_in(
     syntax::usages(&Facts::read(text, file_kind(rel)), rel, kind, name, spelt)
 }
 
-pub(super) fn tex(rel: &str) -> bool {
-    matches!(file_kind(rel), FileKind::Tex | FileKind::Bib)
-}
-
 pub(super) fn texts(docs: &HashMap<String, Document>) -> HashMap<String, String> {
     let texts = docs
         .iter()
         .map(|(path, doc)| (path.clone(), doc.snapshot().0));
     texts.collect()
+}
+
+/// A file's text as the session sees it: the open document's, else the file on disk with its line endings made LF.
+pub(super) fn current_text(
+    docs: &HashMap<String, Document>,
+    root: &Path,
+    rel: &str,
+) -> Option<String> {
+    match docs.get(rel) {
+        Some(doc) => Some(doc.snapshot().0),
+        None => fs::read(paths::safe_path(root, rel).ok()?)
+            .ok()
+            .map(|bytes| lf(lossy_string(bytes))),
+    }
 }

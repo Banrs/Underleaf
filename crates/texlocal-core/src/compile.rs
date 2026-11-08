@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use schemars::JsonSchema;
@@ -56,10 +55,6 @@ pub struct CompileResult {
     pub log: String,
 }
 
-pub struct CompileManager {
-    processes: Arc<Processes>,
-}
-
 #[derive(PartialEq)]
 enum End {
     Exited(i32),
@@ -112,112 +107,110 @@ impl Started {
     }
 }
 
-impl CompileManager {
-    pub(crate) fn new(processes: Arc<Processes>) -> Self {
-        Self { processes }
-    }
-
-    pub fn clean(build: &Path) -> Result<(), CoreError> {
-        match std::fs::remove_dir_all(build) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
-            _ => Ok(()),
-        }
-    }
-
-    pub fn start(&self, project: &Project, path_env: &str) -> Result<Started, CoreError> {
-        let request_started = Instant::now();
-        let root = &project.root;
-        let (settings, trusted) = (read_settings(&project.settings), granted(project));
-        let main_rel = safe_rel_file(&settings.main_file)?;
-        if !shell_safe(&main_rel) {
-            return Err(CoreError::bad_request(messages::main_file_shell_name(
-                main_rel,
-            )));
-        }
-        if !root.join(&main_rel).exists() {
-            return Err(CoreError::bad_request(messages::main_file_missing(
-                main_rel,
-            )));
-        }
-        let pdf = settings.output(&project.build, "pdf")?;
-        let before = STAMPED
-            .into_iter()
-            .filter_map(|ext| Some((ext, Stamp::at(&pdf.with_extension(ext)).ok()?)));
-        let run = CompileRun {
-            before: before.collect(),
-            main_rel,
-            pdf,
-            request_started,
-        };
-        let command = process::command("latexmk", Some(root), path_env).map(|mut command| {
-            if trusted {
-                command.arg("-shell-escape");
-            } else {
-                command.arg("-norc");
-                if let Some(rc) = sys::latexmkrc(|key| std::env::var_os(key)) {
-                    command.arg("-r").arg(rc);
-                }
-            }
-            command.args([
-                settings.engine.flag(),
-                "-interaction=batchmode",
-                "-file-line-error",
-                "-synctex=1",
-                if settings.stop_on_first_error {
-                    "-halt-on-error"
-                } else {
-                    "-f"
-                },
-            ]);
-            command.arg("-e").arg(GLOSSARY_RULES);
-            for option in ["-outdir=", "-auxdir="] {
-                let mut arg = OsString::from(option);
-                arg.push(&project.build);
-                command.arg(arg);
-            }
-            command.arg(format!("./{}", run.main_rel));
-            command
-        });
-        let spawned = command.and_then(|mut command| self.processes.spawn(None, &mut command));
-        Ok(Started { run, spawned })
-    }
-
-    pub async fn wait(&self, started: Started, auto: bool) -> Result<CompileResult, CoreError> {
-        let Started { run, spawned } = started;
-        let (end, output) = match spawned {
-            Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
-            Ok((mut child, tree)) => {
-                let (code, output, timed_out) =
-                    drive(&mut child, &tree, auto.then_some(COMPILE_TIMEOUT)).await;
-                let end = if timed_out {
-                    End::TimedOut
-                } else if tree.killed() {
-                    End::Stopped
-                } else {
-                    End::Exited(code)
-                };
-                (end, output)
-            }
-        };
-        let end = if self.processes.quit() {
-            End::Stopped
-        } else {
-            end
-        };
-        if end != End::Exited(0) || !run.pdf.exists() {
-            let _ = std::fs::remove_file(run.output("fdb_latexmk"));
-        }
-        tokio::task::spawn_blocking(move || finish(&run, &end, output))
-            .await
-            .map_err(|err| CoreError::internal(messages::unexpected(err)))
+pub fn clean(build: &Path) -> Result<(), CoreError> {
+    match std::fs::remove_dir_all(build) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+        _ => Ok(()),
     }
 }
 
-fn finish(run: &CompileRun, end: &End, output: String) -> CompileResult {
+pub fn start(
+    processes: &Processes,
+    project: &Project,
+    path_env: &str,
+) -> Result<Started, CoreError> {
+    let request_started = Instant::now();
+    let root = &project.root;
+    let (settings, trusted) = (read_settings(&project.settings), granted(project));
+    let main_rel = safe_rel_file(&settings.main_file)?;
+    if !shell_safe(&main_rel) {
+        return Err(CoreError::bad_request(messages::main_file_shell_name(
+            main_rel,
+        )));
+    }
+    if !root.join(&main_rel).exists() {
+        return Err(CoreError::bad_request(messages::main_file_missing(
+            main_rel,
+        )));
+    }
+    let pdf = settings.output(&project.build, "pdf")?;
+    let before = STAMPED
+        .into_iter()
+        .filter_map(|ext| Some((ext, Stamp::at(&pdf.with_extension(ext)).ok()?)));
+    let run = CompileRun {
+        before: before.collect(),
+        main_rel,
+        pdf,
+        request_started,
+    };
+    let command = process::command("latexmk", Some(root), path_env).map(|mut command| {
+        if trusted {
+            command.arg("-shell-escape");
+        } else {
+            command.arg("-norc");
+            if let Some(rc) = sys::latexmkrc(|key| std::env::var_os(key)) {
+                command.arg("-r").arg(rc);
+            }
+        }
+        command.args([
+            settings.engine.flag(),
+            "-interaction=batchmode",
+            "-file-line-error",
+            "-synctex=1",
+            if settings.stop_on_first_error {
+                "-halt-on-error"
+            } else {
+                "-f"
+            },
+        ]);
+        command.arg("-e").arg(GLOSSARY_RULES);
+        for option in ["-outdir=", "-auxdir="] {
+            let mut arg = OsString::from(option);
+            arg.push(&project.build);
+            command.arg(arg);
+        }
+        command.arg(format!("./{}", run.main_rel));
+        command
+    });
+    let spawned = command.and_then(|mut command| processes.spawn(None, &mut command));
+    Ok(Started { run, spawned })
+}
+
+pub async fn wait(
+    processes: &Processes,
+    started: Started,
+    auto: bool,
+) -> Result<CompileResult, CoreError> {
+    let Started { run, spawned } = started;
+    let (end, output) = match spawned {
+        Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
+        Ok((mut child, tree)) => {
+            let (code, output, timed_out) =
+                drive(&mut child, &tree, auto.then_some(COMPILE_TIMEOUT)).await;
+            let end = if timed_out {
+                End::TimedOut
+            } else if tree.killed() {
+                End::Stopped
+            } else {
+                End::Exited(code)
+            };
+            (end, output)
+        }
+    };
+    let end = if processes.quit() { End::Stopped } else { end };
+    let ok = end == End::Exited(0) && run.pdf.exists();
+    if !ok {
+        let _ = std::fs::remove_file(run.output("fdb_latexmk"));
+    }
+    tokio::task::spawn_blocking(move || finish(&run, &end, ok, output))
+        .await
+        .map_err(|err| CoreError::internal(messages::unexpected(err)))
+}
+
+fn finish(run: &CompileRun, end: &End, ok: bool, output: String) -> CompileResult {
     if matches!(end, End::Stopped | End::TimedOut) {
         run.discard_cut_short();
     }
-    let ok = *end == End::Exited(0) && run.pdf.exists();
     let unchanged = ok && !run.wrote("pdf") && !run.wrote("log");
     let engine_log = run.read("log", unchanged);
     let tex_log = engine_log.as_deref().unwrap_or(&output);

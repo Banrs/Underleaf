@@ -4,10 +4,9 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
-use common::{FakePreview, Library, Rig, SESSION, Trashed, names, wait_until, write};
+use common::{Library, Rig, SESSION, Trashed, names, wait_until, write};
 use serde_json::{Value, json};
 use texlocal_core::ErrorKind;
 use texlocal_core::session::{Document, LiveEvent, RunEnd};
@@ -83,7 +82,10 @@ fn zip_names(path: &Path) -> Vec<String> {
         .map(|name| name.unwrap().into_owned())
         .collect();
     names.sort();
-    let _ = archive.by_index(0).unwrap().read(&mut [0; 1]);
+    for entry in 0..archive.len() {
+        let mut entry = archive.by_index(entry).unwrap();
+        entry.read_to_end(&mut Vec::new()).unwrap();
+    }
     names
 }
 
@@ -198,8 +200,7 @@ async fn a_setting_lands_in_an_opened_folders_own_file_without_its_ui() {
         "SetSettings",
         json!({ "patch": { "engine": "xelatex" } }),
     );
-    let file = fs::read_to_string(folder.join(".texlocal.json")).unwrap();
-    let file: Value = serde_json::from_str(&file).unwrap();
+    let file = read_json(&folder.join(".texlocal.json"));
     assert_eq!(file["engine"], "xelatex");
     assert_eq!(file["mainFile"], "main.tex");
     assert!(file["ui"].is_null(), "{file}");
@@ -418,11 +419,7 @@ async fn closing_saves_and_ends_the_session() {
     let doc = rig.open_document("ch.tex");
     doc.edit(0, 0, "% last\n", None, false);
     assert_eq!(rig.call("CloseProject", json!({})), true);
-    assert!(
-        fs::read_to_string(rig.root().join("ch.tex"))
-            .unwrap()
-            .starts_with("% last")
-    );
+    assert!(rig.read("ch.tex").starts_with("% last"));
     let after = rig.refuse("Save", json!({ "reporting": true }));
     assert_eq!(after, ErrorKind::NotFound);
 }
@@ -478,7 +475,7 @@ async fn a_file_with_windows_line_ends_is_edited_with_lf_and_saved_with_its_own(
     assert_eq!(doc.with(|d| d.text()), "one\ntwo\n");
     doc.edit(0, 0, "zero\n", None, false);
     assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
-    let saved = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    let saved = rig.read("ch.tex");
     assert_eq!(saved, "zero\r\none\r\ntwo\r\n");
 }
 
@@ -505,24 +502,15 @@ async fn search_reads_unsaved_text() {
 async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
     let rig = Rig::open(&[("main.tex", "cat\n"), ("ch.tex", "cat cat\n")]).await;
     rig.open_document("main.tex");
-    let replaced = rig.call(
-        "Replace",
-        json!({ "query": "cat", "replacement": "dog", "matchCase": false, "wholeWord": false }),
-    );
+    let replaced = rig.call("Replace", replace_cat());
     assert_eq!(
         replaced["written"],
         json!([{ "file": "ch.tex", "count": 2 }])
     );
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        "dog dog\n"
-    );
+    assert_eq!(rig.read("ch.tex"), "dog dog\n");
     assert_eq!(replaced["edits"]["path"], "main.tex");
     assert_eq!(replaced["edits"]["edits"][0]["text"], "dog");
-    assert_eq!(
-        fs::read_to_string(rig.root().join("main.tex")).unwrap(),
-        "cat\n"
-    );
+    assert_eq!(rig.read("main.tex"), "cat\n");
     let before = json!({ "id": replaced["snapshot"], "path": "ch.tex" });
     let rows = rig.call("CompareVersion", before);
     assert!(
@@ -541,10 +529,7 @@ async fn renaming_a_label_changes_every_reference() {
         json!({ "kind": "label", "from": "sec:intro", "to": "sec:start" }),
     );
     assert_eq!(renamed["edits"]["edits"].as_array().unwrap().len(), 2);
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        "\\ref{sec:start}\n"
-    );
+    assert_eq!(rig.read("ch.tex"), "\\ref{sec:start}\n");
     let taken = rig.refuse(
         "RenameSymbol",
         json!({ "kind": "label", "from": "nothing", "to": "x" }),
@@ -707,7 +692,7 @@ async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     let back = json!({ "path": "ch.tex", "trashed": trashed });
     rig.call("PutBack", back.clone());
     rig.section("tree", |t| t.to_string().contains("ch.tex"));
-    let text = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    let text = rig.read("ch.tex");
     assert_eq!(text, format!("% mine\n{CHAPTER}"));
     assert_eq!(rig.refuse("PutBack", back), ErrorKind::NotFound);
 }
@@ -724,10 +709,7 @@ async fn a_named_version_is_listed_compared_and_restored() {
     assert!(rows.contains(&json!({ "type": "removed", "value": "words about a cat" })));
     assert!(rows.contains(&json!({ "type": "added", "value": "changed" })));
     rig.call("RestoreVersion", json!({ "id": id, "paths": ["ch.tex"] }));
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        CHAPTER
-    );
+    assert_eq!(rig.read("ch.tex"), CHAPTER);
     let empty = rig.refuse("SaveVersion", json!({ "name": " " }));
     assert_eq!(empty, ErrorKind::Invalid);
 }
@@ -789,10 +771,7 @@ async fn a_version_a_snapshot_or_an_export_is_refused_while_edits_cant_be_saved(
     let versions = rig.call("ListVersions", json!({}));
     let auto = |version: &Value| version["name"].is_null() && version["reason"].is_null();
     assert!(versions.as_array().unwrap().iter().all(auto));
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        CHAPTER
-    );
+    assert_eq!(rig.read("ch.tex"), CHAPTER);
     assert!(!dest.exists());
     rig.call("Resolve", json!({ "path": "main.tex", "answer": "revert" }));
 }
@@ -844,10 +823,7 @@ async fn replace_all_changes_a_file_reached_by_two_paths_once() {
         json!({ "query": "cat", "replacement": "cats", "matchCase": false, "wholeWord": false }),
     );
     assert_eq!(replaced["written"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        CHAPTER.replace("cat", "cats")
-    );
+    assert_eq!(rig.read("ch.tex"), CHAPTER.replace("cat", "cats"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -857,7 +833,7 @@ async fn settings_change_and_bad_ones_are_refused() {
     rig.section("project", |p| p["settings"]["engine"] == "xelatex");
     let refused = rig.refuse("SetSettings", json!({ "patch": { "engine": "word" } }));
     assert_eq!(refused, ErrorKind::Invalid);
-    let stored = fs::read_to_string(rig.root().join(".texlocal.json")).unwrap();
+    let stored = rig.read(".texlocal.json");
     assert!(stored.contains("xelatex"));
 }
 
@@ -945,10 +921,7 @@ async fn a_change_on_disk_under_edits_is_asked_about_held_and_saved_with_the_edi
         d[0]["conflict"] == "changed" && d[0]["asking"] == false
     });
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "save" }));
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        format!("mine {CHAPTER}")
-    );
+    assert_eq!(rig.read("ch.tex"), format!("mine {CHAPTER}"));
     assert_eq!(rig.call("CloseProject", json!({})), true);
 }
 
@@ -962,10 +935,7 @@ async fn revert_takes_the_disks_text() {
     rig.call("Resolve", json!({ "path": "ch.tex", "answer": "revert" }));
     take_reload(&rig, &doc);
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
-    assert_eq!(
-        fs::read_to_string(rig.root().join("ch.tex")).unwrap(),
-        "theirs\n"
-    );
+    assert_eq!(rig.read("ch.tex"), "theirs\n");
 }
 
 fn revert_once_hidden(rig: &Rig) {
@@ -989,15 +959,14 @@ async fn revert_for_a_document_no_longer_shown_gives_it_the_disks_text_when_it_o
     assert_eq!(doc.with(|d| d.text()), "theirs\n");
     doc.edit(0, 0, "later ", None, false);
     assert_eq!(rig.call("Save", json!({ "reporting": true })), true);
-    let saved = fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    let saved = rig.read("ch.tex");
     assert_eq!(saved, "later theirs\n");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn revert_for_a_document_no_longer_shown_gives_live_preview_the_disks_text() {
-    let preview = Arc::new(FakePreview::default());
     let files = [("main.tex", MAIN), ("ch.tex", CHAPTER)];
-    let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&files, |_| {}).await;
     rig.call("StartLive", json!({}));
     revert_once_hidden(&rig);
     wait_until("Live Preview takes the disk's text", || {
@@ -1313,20 +1282,13 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", BROKEN)], |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", BROKEN)], |_| {}).await;
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     *preview.log.lock().unwrap() =
         "./main.tex:3: Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
     rig.forget();
-    preview.send(LiveEvent::Document {
-        path: "live.pdf".into(),
-        pages: 1,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: preview.revision(),
-    });
+    preview.typeset(Path::new("live.pdf"), 1, preview.revision());
     preview.send(LiveEvent::Page {
         page: 0,
         pdf: "JVBERi0=".into(),
@@ -1354,8 +1316,7 @@ const PICTURED_SYNCTEX: &str = "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced_it() {
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
     let pdf = rig.library.path("live.pdf");
     fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
     let doc = rig.open_document("main.tex");
@@ -1369,13 +1330,7 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
         false,
     );
     doc.select(TextRange::default(), false);
-    preview.send(LiveEvent::Document {
-        path: pdf.to_string_lossy().into_owned(),
-        pages: 2,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: typeset,
-    });
+    preview.typeset(&pdf, 2, typeset);
     rig.event("liveDocument", |_| true);
     let moved = json!({ "file": "main.tex", "line": 11 });
     assert_eq!(rig.call("SynctexForward", moved)["page"], 2.0);
@@ -1388,23 +1343,12 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
 
 #[tokio::test(flavor = "multi_thread")]
 async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typeset_nothing() {
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
     fs::create_dir(rig.library.path("live")).unwrap();
     fs::write(rig.library.path("live/live.synctex"), PICTURED_SYNCTEX).unwrap();
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
-    preview.send(LiveEvent::Document {
-        path: rig
-            .library
-            .path("live/live.pdf")
-            .to_string_lossy()
-            .into_owned(),
-        pages: 2,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: preview.revision(),
-    });
+    preview.typeset(&rig.library.path("live/live.pdf"), 2, preview.revision());
     rig.event("liveDocument", |_| true);
     let start = |line: usize| {
         PICTURED
@@ -1459,8 +1403,7 @@ async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typese
 #[tokio::test(flavor = "multi_thread")]
 async fn a_live_output_claiming_more_than_was_sent_ends_the_preview_which_needs_attention_until_its_log_closes()
  {
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", MAIN)], |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", MAIN)], |_| {}).await;
     rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     preview.send(LiveEvent::Synced(preview.revision() + 1));
@@ -1476,13 +1419,12 @@ async fn a_live_output_claiming_more_than_was_sent_ends_the_preview_which_needs_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_a_folder() {
-    let preview = Arc::new(FakePreview::default());
     let files = [
         ("sub/main.tex", MAIN),
         ("ch.tex", BROKEN),
         (".texlocal.json", r#"{"mainFile":"sub/main.tex"}"#),
     ];
-    let rig = Rig::previewing(&files, |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&files, |_| {}).await;
     // A later watcher read must not send a new source after this fake's only acknowledgement.
     rig.call("StartLive", json!({}));
     rig.open_document("ch.tex");
@@ -1496,8 +1438,7 @@ async fn a_live_error_is_placed_by_its_root_relative_name_with_the_main_file_in_
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_clean_restarts_a_running_live_preview() {
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", MAIN)], |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", MAIN)], |_| {}).await;
     rig.call("StartLive", json!({}));
     rig.section("live", |l| l["phase"] == "running");
     rig.forget();
@@ -1510,8 +1451,7 @@ async fn a_clean_restarts_a_running_live_preview() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside_it() {
     let main = "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n";
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", main)], stub_tex, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", main)], stub_tex).await;
     rig.call("StartLive", json!({}));
     rig.call("CloseProject", json!({}));
     assert!(!preview.running());
@@ -1745,8 +1685,7 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
     for id in sent {
         rig.reply(id).unwrap();
     }
-    let file = fs::read(rig.library.path("state/.texlocal-app.json")).unwrap();
-    let stored: Value = serde_json::from_slice(&file).unwrap();
+    let stored = read_json(&rig.library.path("state/.texlocal-app.json"));
     let expected = json!({ "later": true, "texDir": tex, "texpressoDir": texpresso });
     assert_eq!(stored, expected);
 }
@@ -1784,7 +1723,7 @@ while read -r _; do :; done
 async fn autosave_waits_while_text_is_composed() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
-    let disk = || fs::read_to_string(rig.root().join("ch.tex")).unwrap();
+    let disk = || rig.read("ch.tex");
     doc.compose(true);
     doc.edit(0, 0, "ü", None, false);
     std::thread::sleep(Duration::from_millis(1200));
@@ -1797,7 +1736,7 @@ async fn autosave_waits_while_text_is_composed() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
-    let args = || fs::read_to_string(rig.root().join("build/args")).unwrap();
+    let args = || rig.read("build/args");
     rig.call("Compile", json!({ "auto": false }));
     rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-norc"));
@@ -1829,13 +1768,7 @@ async fn naming_a_version_with_nothing_changed_keeps_the_last_ones_name() {
     rig.call("SaveVersion", json!({ "name": "Submitted" }));
     rig.call("SaveVersion", json!({ "name": "Camera-ready" }));
     let versions = rig.call("ListVersions", json!({}));
-    let names: Vec<_> = versions
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| &v["name"])
-        .collect();
-    assert_eq!(names, [&json!("Camera-ready"), &json!("Submitted")]);
+    assert_eq!(names(&versions, "name"), ["Camera-ready", "Submitted"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1898,20 +1831,13 @@ async fn a_deleted_file_restored_unchanged_releases_its_question_and_saves_the_e
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_live_acknowledgement_keeps_the_shown_pdfs_source_snapshot() {
-    let preview = Arc::new(FakePreview::default());
-    let rig = Rig::previewing(&[("main.tex", PICTURED)], |_| {}, Arc::clone(&preview)).await;
+    let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
     let pdf = rig.library.path("live.pdf");
     fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
     let doc = rig.open_document("main.tex");
     rig.call("StartLive", json!({}));
     let typeset = preview.revision();
-    preview.send(LiveEvent::Document {
-        path: pdf.to_string_lossy().into_owned(),
-        pages: 2,
-        run: RunEnd::Complete,
-        changed: Vec::new(),
-        revision: typeset,
-    });
+    preview.typeset(&pdf, 2, typeset);
     rig.event("liveDocument", |_| true);
     doc.edit(0, 0, &"% comment\n".repeat(20), None, false);
     wait_until("the edit reaches Live Preview", || {
@@ -1997,7 +1923,7 @@ async fn a_fetched_citation_is_added_to_the_named_bibliography_once() {
     assert_eq!(added["key"], "abbott2016observation");
     assert_eq!(added["file"], "refs.bib");
     assert!(!added["edits"].is_null());
-    let bib = fs::read_to_string(rig.root().join("refs.bib")).unwrap();
+    let bib = rig.read("refs.bib");
     assert!(
         bib.starts_with(
             "@book{knuth1984, title = {The TeXbook}}\n\n@article{abbott2016observation,\n  author"
@@ -2012,10 +1938,7 @@ async fn a_fetched_citation_is_added_to_the_named_bibliography_once() {
         (again["key"].as_str(), again["edits"].is_null()),
         (Some("abbott2016observation"), true)
     );
-    assert_eq!(
-        fs::read_to_string(rig.root().join("refs.bib")).unwrap(),
-        bib
-    );
+    assert_eq!(rig.read("refs.bib"), bib);
     assert_eq!(
         rig.refuse("AddCitation", json!({ "entry": "<html>" })),
         ErrorKind::Invalid
@@ -2034,7 +1957,7 @@ async fn a_project_without_a_bibliography_gets_one_for_a_fetched_citation() {
         (added["key"].as_str(), added["file"].as_str()),
         (Some("lovelace1843notes"), Some("references.bib"))
     );
-    let bib = fs::read_to_string(rig.root().join("references.bib")).unwrap();
+    let bib = rig.read("references.bib");
     assert_eq!(
         bib,
         "@misc{lovelace1843notes,\n  author = {Ada Lovelace},\n  title = {Notes},\n  year = {1843}\n}\n"

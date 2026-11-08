@@ -471,28 +471,48 @@ pub enum LogKind {
     Info,
 }
 
+enum Entry<'a> {
+    Diagnostic(Diagnostic<'a>),
+    BadBox,
+}
+
+/// The error, warning or bad box that starts at line `i`, and the line after it: past TeX's echo of an error, past a
+/// warning's continuation, or at the blank line that ends a bad box.
+fn entry<'a>(lines: &[&'a str], i: usize) -> Option<(Entry<'a>, usize)> {
+    let line = lines[i];
+    if let Some(m) = error_start(line).or_else(|| WARNING.captures(line)) {
+        let found = diagnostic(lines, i, &m);
+        let end = if found.error {
+            (found.echo).map_or_else(|| blank_from(lines, i + 1), |j| j + 2)
+        } else {
+            found.end
+        };
+        Some((Entry::Diagnostic(found), end))
+    } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
+        Some((Entry::BadBox, blank_from(lines, i + 1)))
+    } else {
+        None
+    }
+}
+
+fn split_lines(log: &str) -> Vec<&str> {
+    (log.split('\n'))
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .collect()
+}
+
 /// The kind of each of the log's lines, split at each newline: those of each error, warning and bad box the parser
 /// reads take its kind, and the rest are info.
 pub fn log_kinds(log: &str) -> Vec<LogKind> {
-    let lines: Vec<&str> = (log.split('\n'))
-        .map(|line| line.strip_suffix('\r').unwrap_or(line))
-        .collect();
+    let lines = split_lines(log);
     let mut kinds = vec![LogKind::Info; lines.len()];
     let mut i = 0;
     while i < lines.len() {
-        let line = lines[i];
-        let (kind, end) = if let Some(m) = error_start(line).or_else(|| WARNING.captures(line)) {
-            let found = diagnostic(&lines, i, &m);
-            if found.error {
-                let end = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
-                (LogKind::Error, end)
-            } else {
-                (LogKind::Warning, found.end)
-            }
-        } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
-            (LogKind::BadBox, blank_from(&lines, i + 1))
-        } else {
-            (LogKind::Info, i + 1)
+        let (kind, end) = match entry(&lines, i) {
+            Some((Entry::Diagnostic(found), end)) if found.error => (LogKind::Error, end),
+            Some((Entry::Diagnostic(_), end)) => (LogKind::Warning, end),
+            Some((Entry::BadBox, end)) => (LogKind::BadBox, end),
+            None => (LogKind::Info, i + 1),
         };
         let end = end.clamp(i + 1, lines.len());
         kinds[i..end].fill(kind);
@@ -504,45 +524,49 @@ pub fn log_kinds(log: &str) -> Vec<LogKind> {
 fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<LogItem>) {
     let opens = |token: &str| opens_file(token) || ours.is_some() && named_file(token);
     let project = |path: &str| ours.map_or_else(|| project_path(path), |ours| ours(path));
-    let lines: Vec<&str> = log.lines().collect();
+    let lines = split_lines(log);
     let mut items: Vec<LogItem> = Vec::new();
     let mut bad_boxes = Vec::new();
     let mut open = Vec::new();
     let mut quiet_until = 0;
 
     for (i, &line) in lines.iter().enumerate() {
-        if let Some(m) = error_start(line).or_else(|| WARNING.captures(line)) {
-            let mut found = diagnostic(&lines, i, &m);
-            if found.error {
-                quiet_until = (found.echo).map_or_else(|| blank_from(&lines, i + 1), |j| j + 2);
+        match entry(&lines, i) {
+            Some((Entry::Diagnostic(mut found), end)) => {
+                if found.error {
+                    quiet_until = end;
+                }
+                if found.summary && items.iter().any(|item| item.kind == Severity::Error) {
+                    continue;
+                }
+                let message = &mut found.message;
+                let (file, line_no) =
+                    locate(found.named, found.line, &open, main_file, message, &project);
+                let kind = if found.error {
+                    Severity::Error
+                } else {
+                    Severity::Warning
+                };
+                items.push(LogItem::read(
+                    kind,
+                    file,
+                    line_no,
+                    found.message.trim().into(),
+                ));
             }
-            if found.summary && items.iter().any(|item| item.kind == Severity::Error) {
-                continue;
+            Some((Entry::BadBox, end)) => {
+                quiet_until = end;
+                let line_no = BAD_BOX_LINE.captures(line).and_then(|m| m[1].parse().ok());
+                let mut message = line.trim().to_string();
+                let (file, line_no) =
+                    locate(None, line_no, &open, main_file, &mut message, &project);
+                let read = LogItem::read(Severity::Warning, file, line_no, message);
+                bad_boxes.push(LogItem {
+                    topic: Some(Topic::BadBox),
+                    ..read
+                });
             }
-            let message = &mut found.message;
-            let (file, line_no) =
-                locate(found.named, found.line, &open, main_file, message, &project);
-            let kind = if found.error {
-                Severity::Error
-            } else {
-                Severity::Warning
-            };
-            items.push(LogItem::read(
-                kind,
-                file,
-                line_no,
-                found.message.trim().into(),
-            ));
-        } else if line.starts_with("Overfull \\") || line.starts_with("Underfull \\") {
-            quiet_until = blank_from(&lines, i + 1);
-            let line_no = BAD_BOX_LINE.captures(line).and_then(|m| m[1].parse().ok());
-            let mut message = line.trim().to_string();
-            let (file, line_no) = locate(None, line_no, &open, main_file, &mut message, &project);
-            let read = LogItem::read(Severity::Warning, file, line_no, message);
-            bad_boxes.push(LogItem {
-                topic: Some(Topic::BadBox),
-                ..read
-            });
+            None => {}
         }
         if i >= quiet_until {
             track(&mut open, line, &opens);

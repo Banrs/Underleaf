@@ -59,7 +59,7 @@ extension ProjectModel {
         for url in urls {
             guard let path = projectPath(url) else { outside.append(url); continue }
             guard path.parentFolder != dir, !dir.isWithin(path) else { continue }
-            await renameEntry(path, to: dir.isEmpty ? path.fileName : "\(dir)/\(path.fileName)", action: String(localized: "Move"))
+            await renameEntry(path, to: dir.appending(component: path.fileName), action: String(localized: "Move"))
         }
         if !outside.isEmpty { await importFiles(outside, into: dir) }
     }

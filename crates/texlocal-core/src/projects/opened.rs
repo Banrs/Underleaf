@@ -40,6 +40,10 @@ fn store(state_dir: &Path, id: &str) -> PathBuf {
     state_dir.join(STORE).join(&id[1..])
 }
 
+fn id_of(store: &Path) -> String {
+    format!(".{}", store.file_name().unwrap_or_default().display())
+}
+
 fn read(store: &Path) -> Option<Folder> {
     serde_json::from_slice(&fs::read(store.join(FOLDER)).ok()?).ok()
 }
@@ -49,8 +53,8 @@ pub(super) fn folders(state_dir: &Path) -> Vec<(String, Folder)> {
         return Vec::new();
     };
     let folder = |store: fs::DirEntry| {
-        let id = format!(".{}", store.file_name().display());
-        Some((id, read(&store.path())?))
+        let store = store.path();
+        Some((id_of(&store), read(&store)?))
     };
     stores.flatten().filter_map(folder).collect()
 }
@@ -181,8 +185,7 @@ fn open_folder(
     let record = record.map_err(|err| CoreError::bad_request(messages::unexpected(err)))?;
     atomic::write(&store.join(FOLDER), &record, Flush::Full)?;
     made.map(tempfile::TempDir::keep);
-    let id = format!(".{}", store.file_name().unwrap_or_default().display());
-    Ok(ProjectInfo::of(id, &project(root, &store)))
+    Ok(ProjectInfo::of(id_of(&store), &project(root, &store)))
 }
 
 pub fn forget_folder(service: &Service, id: &str) -> Result<(), CoreError> {

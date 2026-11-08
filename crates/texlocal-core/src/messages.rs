@@ -97,6 +97,8 @@ texlocal_latex::messages! {
     invalid_pdf_place = "Invalid PDF location";
     no_match_in_source = "Nothing in the source matches this spot.";
     no_source_file = "No source file at this location";
+    label_unnumbered = "Compile to number it";
+    from_package(package) = "From the {package} package";
 
     no_latexmk = "That folder doesn't contain latexmk. Choose the folder with TeX's programs, such as /Library/TeX/texbin.";
     no_texpresso_there = "That folder doesn't contain the texpresso program. Choose the folder it's in.";

@@ -141,7 +141,7 @@ pub(crate) struct Definition {
 }
 
 static ARGUMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\\([0-9A-Za-z_]+)\*?(\[[^\]]*\])?\{[^{}\\]*$").unwrap());
+    LazyLock::new(|| Regex::new(r"\\([0-9A-Za-z_]+)\*?(?:\[[^\]]*\])*\{[^{}\\]*$").unwrap());
 static ENTRY_TYPE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(@[0-9A-Za-z_]*)$").unwrap());
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[0-9A-Za-z_]*$").unwrap());

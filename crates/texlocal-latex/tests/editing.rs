@@ -1,13 +1,10 @@
 mod common;
 
-use std::sync::Arc;
-
-use common::{apply, caret, run};
+use common::{apply, caret, run, scan};
 use serde_json::{Value, json};
 use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
-use texlocal_latex::project::Scan;
-use texlocal_latex::syntax::{Source, SourceDocument, Syntax};
+use texlocal_latex::syntax::{Installed, Source, SourceDocument, Syntax};
 
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
@@ -223,10 +220,7 @@ fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
     let mut doc = SourceDocument::named(text, "main.tex");
     let at = json!({ "at": 15 });
     assert_eq!(run(&mut doc, "DefinitionAt", at.clone()), Value::Null);
-    let read = Arc::new(Facts::read(text, file_kind("main.tex")));
-    let files = vec!["main.tex".to_owned()];
-    let read = [(files[0].clone(), read)].into();
-    doc.set_symbols(Scan::new(read, files, Arc::default()).symbols);
+    doc.set_symbols(scan(&[("main.tex", text)], Installed::default()).symbols);
     let answer = run(&mut doc, "DefinitionAt", at);
     assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
@@ -243,10 +237,7 @@ fn a_bibtex_cross_reference_after_a_blank_line_leads_to_its_parent() {
 @book{parent, title={Parent}}";
     let path = "refs.bib";
     let mut doc = SourceDocument::named(text, path);
-    let read = Arc::new(Facts::read(text, file_kind(path)));
-    let files = vec![path.to_owned()];
-    let read = [(path.to_owned(), read)].into();
-    doc.set_symbols(Scan::new(read, files, Arc::default()).symbols);
+    doc.set_symbols(scan(&[(path, text)], Installed::default()).symbols);
     let answer = run(
         &mut doc,
         "DefinitionAt",
@@ -297,14 +288,7 @@ fn the_projects_symbols_reach_the_engine_as_data() {
         ("main.tex", "\\ref{sum} $\\R$"),
         ("refs.bib", "@book{knuth, title={TAOCP}}"),
     ];
-    let read = files.map(|(file, text)| {
-        (
-            file.to_owned(),
-            Arc::new(Facts::read(text, file_kind(file))),
-        )
-    });
-    let names = files.map(|(file, _)| file.to_owned()).to_vec();
-    let symbols = Scan::new(read.into(), names, Arc::default()).symbols;
+    let symbols = scan(&files, Installed::default()).symbols;
     let mut doc = SourceDocument::named(files[1].1, "main.tex");
     doc.set_symbols(symbols);
     let answer = run(&mut doc, "DefinitionAt", json!({ "at": 6 }));
@@ -385,15 +369,13 @@ fn maths_renders_as_svg_or_nothing() {
     ] {
         assert!(sane(tex).is_some(), "{tex}");
     }
+    let mut doc = SourceDocument::new("\\begin{alignat*}{2} a &= b & c &= d \\end{alignat*}");
+    let math = run(&mut doc, "MathAt", json!({ "caret": 22 }));
+    let tex = math["tex"].as_str().unwrap();
+    assert_eq!(tex, "\\begin{alignedat}{2} a &= b & c &= d\\end{alignedat}");
+    assert!(sane(tex).is_some(), "{tex}");
     let text = "\\newcommand{\\pair}[2][0]{(#1, #2)} \\newcommand{\\R}{\\mathbb{R}} $\\pair{x} + \\pair[y]{z} \\in \\R$";
-    let facts = Arc::new(Facts::read(text, file_kind("main.tex")));
-    let names = vec!["main.tex".to_owned()];
-    let symbols = Scan::new(
-        [("main.tex".to_owned(), facts)].into(),
-        names,
-        Arc::default(),
-    )
-    .symbols;
+    let symbols = scan(&[("main.tex", text)], Installed::default()).symbols;
     let mut doc = SourceDocument::named(text, "main.tex");
     doc.set_symbols(symbols);
     let caret = text.find("+ ").unwrap();

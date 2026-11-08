@@ -1,5 +1,8 @@
+mod common;
+
 use std::ops::RangeInclusive;
 
+use common::run;
 use serde_json::{Value, json};
 use texlocal_latex::syntax::{Source, SourceDocument, TextRange};
 use texlocal_latex::utf16;
@@ -206,10 +209,6 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
             assert_eq!(doc.line_count() as usize, lines + 1);
         }
     });
-}
-
-fn run(doc: &mut SourceDocument, call: &str, args: Value) -> Value {
-    Source::call(doc, call, args).expect(call)
 }
 
 fn answers(doc: &mut SourceDocument, rng: &mut Rng) -> Vec<Value> {

@@ -19,7 +19,7 @@ final class Breadcrumb: NSView {
     private var hovered: Int?
     private var open: Int?
     private var focused = 0 { didSet { noteFocusRingMaskChanged() } }
-    private var watch: [any NSObjectProtocol] = []
+    private var watch: [NotificationCenter.ObservationToken] = []
 
     init(choose: @escaping (_ item: Int, _ choice: Int) -> Void) {
         self.choose = choose
@@ -131,14 +131,12 @@ final class Breadcrumb: NSView {
     }
 
     override func viewWillMove(toWindow window: NSWindow?) {
-        watch.forEach(NotificationCenter.default.removeObserver)
-        // With no window, `object: nil` would hear every window.
-        guard let window else { return watch = [] }
-        watch = [NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification].map {
-            NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.needsDisplay = true }
-            }
-        }
+        watch = []
+        guard let window else { return }
+        watch = [
+            NotificationCenter.default.addObserver(of: window, for: .didBecomeMain) { [weak self] _ in self?.needsDisplay = true },
+            NotificationCenter.default.addObserver(of: window, for: .didResignMain) { [weak self] _ in self?.needsDisplay = true },
+        ]
     }
 
     override func updateTrackingAreas() {

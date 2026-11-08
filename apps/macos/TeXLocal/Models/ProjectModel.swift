@@ -134,12 +134,12 @@ final class ProjectModel {
         navigator.shown = shown
         window?.controller?.revealSidebar()
     }
-    var sourceToolsEnabled: Bool { isLaTeX && window?.showSource == true }
+    var sourceToolsEnabled: Bool { isOpen && isLaTeX && window?.showSource == true }
 
     var headingCommand: String { outline.first { isOpenFile($0.file) && $0.line == cursorLine }?.command ?? "" }
 
     func isOpenFile(_ path: String) -> Bool { openPath.map { path.caseInsensitiveCompare($0) == .orderedSame } ?? false }
-    var editsText: Bool { openKind?.isText == true }
+    var editsText: Bool { store.openFile?.text == true }
 
     var saveFailure: String? {
         for document in store.documents {
@@ -267,10 +267,8 @@ final class ProjectModel {
     func copyFigure(_ url: URL) async -> String? {
         let folder = openPath?.parentFolder ?? ""
         let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
-        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) })
-        else { return nil }
-        let name = made.existing.first?.keepBoth ?? url.lastPathComponent, path = folder.isEmpty ? name : "\(folder)/\(name)"
-        guard tree.node(at: path) != nil else { return nil }
+        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) }),
+              let path = made.paths.first, tree.node(at: path) != nil else { return nil }
         return includeGraphics(path)
     }
 
@@ -402,7 +400,9 @@ final class ProjectModel {
 
     /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
     func addCitation(_ source: CitationSource) async throws {
-        guard let url = URL(string: source.url) else { throw AppFailure(String(localized: "“\(source.id)” isn’t a DOI or arXiv ID.")) }
+        guard let url = URL(string: source.url) else {
+            throw AppFailure(String(localized: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again."))
+        }
         let citing = openPath
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue(source.accept, forHTTPHeaderField: "Accept")
@@ -414,12 +414,7 @@ final class ProjectModel {
         }
         let added = try await session.call(AddCitation(entry: fetched))
         let name = String(localized: "Add Citation")
-        if let edits = added.edits, !apply(edits.edits, named: name) {
-            if let snapshot = edits.snapshot, !edits.written.isEmpty {
-                try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
-            }
-            throw Self.unchanged
-        }
+        if let edits = added.edits { try await applying(edits, named: name) }
         // Only where it was asked for: the person may have moved to another file while it was fetched.
         if openPath == citing { views?.perform(.cite(added.key)) }
         notices.note(added.edits == nil ? String(localized: "Cited “\(added.key)” from “\(added.file)”")
@@ -438,9 +433,14 @@ final class ProjectModel {
     private func editProject<R: SessionRequest>(_ request: R, named name: String) async throws -> ProjectEdits
         where R.Reply == ProjectEdits {
         let answer = try await session.call(request)
-        if apply(answer.edits, named: name) { return answer }
-        if let snapshot = answer.snapshot, !answer.written.isEmpty {
-            try await session.call(RestoreVersion(id: snapshot, paths: answer.written.map(\.file)))
+        try await applying(answer, named: name)
+        return answer
+    }
+
+    private func applying(_ edits: ProjectEdits, named name: String) async throws {
+        if apply(edits.edits, named: name) { return }
+        if let snapshot = edits.snapshot, !edits.written.isEmpty {
+            try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
         }
         throw Self.unchanged
     }
@@ -473,7 +473,6 @@ final class ProjectModel {
         }
     }
 
-    @discardableResult
     func close(discarding: Bool = false) -> Task<Bool, Never> {
         if let closing { return closing }
         let task = Task { [self] in

@@ -12,6 +12,7 @@ nonisolated extension ProjectTemplate: Identifiable {
 nonisolated extension TreeNode: Identifiable {
     var id: String { path }
     var isDirectory: Bool { children != nil }
+    var folder: String { isDirectory ? path : path.parentFolder }
 
     var symbol: String {
         switch kind {
@@ -25,10 +26,6 @@ nonisolated extension TreeNode: Identifiable {
     }
 }
 
-nonisolated extension FileKind {
-    var isText: Bool { self == .tex || self == .bib || self == .text }
-}
-
 extension [TreeNode] {
     var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
 }
@@ -36,6 +33,7 @@ extension [TreeNode] {
 nonisolated extension String {
     var parentFolder: String { (self as NSString).deletingLastPathComponent }
     var fileName: String { (self as NSString).lastPathComponent }
+    func appending(component name: String) -> String { isEmpty ? name : "\(self)/\(name)" }
     func isWithin(_ folder: String) -> Bool { self == folder || hasPrefix(folder + "/") }
 }
 

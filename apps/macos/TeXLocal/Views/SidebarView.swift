@@ -110,7 +110,7 @@ struct FilesList: View {
 
     private var chosenFolder: String {
         guard let path = selection, let node = project.tree.node(at: path) else { return "" }
-        return node.isDirectory ? path : path.parentFolder
+        return node.folder
     }
 
     private func create(_ entry: NewEntry) {
@@ -163,8 +163,7 @@ struct FilesList: View {
         .contentShape(.rect)
         .accessibilityLabel(isMain ? "\(node.name), Main File" : node.name)
         .fileDrop(moves: { project.projectPath($0) != nil }) { urls in
-            let folder = node.isDirectory ? node.path : node.path.parentFolder
-            Task { await project.dropFiles(urls, into: folder) }
+            Task { await project.dropFiles(urls, into: node.folder) }
         }
         .draggable(file: project.url(node.path))
     }
@@ -176,12 +175,7 @@ struct FilesList: View {
 
     private func commitRename(_ node: TreeNode) {
         guard let name = rename.end(node.path, from: node.name) else { return }
-        guard !name.contains("/") else {
-            window.report("Couldn’t Rename “\(node.name)”", "File and folder names can’t contain “/”.")
-            return
-        }
-        let folder = node.path.parentFolder
-        let path = folder.isEmpty ? name : "\(folder)/\(name)"
+        let path = node.path.parentFolder.appending(component: name)
         Task {
             await project.renameEntry(node.path, to: path)
             if selection == node.path, project.tree.node(at: path) != nil { selection = path }

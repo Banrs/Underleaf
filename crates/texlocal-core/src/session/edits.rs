@@ -1,4 +1,3 @@
-use std::fs;
 use std::sync::{Arc, PoisonError};
 
 use schemars::JsonSchema;
@@ -15,11 +14,11 @@ use super::Pending;
 use super::actor::Actor;
 use super::documents::Doc;
 use super::history::Then;
-use super::scans::{tex, usages_in};
+use super::scans::{current_text, usages_in};
 use crate::messages;
 use crate::projects::{self, Reason, Written};
 use crate::settings::{Engine, SettingsPatch};
-use crate::{CoreError, lf, lossy_string, packages, paths};
+use crate::{CoreError, packages, paths};
 
 type Said = fn(&str) -> Message;
 
@@ -48,6 +47,12 @@ pub(crate) struct AddedCitation {
     file: String,
     // None when the bibliography had the entry already.
     edits: Option<ProjectEdits>,
+}
+
+/// A fetched citation: the entry a bibliography has already, or the edit that adds it.
+enum Citation {
+    Had(AddedCitation),
+    Add(Then<AddedCitation>),
 }
 
 impl Actor {
@@ -96,7 +101,7 @@ impl Actor {
             return Err(CoreError::conflict(exists(&to)));
         }
         let found = move |rel: &str, text: &str| usages_in(rel, text, kind, &from, |_| None);
-        self.edit_project(tex, found, to)
+        self.edit_project(texlocal_latex::is_source, found, to)
     }
 
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
@@ -153,37 +158,14 @@ impl Actor {
     /// Adds fetched BibTeX to the bibliography the main file names, else the project's first `.bib`, else a new
     /// `references.bib`, unless one of them has an entry with its DOI or arXiv identifier already.
     pub fn add_citation(&mut self, fetched: String, reply: Pending<AddedCitation>) {
-        let added = self.citation(&fetched);
-        let (key, file, new, add) = match added {
-            Ok(Ok(found)) => return reply.send(Ok(found)),
-            Ok(Err(add)) => add,
-            Err(err) => return reply.send(Err(err)),
-        };
-        let then = add.map(|add| -> Then<AddedCitation> {
-            // Made only once the version before is taken and the edit goes ahead.
-            Box::new(move |actor, snapshot| {
-                let root = &actor.core.project.root;
-                if new && paths::safe_path(root, &file).is_ok_and(|path| !path.exists()) {
-                    actor.create_entry("", &file, false)?;
-                }
-                add(actor, snapshot).map(|edits| AddedCitation {
-                    key,
-                    file,
-                    edits: Some(edits),
-                })
-            })
-        });
-        self.before(Reason::AddCitation, then, reply);
+        match self.citation(&fetched) {
+            Ok(Citation::Had(found)) => reply.send(Ok(found)),
+            Ok(Citation::Add(then)) => self.before(Reason::AddCitation, Ok(then), reply),
+            Err(err) => reply.send(Err(err)),
+        }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn citation(
-        &mut self,
-        fetched: &str,
-    ) -> Result<
-        Result<AddedCitation, (String, String, bool, Result<Then<ProjectEdits>, CoreError>)>,
-        CoreError,
-    > {
+    fn citation(&mut self, fetched: &str) -> Result<Citation, CoreError> {
         self.text_to_edit()?;
         let scan = Arc::clone(
             &self
@@ -213,18 +195,13 @@ impl Actor {
             bibs.extend(own.into_iter().take(1).cloned());
         }
         let (root, docs) = (self.core.project.root.clone(), self.docs.handles());
-        let text = |rel: &str| match docs.get(rel) {
-            Some(doc) => Some(doc.snapshot().0),
-            None => fs::read(paths::safe_path(&root, rel).ok()?)
-                .ok()
-                .map(|bytes| lf(lossy_string(bytes))),
-        };
+        let text = |rel: &str| current_text(&docs, &root, rel);
         for bib in &bibs {
             let had = text(bib).and_then(|text| {
                 cite::find_entry(&text, tidied.doi.as_deref(), tidied.eprint.as_deref())
             });
             if let Some(key) = had {
-                return Ok(Ok(AddedCitation {
+                return Ok(Citation::Had(AddedCitation {
                     key,
                     file: bib.clone(),
                     edits: None,
@@ -257,8 +234,20 @@ impl Actor {
             move |rel| rel == target,
             end,
             format!("{gap}{}", tidied.entry),
-        );
-        Ok(Err((tidied.key, file, new, add)))
+        )?;
+        let key = tidied.key;
+        // Made only once the version before is taken and the edit goes ahead.
+        Ok(Citation::Add(Box::new(move |actor, snapshot| {
+            let root = &actor.core.project.root;
+            if new && paths::safe_path(root, &file).is_ok_and(|path| !path.exists()) {
+                actor.create_entry("", &file, false)?;
+            }
+            add(actor, snapshot).map(|edits| AddedCitation {
+                key,
+                file,
+                edits: Some(edits),
+            })
+        })))
     }
 
     /// The shown document's text, after saving every edit and closing documents a failed save had kept open, so every

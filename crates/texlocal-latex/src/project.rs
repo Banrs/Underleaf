@@ -245,26 +245,26 @@ fn warning(file: &str, line: u32, message: Message) -> LogItem {
     LogItem::new(Severity::Warning, Some(file.into()), Some(line), message)
 }
 
-/// Each `.bib` a bibliography command names, as the project spells it, or `None` for one it doesn't have.
-fn named_bibliographies(walk: &Walk, symbols: &Symbols) -> Vec<Option<String>> {
+/// Whether the project has every `.bib` a bibliography command names, and those it has, as it spells them, each once.
+fn named_bibliographies(walk: &Walk, symbols: &Symbols) -> (bool, Vec<String>) {
     let named = walk
         .files
         .iter()
         .flat_map(|(_, facts)| &facts.bibliographies);
     let spelt =
         |name: &String| (symbols.spelt(&format!("{name}.bib"))).or_else(|| symbols.spelt(name));
-    named.map(spelt).collect()
+    let spelt: Vec<Option<String>> = named.map(spelt).collect();
+    let all = spelt.iter().all(Option::is_some);
+    let mut seen = HashSet::new();
+    let bibs = (spelt.into_iter().flatten())
+        .filter(|bib| seen.insert(bib.clone()))
+        .collect();
+    (all, bibs)
 }
 
 /// The project's `.bib` files that the main file's bibliography commands name, each once.
 pub fn bibliographies(scan: &Scan, main: &str) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let named = named_bibliographies(&Walk::from(scan, main), &scan.symbols);
-    named
-        .into_iter()
-        .flatten()
-        .filter(|bib| seen.insert(bib.clone()))
-        .collect()
+    named_bibliographies(&Walk::from(scan, main), &scan.symbols).1
 }
 
 pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
@@ -301,13 +301,8 @@ pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
         ));
     }
 
-    let bibliographies = named_bibliographies(&walk, symbols);
-    let mut seen = HashSet::new();
-    let bibs = bibliographies
-        .iter()
-        .flatten()
-        .filter(|bib| seen.insert(*bib));
-    let entries = bibs.filter_map(|bib| scan.facts.get_key_value(bib));
+    let (every_bib_found, bibs) = named_bibliographies(&walk, symbols);
+    let entries = bibs.iter().filter_map(|bib| scan.facts.get_key_value(bib));
     let entries: Vec<(&str, &Named)> = entries
         .flat_map(|(bib, facts)| {
             facts
@@ -320,7 +315,7 @@ pub fn check(scan: &Scan, main: &str) -> Vec<LogItem> {
     items.extend(twice(entries.iter().copied(), |name, line, file| {
         messages::citation_defined_twice(name, line, file)
     }));
-    if bibliographies.iter().all(Option::is_some) {
+    if every_bib_found {
         let bibitems = reached().flat_map(|(_, facts)| read(facts, &facts.defined.citations));
         let mut keys: HashSet<&str> = bibitems.map(|c| c.name.as_str()).collect();
         keys.extend(entries.iter().map(|(_, c)| c.name.as_str()));

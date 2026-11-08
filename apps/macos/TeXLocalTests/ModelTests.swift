@@ -154,7 +154,7 @@ struct SectionTests {
             project.handle(.section(.tree([TreeNode(name: "ch", path: "ch", kind: nil, children: files, main: false), file("main.tex")])))
         }
         tree([file("ch/one.tex")])
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
         #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
         project.trail.jumped(from: Place(path: "main.tex", line: 1))
@@ -254,7 +254,7 @@ struct FieldTests {
 
     @Test func aNameFieldSelectsTheBaseNameAndTakesFastTypingInOrder() async throws {
         let rename = InPlaceRename<String>()
-        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = KeyOnlyWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: Renaming(rename: rename))
         window.makeKeyAndOrderFront(nil)
@@ -272,7 +272,7 @@ struct FieldTests {
 
     @Test func aDialogFieldShowsATypedSpaceAtOnce() async throws {
         let defaults = TestDefaults(), model = defaults.window()
-        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = KeyOnlyWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: NewProjectSheet(draft: NewProjectDraft(template: .blank, name: "water"))
             .environment(model.app).environment(model))
@@ -292,7 +292,7 @@ struct FieldTests {
     }
 }
 
-private final class KeyWindow: NSWindow {
+private final class KeyOnlyWindow: NSWindow {
     override var isKeyWindow: Bool { true }
 }
 
@@ -312,7 +312,6 @@ struct SwitchTests {
     @Test func eachProjectOpensInAWindowOfItsOwnOnceEvenWhenOpenedTwiceAtOnceAndHomeNeverHoldsOne() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         async let opened: Void = home.open(first.id)
         async let again: Void = home.open(first.id)
@@ -333,7 +332,6 @@ struct SwitchTests {
     @Test func aProjectStillOpensWhenTheWindowThatAskedHasClosedMeanwhile() async throws {
         let info = try await newProject()
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         home.windowClosed()
         await home.open(info.id)
@@ -408,7 +406,6 @@ struct SwitchTests {
     @Test func aProjectOpenInAnotherWindowIsntMovedToTheTrash() async throws {
         let info = try await newProject()
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         await home.open(info.id)
         await home.delete(info)
@@ -419,7 +416,6 @@ struct SwitchTests {
     @Test func quitLeavesEveryProjectOpenWhileOneHasADocumentItCantSave() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         await home.open(first.id)
         await home.open(second.id)
@@ -438,7 +434,6 @@ struct SwitchTests {
     @Test func aCancelledQuitForgetsCloseWithoutSavingSoSaveStillFailsAndClosingAsksAgain() async throws {
         let (first, second) = (try await newProject(), try await newProject())
         let app = defaults.app()
-        app.autoCompile = false
         let home = app.showHome()
         await home.open(first.id)
         await home.open(second.id)
@@ -477,7 +472,6 @@ struct ViewsTests {
     @Test func aProjectOnItsCoreTellsItsViewsWhatTheStoreShows() async throws {
         let info = try await newProject()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try #"{ "ui": { "file": "main.tex", "line": 3 } }"#.write(toFile: info.path + "/.texlocal.json", atomically: true, encoding: .utf8)
@@ -500,7 +494,6 @@ struct ViewsTests {
     @Test func movingToTheTrashUndoesAndRedoesThroughTheCore() async throws {
         let info = try await newProject()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         let path = try #require(await project.createEntry(in: "", directory: false))
@@ -527,10 +520,33 @@ struct ViewsTests {
         #expect(await project.close().value)
     }
 
+    @Test func deletingAnEntryMovesItToTheTrashWithItsUndoOnTheWindow() async throws {
+        let info = try await newProject()
+        let window = defaults.window(), host = UndoHost()
+        window.controller = host
+        let project = ProjectModel(id: info.id, window: window)
+        try await project.load()
+        let path = try #require(await project.createEntry(in: "", directory: false))
+        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        let undo = try #require(host.undoManager)
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        await project.deleteEntry(path)
+        undo.endUndoGrouping()
+        #expect(!shown() && undo.undoActionName == "Move to Trash" && window.alert == nil)
+        undo.undo()
+        try await waitUntil { shown() }
+        undo.redo()
+        try await waitUntil { !shown() }
+        undo.undo()
+        try await waitUntil { shown() }
+        #expect(window.alert == nil)
+        #expect(await project.close().value)
+    }
+
     @Test func aRestoreOrAFixTheEditorRefusesSaysSoAndTheFixDoesntCompile() async throws {
         let info = try await newProject()
         let window = defaults.window()
-        window.app.autoCompile = false
         let project = ProjectModel(id: info.id, window: window)
         let views = Views(project)
         try await project.load()
@@ -572,7 +588,7 @@ struct ViewsTests {
         }
         build(true, false)
         #expect(!project.syncsAfterBuild)
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         #expect(project.syncsAfterBuild)
         build(true, true)
         #expect(!project.syncsAfterBuild)
@@ -593,7 +609,7 @@ struct ViewsTests {
         let window = defaults.window()
         let project = ProjectModel(id: "P", window: window)
         let views = Views(project)
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         #expect(!project.canSyncForward())
         views.hasPDF = true
         window.layout = .source
@@ -646,11 +662,11 @@ struct ViewsTests {
         let file = { (name: String, kind: FileKind) in TreeNode(name: name, path: name, kind: kind, children: nil, main: false) }
         project.handle(.section(.project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil))))
         project.handle(.section(.tree([file("main.tex", .tex), file("plot.png", .image), file("refs.bib", .bib)])))
-        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex))))
+        project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         let drop = { (path: String) in project.dropAction(for: URL(filePath: path)) }
         #expect(drop("/tmp/Paper/plot.png") == .insert("\\includegraphics{plot.png}") && drop("/tmp/Paper/refs.bib") == .open("refs.bib"))
         #expect(drop("/tmp/Paper/gone.png") == nil && drop("/Users/me/shot.png") == .copy && drop("/Users/me/notes.txt") == nil)
-        project.handle(.section(.openFile(OpenFile(path: "refs.bib", kind: .bib))))
+        project.handle(.section(.openFile(OpenFile(path: "refs.bib", kind: .bib, text: true))))
         #expect(drop("/tmp/Paper/plot.png") == .open("plot.png") && drop("/Users/me/shot.png") == nil)
     }
 
@@ -689,14 +705,22 @@ struct ViewsTests {
         func perform(_ command: MenuCommand) {}
         func validates(_ command: MenuCommand) -> Bool { false }
     }
+
+    private final class UndoHost: AppWindow {
+        let undoManager: UndoManager? = UndoManager()
+        func performPDF(_ action: PDFAction) {}
+        func revealSidebar() {}
+        func focusSearch() {}
+        func show() {}
+        func close() {}
+    }
 }
 
 struct FilterKindTests {
     private let defaults = TestDefaults()
 
     private func item(_ kind: Severity, _ text: String, _ topic: Topic? = nil) -> LogItem {
-        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), explain: nil, fix: nil,
-                topic: topic)
+        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), topic: topic)
     }
 
     @Test func aKindTheMenuHidesLeavesTheIssueListAndComesBackWhenShownAgain() {

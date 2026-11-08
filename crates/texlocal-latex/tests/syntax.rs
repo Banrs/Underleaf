@@ -287,6 +287,10 @@ fn an_argument_completes_what_the_command_takes() {
     assert_eq!(offered("\\ref{fig"), json!(["label", ["fig:plot"]]));
     assert_eq!(offered("\\cite{lam"), json!(["citation", ["lamport"]]));
     assert_eq!(offered("\\cite{art"), json!(["citation", ["knuth"]]));
+    let lamport = json!(["citation", ["lamport"]]);
+    assert_eq!(offered("\\cite[see]{lam"), lamport);
+    assert_eq!(offered("\\citep[see][p.~5]{lam"), lamport);
+    assert_eq!(offered("\\parencite[a][b]{lam"), lamport);
     let packages = json!(["file", ["amsmath", "amsthm"]]);
     assert_eq!(offered("\\usepackage{ams"), packages);
     assert_eq!(offered("\\input{"), json!(["file", ["main", "ch/intro"]]));

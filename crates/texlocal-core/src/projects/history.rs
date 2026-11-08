@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,11 @@ const MINUTE: i64 = 60_000;
 const HOUR: i64 = 60 * MINUTE;
 const DAY: i64 = 24 * HOUR;
 pub(super) const MAX_KEPT: u64 = 20 << 20;
+
+fn now() -> i64 {
+    let since = SystemTime::now().duration_since(UNIX_EPOCH);
+    since.map_or(0, |since| since.as_millis() as i64)
+}
 
 pub(crate) enum Taken {
     Auto,
@@ -154,12 +160,8 @@ impl History {
         Ok(files)
     }
 
-    pub fn take(
-        &self,
-        project: &Project,
-        now: i64,
-        taken: Taken,
-    ) -> Result<Option<i64>, CoreError> {
+    pub fn take(&self, project: &Project, taken: Taken) -> Result<Option<i64>, CoreError> {
+        let now = now();
         let ids = self.ids()?;
         let latest = ids.iter().find_map(|&id| Some((id, self.read(id).ok()?)));
         let recent = |(id, _): &(i64, Version)| (0..=10 * MINUTE).contains(&(now - id));

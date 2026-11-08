@@ -247,16 +247,10 @@ private struct ProjectLabel<Name: View>: View {
             Group {
                 if let page {
                     let paper = RoundedRectangle(cornerRadius: 2)
-                    let image = Image(nsImage: page).resizable()
-                    Group {
-                        if app.paper.isDark(inDarkAppearance: colorScheme == .dark) {
-                            image.colorInvert().hueRotation(.degrees(180))
-                        } else {
-                            image
-                        }
-                    }
-                    .aspectRatio(contentMode: .fit)
-                    .clipShape(paper)
+                    Image(nsImage: page).resizable()
+                        .colorInverted(app.paper.isDark(inDarkAppearance: colorScheme == .dark))
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(paper)
                         .overlay { paper.strokeBorder(.separator) }
                 } else {
                     Image(systemName: symbol)

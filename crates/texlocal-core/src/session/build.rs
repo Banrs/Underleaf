@@ -14,13 +14,13 @@ use super::documents::Docs;
 use super::state::SessionSection;
 use super::{Document, Msg, Pending};
 use crate::CoreError;
-use crate::compile::{CompileManager, CompileResult, Started};
+use crate::compile::{self, CompileResult, Started};
 use crate::events::{BuildFinished, Event};
 use crate::messages;
 use crate::paths::{Project, disk_spelling};
 use crate::process::Tree;
 use crate::service::Service;
-use crate::{settings, synctex};
+use crate::synctex;
 
 pub(crate) type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 pub(crate) type Compiling = (Tree, Fut<Result<CompileResult, CoreError>>);
@@ -32,16 +32,16 @@ pub trait Compiler: Send + Sync {
 
 impl Compiler for Arc<Service> {
     fn compile(&self, project: Project, auto: bool) -> Compiling {
-        let started = self.compile.start(&project, &self.tool_paths().0);
+        let started = compile::start(&self.processes, &project, &self.tool_paths().0);
         let tree = started.as_ref().map(Started::tree).unwrap_or_default();
         let service = Self::clone(self);
-        let build = async move { service.compile.wait(started?, auto).await };
+        let build = async move { compile::wait(&service.processes, started?, auto).await };
         (tree, Box::pin(build))
     }
 
     fn clean(&self, build: PathBuf) -> Fut<Result<(), CoreError>> {
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || CompileManager::clean(&build))
+            tokio::task::spawn_blocking(move || compile::clean(&build))
                 .await
                 .map_err(|err| CoreError::internal(messages::unexpected(err)))?
         })
@@ -332,8 +332,7 @@ impl Builds {
 }
 
 pub(super) fn built_pdf(project: &Project) -> Option<String> {
-    let pdf = settings::read_settings(&project.settings).output(&project.build, "pdf");
-    let pdf = pdf.ok().filter(|pdf| pdf.is_file())?;
+    let pdf = project.built_pdf()?;
     Some(pdf.to_string_lossy().into_owned())
 }
 

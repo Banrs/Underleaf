@@ -116,7 +116,7 @@ impl Live {
         let Some(pdf) = cx.pdf.live.as_ref().filter(|_| self.active()) else {
             return Ok(None);
         };
-        if !pdf.with_extension("synctex").is_file() {
+        if synctex::synctex_file(pdf).is_none() {
             return Err(CoreError::not_found(messages::texpresso_unsynced()));
         }
         Ok(Some(pdf.clone()))
@@ -524,9 +524,7 @@ impl Live {
         let files: HashMap<String, &String> = files.map(|f| (paths::fold_case(f), f)).collect();
         let ours = |name: &str| {
             let path = paths::rel_key(name).ok()?;
-            files
-                .get(&paths::fold_case(&path))
-                .map(|&file| file.clone())
+            files.get(&paths::fold_case(&path)).copied().cloned()
         };
         let errors = parse_live_log(&log, main, &ours);
         let placed = errors.into_iter().filter_map(|item| {
@@ -599,10 +597,8 @@ mod tests {
     fn a_forward_sync_racing_an_edit_reads_one_text_rather_than_the_edit_as_the_text_typeset() {
         let typeset =
             "\\documentclass{article}\n\\begin{document}\nOne.\n\nTwo.\n\\end{document}\n";
-        let (above, added) = (
-            utf16::len("\\documentclass{article}\n\\begin{document}\n") as u32,
-            "A\nB\n",
-        );
+        let above = utf16::len("\\documentclass{article}\n\\begin{document}\n") as u32;
+        let added = "A\nB\n";
         let edited = typeset.replace("One.", &format!("{added}One."));
         let (tx, _rx) = mpsc::unbounded_channel();
         let doc = Document::new(1, "main.tex", typeset, tx, Arc::default());

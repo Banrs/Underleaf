@@ -14,7 +14,7 @@ pub(crate) enum Flush {
 
 pub(crate) fn temp_builder() -> tempfile::Builder<'static, 'static> {
     let mut builder = tempfile::Builder::new();
-    builder.prefix(".texlocal-");
+    builder.prefix(crate::LITTER);
     builder
 }
 

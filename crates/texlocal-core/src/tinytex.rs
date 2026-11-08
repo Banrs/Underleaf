@@ -5,9 +5,8 @@ use tokio::process::Command;
 
 use crate::error::CoreError;
 use crate::messages;
-use crate::packages::{checked, run};
-use crate::process;
-use crate::process::Processes;
+use crate::packages::{checked, run, said};
+use crate::process::{self, Processes};
 use crate::tex::{find_tool, join_path};
 
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
@@ -72,9 +71,9 @@ async fn unpack(processes: &Processes, temp: &Path, path_env: &str) -> Result<()
     }
     match run(processes, None, untar(&archive, temp, path_env)).await? {
         (0, _) => Ok(()),
-        (_, out) => Err(CoreError::internal(messages::tinytex_unpack_failed(
-            crate::tail(out.trim(), 2000),
-        ))),
+        (_, out) => Err(CoreError::internal(messages::tinytex_unpack_failed(said(
+            &out,
+        )))),
     }
 }
 
@@ -110,7 +109,7 @@ async fn fetch(
         (6 | 7, ..) => Err(CoreError::unavailable(messages::github_unreachable())),
         (28, ..) => Err(CoreError::unavailable(messages::tinytex_stalled())),
         (_, out, _) => Err(CoreError::internal(messages::tinytex_download_failed(
-            crate::tail(out.trim(), 2000),
+            said(&out),
         ))),
     }
 }
@@ -119,14 +118,8 @@ fn download(url: &str, to: &Path, path_env: &str) -> Command {
     let mut command = process::tool(Path::new("/usr/bin/curl"), path_env);
     command
         .args(["--fail", "--location", "--silent", "--show-error"])
-        .args([
-            "--connect-timeout",
-            "30",
-            "--speed-limit",
-            "1000",
-            "--speed-time",
-            "60",
-        ])
+        .args(["--connect-timeout", "30"])
+        .args(["--speed-limit", "1000", "--speed-time", "60"])
         .arg("--output")
         .arg(to)
         .arg(url);

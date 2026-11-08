@@ -8,8 +8,7 @@ struct PDFTests {
     @Test(arguments: [(Zoom?.none, PdfPlace?.none), (.scale(1.5), nil), (.fitPage, PdfPlace(page: 3, x: 0, y: 400)),
                       (.fitWidth, PdfPlace(page: 9, x: 0, y: 792))])
     func aPDFOpensWhereItWasLeftElseAtItsStart(_ zoom: Zoom?, _ left: PdfPlace?) async throws {
-        let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
-        try #require(try textPDF(count: 6).dataRepresentation()).write(to: url)
+        let url = try written(textPDF(count: 6))
         defer { try? FileManager.default.removeItem(at: url) }
         let controller = PDFController(), view = controller.view
         controller.restore = zoom.map { ($0, left) }
@@ -34,8 +33,7 @@ struct PDFTests {
 
     @Test(arguments: [Zoom.fitWidth, .scale(1.5), .fitPage])
     func aRebuildOrResizeKeepsThePlaceAndARebuildCoversItsPagesUntilPDFKitDrawsThem(_ zoom: Zoom) async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         controller.apply(zoom)
@@ -83,8 +81,7 @@ struct PDFTests {
     }
 
     @Test func aLivePageReplacesItsPageInPlaceAndASyncMarkOnlyOnThatPageGoes() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["Page 1", "Page 2", "Page 3"], in: controller)
         let document = try #require(view.document)
@@ -102,8 +99,7 @@ struct PDFTests {
     }
 
     @Test func aLivePageKeepsItsLinks() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["Page 1"], in: controller)
         let linked = try textPDF(["linked"])
@@ -138,8 +134,7 @@ struct PDFTests {
         let views = WorkspaceViews(project: project)
         project.handle(.section(.live(LiveState(phase: .running, engine: .xelatex, halted: false, attention: false, failures: [], lines: [:]))))
         project.handle(.section(.shownPdf(ShownPdf(path: nil, version: 0, live: true))))
-        let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
-        try #require(try textPDF(count: 2).dataRepresentation()).write(to: url)
+        let url = try written(textPDF(count: 2))
         defer { try? FileManager.default.removeItem(at: url) }
         project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [])))
         project.handle(.livePage(LivePage(page: 1, pdf: try typedPage())))
@@ -154,11 +149,9 @@ struct PDFTests {
     }
 
     @Test func aQueuedDocumentKeepsTheFollowThatAnOlderReadCannotShow() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
-        let url = URL.temporaryDirectory.appending(path: UUID().uuidString + ".pdf")
-        try #require(try textPDF(count: 4).dataRepresentation()).write(to: url)
+        let url = try written(textPDF(count: 4))
         defer { try? FileManager.default.removeItem(at: url) }
         let watch = NotificationCenter.default.addObserver(forName: .PDFViewDocumentChanged, object: view, queue: .main) { _ in
             MainActor.assumeIsolated {
@@ -174,8 +167,7 @@ struct PDFTests {
     }
 
     @Test func aReadStoppedWhileLoadingLeavesTheNextFeedItsFollow() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 2))
         let (old, new) = (try written(textPDF(count: 1)), try written(textPDF(count: 30)))
@@ -193,8 +185,7 @@ struct PDFTests {
     }
 
     @Test func aLiveDocumentReadsAgainThePagesItDropsAsAnUndoneEditLeavesThemUnchangedInIt() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["one", "two"], in: controller)
         controller.showLive(LivePage(page: 1, pdf: try typedPage()))
@@ -206,8 +197,7 @@ struct PDFTests {
     }
 
     @Test func coversAreDrawnForEveryPageInViewAtLowZoom() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 20))
         controller.setScale(0.1)
@@ -221,8 +211,7 @@ struct PDFTests {
     }
 
     @Test func aLivePageIsCoveredByItsDrawingUntilPDFKitDrawsIt() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["one", "two"], in: controller)
         try await waitUntil { !overlays(in: view).contains { $0.covered } }
@@ -294,8 +283,7 @@ struct PDFTests {
     }
 
     @Test func aRebuildWithFindOpenKeepsThePlace() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         view.find.perform(.showFindInterface)
@@ -344,8 +332,7 @@ struct PDFTests {
     }
 
     @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         let start = try shown(view)
@@ -360,8 +347,7 @@ struct PDFTests {
     }
 
     @Test func followingAPageNotShownYetWaitsForTheNextLiveUpdate() async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["Page 1", "Page 2"], in: controller)
         let start = try shown(view)
@@ -373,8 +359,7 @@ struct PDFTests {
 
     @Test(arguments: [false, true])
     func aSyncWithNoWordFallsBackToItsBoxUnlessItNeedsAWord(_ wordOnly: Bool) async throws {
-        let controller = PDFController(), view = controller.view
-        let window = try await onScreen(controller.view)
+        let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 6))
         let start = try shown(view)
@@ -403,6 +388,11 @@ struct PDFTests {
 
     private func textPDF(count: Int) throws -> PDFDocument { try textPDF((1...count).map { "Page \($0)" }) }
 
+    private func shownPDF() async throws -> (PDFController, SyncPDFView, NSWindow) {
+        let controller = PDFController()
+        return (controller, controller.view, try await onScreen(controller.view))
+    }
+
     private func typedPage() throws -> Data { try #require(try textPDF(["typed"]).dataRepresentation()) }
 
     private func written(_ document: PDFDocument) throws -> URL {
@@ -412,8 +402,7 @@ struct PDFTests {
     }
 
     private func showLive(_ pages: [String], changed: [PageRange] = [], in controller: PDFController) async throws {
-        let url = URL(filePath: NSTemporaryDirectory()).appending(path: UUID().uuidString + ".pdf")
-        try #require(try textPDF(pages).dataRepresentation()).write(to: url)
+        let url = try written(textPDF(pages))
         defer { try? FileManager.default.removeItem(at: url) }
         controller.showLive(LiveDocument(path: url.path(percentEncoded: false), changed: changed))
         await controller.liveReading?.value

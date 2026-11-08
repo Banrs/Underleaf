@@ -213,15 +213,12 @@ pub unsafe extern "C" fn tl_source_select(
     length: u32,
     mirroring: bool,
 ) {
-    let selection = TextRange { start, length };
-    let select = |document: &Document| document.select(selection, mirroring);
-    unsafe { on_source(source, select) }
+    unsafe { on_source(source, |s| s.select(TextRange { start, length }, mirroring)) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_composing(source: *mut TlSource, composing: bool) {
-    let compose = |document: &Document| document.compose(composing);
-    unsafe { on_source(source, compose) }
+    unsafe { on_source(source, |s| s.compose(composing)) }
 }
 
 #[unsafe(no_mangle)]
@@ -245,8 +242,7 @@ pub unsafe extern "C" fn tl_source_free_text(text: *mut u8, len: usize) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tl_source_restore(source: *mut TlSource, text: *const u8, len: usize) {
     let text = unsafe { text_arg(text, len) };
-    let restore = |document: &Document| document.restore(&text);
-    unsafe { on_source(source, restore) }
+    unsafe { on_source(source, |s| s.restore(&text)) }
 }
 
 #[unsafe(no_mangle)]

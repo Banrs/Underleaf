@@ -138,6 +138,7 @@ impl Docs {
         }
         let open = self.open.clone().map(|path| OpenFile {
             kind: file_kind(&path),
+            text: is_text(&path),
             path,
         });
         cx.publish(SessionSection::OpenFile(open));
@@ -426,9 +427,7 @@ impl Docs {
             }
             (DiskConflict::Gone, Resolution::Save) => (doc.asking, doc.conflict) = (false, None),
             (DiskConflict::Gone, Resolution::Close) => return Ok(self.close(cx, path, false)),
-            _ => {
-                return Err(CoreError::bad_request(messages::answer_unfit()));
-            }
+            _ => return Err(CoreError::bad_request(messages::answer_unfit())),
         }
         self.publish(cx);
         match answer {
@@ -461,12 +460,10 @@ impl Docs {
             ..edit
         };
         doc.reloading = Some((version, edit));
-        let path = path.to_owned();
-        let edits = vec![asked];
         cx.emit(Event::Reload(DocumentEdits {
-            path,
+            path: path.to_owned(),
             version,
-            edits,
+            edits: vec![asked],
         }));
     }
 
@@ -664,20 +661,12 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::service::Service;
-    use crate::session::{Msg, Session, Sessions};
+    use crate::session::tests::panicking;
+    use crate::session::{Msg, Session};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_delayed_edit_after_a_rejected_reload_keeps_the_deletion_conflict() {
-        let dir = tempfile::tempdir().unwrap();
-        let service = Arc::new(Service::new(dir.path().into(), dir.path().into(), None));
-        service
-            .call("CreateProject", json!({ "name": "P", "template": "blank" }))
-            .await
-            .unwrap();
-        let compiler = Arc::new(Arc::clone(&service));
-        let preview = Arc::clone(&service.texpresso);
-        let sessions = Sessions::with_compiler(service, compiler, preview, false, Box::new(|_| {}));
+        let (sessions, _heard, _dir) = panicking().await;
         let (tx, mut rx) = mpsc::unbounded_channel();
         let request = Session::parse("OpenProject", json!({ "id": "P", "autoCompile": false }));
         let Session::OpenProject(opening) = request.unwrap() else {
