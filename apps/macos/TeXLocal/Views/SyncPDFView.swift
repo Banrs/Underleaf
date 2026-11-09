@@ -76,7 +76,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                 let scale = min(wanted.scale, (24e6 / Double(pages.count) / (box.width * box.height)).squareRoot())
                 guard let context = CGContext(data: nil, width: Int((box.width * scale).rounded(.up)), height: Int((box.height * scale).rounded(.up)),
                                               bitsPerComponent: 8, bytesPerRow: 0, space: wanted.space,
-                                              bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+                                              bitmapInfo: CGBitmapInfo(alpha: .noneSkipFirst, byteOrder: .order32Little))
                 else { continue }
                 context.scaleBy(x: scale, y: scale)
                 context.translateBy(x: -box.minX, y: -box.minY)
