@@ -38,12 +38,13 @@ struct ChromePixelTests {
         window.contentViewController = workspace
         window.toolbar = workspace.toolbar.toolbar
         window.title = "Pixels"
-        if screen != nil, let place = NSScreen.screens.first(where: { $0.backingScaleFactor == 2 }) {
+        // On a 2x screen when there is one, so the 2x renders are laid out at 2x.
+        if let place = NSScreen.screens.first(where: { $0.backingScaleFactor == 2 }) {
             window.setFrameOrigin(NSPoint(x: place.visibleFrame.minX + 40, y: place.visibleFrame.maxY - window.frame.height - 40))
         } else {
-            window.alphaValue = 0.01
             window.setFrameOrigin(NSPoint(x: 40, y: 40))
         }
+        if screen == nil { window.alphaValue = 0.01 }
         window.orderFrontRegardless()
         defer { workspace.close(); window.close() }
         let suffix = dark ? "dark" : "light"
