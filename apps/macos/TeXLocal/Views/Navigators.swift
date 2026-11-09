@@ -466,8 +466,7 @@ private struct IssueList: View {
                 }
             } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
             .copyable(project.chosenIssue.flatMap(item).map { [$0.message.text] } ?? [])
-            .alert("\(confirming?.title.text ?? "")?", isPresented: Binding { confirming != nil } set: { if !$0 { confirming = nil } },
-                   presenting: confirming) { fix in
+            .alert("\(confirming?.title.text ?? "")?", item: $confirming) { fix in
                 Button(fix.title.text) { Task { await project.run(fix) } }
                 Button("Cancel", role: .cancel) {}
             } message: { fix in
