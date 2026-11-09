@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <mach-o/dyld.h>
 #include <mupdf/fitz.h>
 #include "editor.h"
@@ -616,6 +617,14 @@ static void crashed(int sig)
   write(STDERR_FILENO, diagnostics, stderr->_p - (unsigned char *)diagnostics);
 }
 
+static void reap(int sig)
+{
+  (void)sig;
+  int saved = errno;
+  while (waitpid(-1, NULL, WNOHANG) > 0);
+  errno = saved;
+}
+
 int main(int argc, const char **argv)
 {
   setvbuf(stderr, diagnostics, _IOFBF, sizeof diagnostics);
@@ -690,6 +699,11 @@ int main(int argc, const char **argv)
                     "to its ls-R files\n");
     return 1;
   }
+  // An engine dropped or replaced is only sent SIGTERM, and unwaited would stay a zombie for the
+  // rest of the session. The engines are this process's only children from here: kpsewhich's
+  // popen is closed. A handler, unlike SIG_IGN, is reset by exec and leaves the engine's waitpid.
+  struct sigaction children = {.sa_handler = reap, .sa_flags = SA_RESTART | SA_NOCLDSTOP};
+  sigaction(SIGCHLD, &children, NULL);
 
   fz_context *ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
   fz_set_warning_callback(ctx, live_mupdf_message, "warning");
