@@ -322,16 +322,27 @@ impl SourceDocument {
             TextStyle::Underline => (|styles| styles.underline, "underline"),
         };
         let selections = clamped(selections, self.text.len());
-        let (mut edits, mut wrapping) = (Vec::new(), Vec::new());
+        let (mut unwraps, mut wrapping) = (Vec::new(), Vec::new());
         for &selection in &selections {
             match styled(self.text_styles(selection)) {
-                Some(unwrap) => edits.extend(unwrap),
+                Some(unwrap) => unwraps.push(unwrap),
                 None => wrapping.push(selection),
             }
         }
+        // A style stays on where a selection being wrapped takes in part of its command or closing brace, as wrapping
+        // that selection alone leaves it: the wrap already rewrites that text, so taking it out as well would overlap.
+        let crosses = |markup: &TextEdit| {
+            let (start, end) = (markup.start, markup.start + markup.length);
+            wrapping
+                .iter()
+                .any(|s| s.start < end && start < s.start + s.length)
+        };
+        unwraps.retain(|unwrap| !unwrap.iter().any(crosses));
+        let mut edits: Vec<TextEdit> = unwraps.into_iter().flatten().collect();
         let prefix = format!("\\{command}{{");
         edits.extend(self.wrap(&wrapping, &format!("{prefix}$0}}")).edits);
-        edits.sort_by_key(|edit| edit.start);
+        // An insertion goes before a removal at the same place, which, made back to front, would otherwise take it out.
+        edits.sort_by_key(|edit| (edit.start, edit.length));
         edits.dedup();
         let into = |s| {
             if wrapping.contains(&s) {

@@ -175,6 +175,28 @@ fn every_selection_is_wrapped_and_one_already_styled_has_its_style_taken_off() {
 }
 
 #[test]
+fn a_style_stays_where_a_wrap_takes_in_its_command_and_a_wrap_just_before_it_is_kept() {
+    let bold = |text: &str, selections: Value| {
+        let mut doc = SourceDocument::new(text);
+        let args = json!({ "selections": selections, "style": "bold" });
+        let toggled = run(&mut doc, "ToggleStyle", args);
+        for edit in toggled["edits"].as_array().unwrap().iter().rev() {
+            apply(&mut doc, edit);
+        }
+        (doc.text(), toggled["selections"].clone())
+    };
+    let crossing = json!([{ "start": 0, "length": 16 }, { "start": 17, "length": 1 }]);
+    let (text, selections) = bold("plain \\textbf{bold}", crossing);
+    assert_eq!(text, "\\textbf{plain \\textbf{bo}ld}");
+    let placed = json!([{ "start": 8, "length": 16 }, { "start": 26, "length": 1 }]);
+    assert_eq!(selections, placed);
+    let before = json!([caret(2), { "start": 11, "length": 1 }]);
+    let (text, selections) = bold("a \\textbf{bold}", before);
+    assert_eq!(text, "a \\textbf{}bold");
+    assert_eq!(selections, json!([caret(10), { "start": 12, "length": 1 }]));
+}
+
+#[test]
 fn a_brace_finds_its_partner() {
     let mut doc = SourceDocument::new("\\textbf{a{b}c}");
     assert_eq!(run(&mut doc, "Partner", json!({ "at": 7 })), 13);

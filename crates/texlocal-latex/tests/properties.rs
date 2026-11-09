@@ -93,9 +93,35 @@ impl Rng {
         json!({ "start": start, "length": length })
     }
 
+    /// Selections as the editor gives them, in order and apart, though now and then out of order or past the end.
     fn ranges(&mut self, len: usize) -> Value {
-        Value::Array((0..1 + self.below(3)).map(|_| self.range(len)).collect())
+        let count = 1 + self.below(3);
+        if self.chance(10) {
+            return Value::Array((0..count).map(|_| self.range(len)).collect());
+        }
+        let mut bounds: Vec<usize> = (0..2 * count).map(|_| self.below(len + 1)).collect();
+        bounds.sort_unstable();
+        let range = |pair: &[usize]| json!({ "start": pair[0], "length": pair[1] - pair[0] });
+        Value::Array(bounds.chunks(2).map(range).collect())
     }
+}
+
+/// Whether each range starts at or after the end of the one before.
+fn in_order(ranges: &[Value]) -> bool {
+    let end = |range: &Value| range["start"].as_u64().unwrap() + range["length"].as_u64().unwrap();
+    ranges
+        .windows(2)
+        .all(|pair| pair[1]["start"].as_u64().unwrap() >= end(&pair[0]))
+}
+
+/// The edits an answer asks for, which the editor makes back to front.
+fn edits(call: &str, answer: &Value) -> Vec<Value> {
+    let edits = match call {
+        "ToggleComment" => answer,
+        _ if answer["edit"].is_object() => return vec![answer["edit"].clone()],
+        _ => &answer["edits"],
+    };
+    edits.as_array().cloned().unwrap_or_default()
 }
 
 fn args(rng: &mut Rng, call: &str, len: usize) -> Value {
@@ -185,18 +211,24 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
             SourceDocument::named(&utf16::lossy(&model), rng.pick(&["main.tex", "refs.bib"]));
         for step in 0..200 {
             let len = model.len();
-            let edit = if rng.chance(2) {
+            let edits = if rng.chance(2) {
                 let start = rng.below(len + 1);
                 let length = rng.below(len - start + 1).min(rng.below(6));
-                Some(json!({ "start": start, "length": length, "text": rng.text(3) }))
+                vec![json!({ "start": start, "length": length, "text": rng.text(3) })]
             } else {
                 let call = *rng.pick(&calls);
-                let answer = Source::call(&mut doc, call, args(&mut rng, call, len));
-                let edit = answer.ok().and_then(|answer| answer.get("edit").cloned());
-                edit.filter(Value::is_object)
+                let args = args(&mut rng, call, len);
+                let apart = args["selections"].as_array().is_none_or(|s| in_order(s));
+                let answer = Source::call(&mut doc, call, args).unwrap_or_default();
+                let edits = edits(call, &answer);
+                assert!(
+                    !apart || in_order(&edits),
+                    "seed {seed}, step {step}: {call} {answer}"
+                );
+                edits
             };
-            if let Some(edit) = edit {
-                for mirror in apply(&mut doc, &mut model, &edit, false) {
+            for edit in edits.iter().rev() {
+                for mirror in apply(&mut doc, &mut model, edit, false) {
                     apply(&mut doc, &mut model, &mirror, true);
                 }
             }
