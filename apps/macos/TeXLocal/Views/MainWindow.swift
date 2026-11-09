@@ -52,8 +52,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
     func show() {
         if !framed, let window, !window.isVisible, !window.isMiniaturized,
            let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
-            window.setFrame(NSRect(origin: window.frame.origin, size: front.frame.size), display: false)
-            window.cascadeTopLeft(from: front.cascadeTopLeft(from: .zero))
+            window.setFrame(front.cascadingReferenceFrame, display: false)
+            window.cascadeTopLeft(from: window.cascadeTopLeft(from: .zero))
         }
         showWindow(nil)
     }
