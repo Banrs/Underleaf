@@ -65,7 +65,7 @@ fn checks_find_twice_defined_and_undefined_names_and_missing_files() {
 
 #[test]
 fn checks_trust_inputs_tex_has_and_skip_citations_without_their_bib() {
-    let scan = project(&[("main.tex", MAIN), ("ch.tex", "")], &[]);
+    let scan = project(&[("main.tex", MAIN), ("ch.tex", "")], &["missing"]);
     let found = found(&scan);
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].2, "No label “nowhere” is defined.");
