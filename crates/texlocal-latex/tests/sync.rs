@@ -152,6 +152,8 @@ fn other_lines_sync_within_their_environment_or_else_their_paragraph() {
     assert_eq!(sync_lines(PICTURED, 20), within(20, 20..=20));
     let chapter = "\\section{One}\n\\label{one}\n\nWords.\n";
     assert_eq!(sync_lines(chapter, 2), within(2, 1..=2));
+    let listed = "\\begin{document}\n\\begin{figure}\n\\begin{itemize}\n\\item one\n\\end{itemize}\n\\end{figure}\n\\end{document}\n";
+    assert_eq!(sync_lines(listed, 4), within(4, 3..=5));
 }
 
 #[test]
@@ -247,12 +249,13 @@ fn a_documents_lines_read_on_from_its_checkpoints_match_a_scan_of_its_whole_text
 
 #[test]
 fn a_label_names_its_innermost_environment_its_item_or_its_heading() {
-    let text = "\\begin{document}\n\\section{Intro}\n\\label{sec:intro}\nText.\n\\begin{figure}\n\\begin{center}\n\\includegraphics{a}\n\\end{center}\n\\caption{A}\\label{fig:a}\n\\end{figure}\n\\begin{equation}\\label{eq:e}\nE = mc^2\n\\end{equation}\n\\begin{enumerate}\n\\item First\\label{it:one}\n\\end{enumerate}\nSee \\label{p:here} this.\n\\end{document}\n";
+    let text = "\\begin{document}\n\\section{Intro}\n\\label{sec:intro}\nText.\n\\begin{figure}\n\\begin{center}\n\\begin{subfigure}{.5\\textwidth}\n\\includegraphics{a}\\label{sub:a}\n\\end{subfigure}\n\\caption{A}\\label{fig:a}\n\\end{center}\n\\end{figure}\n\\begin{equation}\\label{eq:e}\nE = mc^2\n\\end{equation}\n\\begin{enumerate}\n\\item First\\label{it:one}\n\\end{enumerate}\nSee \\label{p:here} this.\n\\end{document}\n";
     assert_eq!(labelled_lines(text, 3), 2..=3);
-    assert_eq!(labelled_lines(text, 9), 5..=10);
-    assert_eq!(labelled_lines(text, 11), 11..=13);
-    assert_eq!(labelled_lines(text, 15), 15..=15);
+    assert_eq!(labelled_lines(text, 8), 7..=9);
+    assert_eq!(labelled_lines(text, 10), 5..=12);
+    assert_eq!(labelled_lines(text, 13), 13..=15);
     assert_eq!(labelled_lines(text, 17), 17..=17);
+    assert_eq!(labelled_lines(text, 19), 19..=19);
     assert_eq!(labelled_lines("\\label{x}", 1), 1..=1);
 }
 
