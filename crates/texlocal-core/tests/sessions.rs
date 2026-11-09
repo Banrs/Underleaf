@@ -798,9 +798,11 @@ async fn a_file_left_open_because_it_couldnt_be_saved_closes_once_it_is() {
     fs::set_permissions(&chapter, fs::Permissions::from_mode(0o444)).unwrap();
     doc.edit(0, 0, "a cat ", None, false);
     rig.open_document("main.tex");
-    rig.section("documents", |d| d.as_array().unwrap().len() == 2);
+    assert!(doc.editable());
     fs::set_permissions(&chapter, fs::Permissions::from_mode(0o644)).unwrap();
+    rig.forget();
     let replaced = rig.call("Replace", replace_cat());
+    assert!(!doc.editable());
     assert!(replaced["edits"].is_null());
     assert_eq!(
         replaced["written"],
