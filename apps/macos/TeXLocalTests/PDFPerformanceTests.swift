@@ -7,11 +7,18 @@ private nonisolated let longPDF = ProcessInfo.processInfo.environment["TEXLOCAL_
     ?? URL.homeDirectory.appending(path: "TeXLocal/Test Long (400 pages)/build/main.pdf")
 private nonisolated let chapters = longPDF.deletingLastPathComponent().deletingLastPathComponent().appending(path: "chapters")
 
+/// A performance run asked for without the book fails, rather than skipping and passing with nothing measured.
+private func requireBook(_ part: URL) throws {
+    try #require(FileManager.default.fileExists(atPath: part.path(percentEncoded: false)),
+                 "No \(part.path(percentEncoded: false)): build the book tools/perf-book.py writes, or set TEST_RUNNER_TEXLOCAL_LONG_PDF")
+}
+
 /// `TEST_RUNNER_TEXLOCAL_PERFORMANCE=1 zsh tools/xctest.sh …`, whose prefix xcodebuild strips for the test host;
 /// `TEST_RUNNER_TEXLOCAL_LONG_PDF` points them at a build of the book `tools/perf-book.py` writes.
-@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PERFORMANCE"] != nil),
-       .enabled(if: FileManager.default.fileExists(atPath: longPDF.path(percentEncoded: false))))
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PERFORMANCE"] != nil))
 struct PDFPerformanceTests {
+    init() throws { try requireBook(longPDF) }
+
     @Test func showingAndSwappingTheLongPDFStayWithinBudget() async throws {
         let controller = PDFController(), view = controller.view
         let window = try await onScreen(controller.view, size: NSSize(width: 700, height: 900))
@@ -56,9 +63,10 @@ struct PDFPerformanceTests {
 }
 
 /// The long book's 40 chapters, beside its build folder, as one file of 1.2 MB.
-@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PERFORMANCE"] != nil),
-       .enabled(if: FileManager.default.fileExists(atPath: chapters.path(percentEncoded: false))))
+@Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PERFORMANCE"] != nil))
 struct EditorPerformanceTests {
+    init() throws { try requireBook(chapters) }
+
     private static func chapter(_ number: Int) throws -> String {
         try String(contentsOf: chapters.appending(path: String(format: "ch%02d.tex", number)), encoding: .utf8)
     }
