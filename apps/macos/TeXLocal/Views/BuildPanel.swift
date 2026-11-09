@@ -39,7 +39,6 @@ private struct BuildPanelBar: View {
             .buttonStyle(.borderless)
             .labelsHidden()
             .fixedSize()
-            .layoutPriority(1)
             Spacer(minLength: 0)
             // As Xcode's console filter: a regular field 182 pt wide with small text, before the bar's action.
             SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol, textSize: .small,
