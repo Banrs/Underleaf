@@ -132,7 +132,7 @@ struct ChromePixelTests {
         project.panel.shown = true
         try await settle()
         let area = columns.superview?.superview ?? columns
-        try write("logs-bar-\(suffix)", area, NSRect(x: columns.convert(columns.bounds, to: area).minX, y: 0,
+        try write("logs-bar-\(suffix)", area, NSRect(x: columns.convert(columns.bounds, to: area).minX, y: area.isFlipped ? area.bounds.maxY - 48 : 0,
                                                     width: columns.bounds.width, height: 48))
         try await capture("logs")
     }
