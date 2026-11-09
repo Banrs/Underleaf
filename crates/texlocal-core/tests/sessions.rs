@@ -1121,6 +1121,7 @@ async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_ope
     rig.listed(|projects| projects.as_array().unwrap().is_empty());
     rig.ask_library("ReloadProjects", json!({})).unwrap();
     let back = json!({ "id": "P", "trashed": trashed });
+    rig.forget();
     rig.ask_library("PutBackProject", back).unwrap();
     rig.listed(|projects| names(projects, "id") == ["P"]);
     rig.call_to(2, "OpenProject", json!({ "id": "P", "autoCompile": false }));
