@@ -25,36 +25,6 @@ final class NavigatorArea: NSViewController {
     }
 }
 
-private final class NavigatorChooser: NSSegmentedControl {
-    private weak var project: ProjectModel?
-    private var watch: Task<Void, Never>?
-
-    isolated deinit { watch?.cancel() }
-
-    init(project: ProjectModel) {
-        self.project = project
-        super.init(frame: .zero)
-        let all = Navigator.allCases
-        segmentCount = all.count
-        for (index, navigator) in all.enumerated() {
-            setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
-            setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
-        }
-        segmentDistribution = .fillEqually
-        trackingMode = .selectOne
-        role = .tabs
-        controlSize = .large
-        setAccessibilityLabel(String(localized: "Navigators"))
-        target = self
-        action = #selector(choose)
-        watch = track({ project.navigator.shown }) { [weak self] in self?.selectedSegment = all.firstIndex(of: $0)! }
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    @objc private func choose() { project?.showNavigator(Navigator.allCases[selectedSegment]) }
-}
-
 extension Navigator {
     var title: String {
         switch self {
@@ -366,11 +336,22 @@ private extension Navigator {
     }
 }
 
-private struct Chooser: NSViewRepresentable {
+/// The tabs picker, its segments sharing the sidebar's width as Xcode's choosers do however few their choices.
+private struct Chooser: View {
     let project: ProjectModel
 
-    func makeNSView(context: Context) -> NavigatorChooser { NavigatorChooser(project: project) }
-    func updateNSView(_ view: NavigatorChooser, context: Context) {}
+    var body: some View {
+        Picker("Navigators", selection: Binding { project.navigator.shown } set: { project.showNavigator($0) }) {
+            ForEach(Navigator.allCases, id: \.self) { navigator in
+                // VoiceOver reads a segment by its image's description, which for a symbol Image is the symbol's own ("warning").
+                Image(nsImage: NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title)!)
+                    .help("\(navigator.title) (⌘\(String(navigator.shortcut.character)))")
+            }
+        }
+        .pickerStyle(.tabs)
+        .buttonSizing(.flexible)
+        .labelsHidden()
+    }
 }
 
 struct NavigatorPane: View {
