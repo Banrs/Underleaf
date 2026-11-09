@@ -7,6 +7,7 @@ use texlocal_latex::syntax::{SourceDocument, SyncLines, labelled_lines, sync_lin
 use texlocal_latex::wordmatch::{PdfPage, find_in_pdf, find_in_source};
 
 const TWO_PAGES: &[u8] = include_bytes!("fixtures/two-pages.synctex");
+const LABELS: &[u8] = include_bytes!("fixtures/labels.synctex");
 
 fn at(line: u32) -> SyncLines {
     SyncLines::Within {
@@ -174,15 +175,18 @@ fn a_forward_search_tries_its_line_then_after_then_before_and_never_leaves_its_r
 
 #[test]
 fn a_whole_picture_is_its_largest_box_on_its_first_page() {
-    let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
-    let all = (4..=8).flat_map(|line| synctex.forward(1, &at(line)));
-    let first = all.filter(|at| at.page == 1);
-    let largest = first.map(|at| at.width * at.height).fold(0.0, f32::max);
-    let whole = synctex.forward(1, &SyncLines::Whole(4..=8));
-    let [whole] = &whole[..] else {
-        panic!("one box")
-    };
-    assert_eq!((whole.page, whole.width * whole.height), (1, largest));
+    // Two pages' larger box is on page 2, and the labels figure's caption comes before its larger rule.
+    for (bytes, lines) in [(TWO_PAGES, 4..=8), (LABELS, 16..=21)] {
+        let synctex = SyncTex::read(bytes.to_vec()).unwrap();
+        let all = lines.clone().flat_map(|line| synctex.forward(1, &at(line)));
+        let first = all.filter(|at| at.page == 1);
+        let largest = first.map(|at| at.width * at.height).fold(0.0, f32::max);
+        let whole = synctex.forward(1, &SyncLines::Whole(lines));
+        let [whole] = &whole[..] else {
+            panic!("one box")
+        };
+        assert_eq!((whole.page, whole.width * whole.height), (1, largest));
+    }
 }
 
 #[test]
@@ -293,7 +297,7 @@ fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its
 
 #[test]
 fn a_labels_area_holds_what_it_names_and_not_its_neighbours() {
-    let synctex = SyncTex::read(include_bytes!("fixtures/labels.synctex").to_vec()).unwrap();
+    let synctex = SyncTex::read(LABELS.to_vec()).unwrap();
     let text = include_str!("fixtures/labels.tex");
     let area = |line| first_area(&synctex, 1, labelled_lines(text, line)).unwrap();
     let top = |shown: &Shown| shown.v - shown.height;
