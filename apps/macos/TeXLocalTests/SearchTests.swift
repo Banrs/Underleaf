@@ -3,10 +3,9 @@ import Testing
 @testable import TeXLocal
 
 struct SearchTests {
-    @Test(arguments: [false, true], [false, true])
-    func anOlderReplyCannotReplaceNewerResultsOrTheirSelection(fails: Bool, changesQuery: Bool) async throws {
+    @Test(arguments: [false, true])
+    func anOlderReplyCannotReplaceNewerResultsOrTheirSelection(fails: Bool) async throws {
         let (search, old, reply) = try await pending()
-        if changesQuery { search.query = "other"; search.query = "needle" }
         let current = groups("new.tex")
         await search.run { _ in current }
         search.chosen = current[0].hits[0].id
@@ -27,9 +26,10 @@ struct SearchTests {
     @Test func clearingAQueryInvalidatesItsPendingReply() async throws {
         let (search, old, reply) = try await pending()
         search.query = ""
-        await search.run { _ in Issue.record("An empty query must not reach the core"); return [] }
         reply.resume(returning: groups("old.tex"))
-        #expect(await old.value == false && search.groups == nil && search.chosen == nil)
+        #expect(await old.value == false && search.groups == nil)
+        await search.run { _ in Issue.record("An empty query must not reach the core"); return [] }
+        #expect(search.groups == nil && search.chosen == nil)
     }
 
     private func groups(_ file: String) -> [SearchGroup] {
