@@ -224,14 +224,17 @@ fn lines_move_duplicate_and_delete() {
 }
 
 #[test]
-fn tab_indents_every_selected_line() {
-    let mut doc = SourceDocument::new("a\nb");
-    let answer = run(
-        &mut doc,
-        "InsertTab",
-        json!({ "selections": [{ "start": 0, "length": 3 }], "step": 1 }),
-    );
-    assert_eq!(answer["edits"].as_array().unwrap().len(), 2);
+fn tab_indents_and_shift_tab_outdents_every_selected_line() {
+    for (text, step, tabbed) in [("a\nb", 1, "  a\n  b"), ("    a\n\tb", -1, "  a\n  b")] {
+        let mut doc = SourceDocument::new(text);
+        let selection = json!({ "start": 0, "length": text.len() });
+        let args = json!({ "selections": [selection], "step": step });
+        let answer = run(&mut doc, "InsertTab", args);
+        for edit in answer["edits"].as_array().unwrap().iter().rev() {
+            apply(&mut doc, edit);
+        }
+        assert_eq!(doc.text(), tabbed, "step {step}");
+    }
 }
 
 #[test]
