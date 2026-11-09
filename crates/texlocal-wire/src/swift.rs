@@ -46,9 +46,18 @@ pub fn file(ir: &Ir) -> String {
 // Strings in Swift, as macOS asks the user before the test host reads ~/Documents.
 pub fn said(said: &Value) -> String {
     let said: String = (said.as_array().expect("said is a list").iter())
-        .map(|said| format!("    #\"{said}\"#,\n"))
+        .map(|said| format!("    {},\n", raw(&said.to_string())))
         .collect();
     format!("nonisolated let wireSaid = [\n{said}]\n")
+}
+
+// A raw string opened with n #s ends at a quote followed by n #s and escapes at a backslash followed by n, so n is one
+// more than the most #s after any quote or backslash in the text, as in the JSON string "#1" or TeX's \# (\\# in JSON).
+fn raw(text: &str) -> String {
+    let runs = text.split(['"', '\\']).skip(1);
+    let most = runs.map(|after| after.len() - after.trim_start_matches('#').len());
+    let hashes = "#".repeat(most.max().unwrap_or(0) + 1);
+    format!("{hashes}\"{text}\"{hashes}")
 }
 
 fn types(ir: &Ir, generic: &BTreeSet<&str>) -> String {
