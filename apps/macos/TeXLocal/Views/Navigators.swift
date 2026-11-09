@@ -90,7 +90,6 @@ final class NavigatorFilterBar: NSView {
         add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))
         (add.bezelStyle, add.borderShape, add.controlSize) = (.glass, .circle, .large)
         (add.target, add.action) = (self, #selector(showAdd(_:)))
-        add.setAccessibilityLabel(String(localized: "Add"))
         addSubview(add)
 
         fieldGlass.cornerRadius = Self.height / 2 - 1
