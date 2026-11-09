@@ -16,6 +16,10 @@ ICU=$(brew list --formula | grep -E '^icu4c(@[0-9]+)?$' | sort -V | tail -1)
 [ -n "$ICU" ] || { echo "build.sh: TeXpresso needs icu4c: brew install icu4c" >&2; exit 1; }
 # Upstream's objects don't track header or Homebrew ABI changes (for example ICU 78 to 79).
 make clean
-make -j4 all BREW_ICU4C="$(brew --prefix "$ICU")" "$@"
+# The frontend and engine each build the common library when it's missing, so it goes first: three parallel builds of it
+# corrupted the archive.
+ICU4C=BREW_ICU4C=$(brew --prefix "$ICU")
+make -j4 common "$ICU4C" "$@"
+make -j4 all "$ICU4C" "$@"
 sh "$HERE/sources.sh" > build/sources.sha256
 echo "Built $DEST/build/texpresso."
