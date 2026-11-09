@@ -188,7 +188,8 @@ struct ChoiceList<Item, Row: View>: View {
                             .contentShape(.rect)
                             .onTapGesture { chosen(index) }
                             .accessibilityElement(children: .combine)
-                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                            .accessibilityAction { chosen(index) }
                             .id(index)
                     }
                 }
