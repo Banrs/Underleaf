@@ -52,8 +52,8 @@ final class ProjectModel {
     var openKind: FileKind? { store.openFile?.kind }
     private var analysis: Analysis? { isLaTeX ? store.outline : nil }
     private(set) var outline: [Heading] = []
-    var outlineTree: [OutlineNode] { analysis?.tree ?? [] }
-    var headingStyles: [HeadingStyle] { store.outline?.headingStyles ?? HeadingStyle.standard }
+    private(set) var outlineTree: [OutlineNode] = []
+    private(set) var headingStyles = HeadingStyle.standard
     var words: Int? { analysis?.words }
     private(set) var cursorLine = 1
     private(set) var cursorColumn = 0
@@ -229,8 +229,11 @@ final class ProjectModel {
         case .tree: tree.arrived()
         case .openFile, .outline:
             if case .openFile(let file?) = section { navigator.opened(file.path) }
-            let now = analysis?.outline ?? []
-            if now != outline { outline = now }
+            // An analysis comes back after each edit. An observable property ignores a value equal to the one it holds, so the
+            // views reading these update when the outline or the heading styles change, not with each word count.
+            outline = analysis?.outline ?? []
+            outlineTree = analysis?.tree ?? []
+            headingStyles = store.outline?.headingStyles ?? HeadingStyle.standard
             findHeadings()
         case .documents(let documents):
             answered = answered.filter { path in documents.contains { $0.path == path && $0.asking } }
