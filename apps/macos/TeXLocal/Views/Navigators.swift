@@ -219,10 +219,10 @@ final class FilterToggle: NSButton {
         isBordered = false
         // Shows the alternate image when on; by default a borderless one looks the same on and off.
         (cell as? NSButtonCell)?.showsStateBy = .contentsCellMask
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        alternateImage = NSImage(systemSymbolName: symbol + ".fill", accessibilityDescription: nil)
+        // VoiceOver reads the shown image's description: a label set on the button never reaches its cell.
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        alternateImage = NSImage(systemSymbolName: symbol + ".fill", accessibilityDescription: label)
         toolTip = help
-        setAccessibilityLabel(label)
     }
 
     required init?(coder: NSCoder) { fatalError() }
