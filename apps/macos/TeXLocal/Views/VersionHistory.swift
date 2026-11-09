@@ -28,7 +28,7 @@ struct VersionHistorySheet: View {
     @State private var shown: Shown?
     @State private var restorable = false
     @State private var restoring = false
-    @State private var confirmingRestoreAll = false
+    @State private var confirmingRestoreAll: Snapshot?
     @State private var listFailure: String?
     @State private var restoreFailure: String?
 
@@ -59,7 +59,7 @@ struct VersionHistorySheet: View {
             HStack {
                 Button("Restore File") { if let snapshot, let file { restore(snapshot, paths: [file]) } }
                     .disabled(!restorable || restoring)
-                Button("Restore All") { confirmingRestoreAll = true }
+                Button("Restore All") { confirmingRestoreAll = snapshot }
                     .disabled(snapshot == nil || restoring)
                 if let restoreFailure { FailureText(text: restoreFailure) }
                 Spacer()
@@ -72,8 +72,7 @@ struct VersionHistorySheet: View {
         .task { await list() }
         .onChange(of: chosen) { file = snapshot?.changed.first?.path }
         .task(id: [chosen, file]) { await compare() }
-        .alert("Restore All Files to “\(snapshot?.title ?? "")”?", isPresented: $confirmingRestoreAll,
-               presenting: snapshot) { snapshot in
+        .alert("Restore All Files to “\(confirmingRestoreAll?.title ?? "")”?", item: $confirmingRestoreAll) { snapshot in
             Button("Restore All") { restore(snapshot, paths: nil) }
             Button("Cancel", role: .cancel) {}
         } message: { snapshot in
