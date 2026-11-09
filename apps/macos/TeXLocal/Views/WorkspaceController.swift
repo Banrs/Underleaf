@@ -117,7 +117,8 @@ final class WorkspaceController: ThinSplitViewController {
             space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
             item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
         }
-        let bar = hostingView(StatusBar(project: project))
+        let bar = NSHostingView(rootView: Pane(project: project, content: StatusBar(project: project))
+            .environment(app).environment(window).environment(views))
         bar.sizingOptions = []
         bar.safeAreaRegions = []
         bar.translatesAutoresizingMaskIntoConstraints = false
@@ -183,21 +184,11 @@ final class WorkspaceController: ThinSplitViewController {
         return host
     }
 
-    private func hostingView(_ content: some View) -> NSHostingView<some View> {
-        let host = NSHostingView(rootView: Pane(project: project, content: content).environment(app).environment(window).environment(views))
-        host.sizingOptions = [.intrinsicContentSize]
-        host.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return host
-    }
-
-    private func accessory(_ view: NSView, edge: NSScrollEdgeEffectStyle? = nil) -> NSSplitViewItemAccessoryViewController {
+    private func accessory(_ view: NSView, edge: NSScrollEdgeEffectStyle) -> NSSplitViewItemAccessoryViewController {
         let accessory = NSSplitViewItemAccessoryViewController()
         accessory.view = view
-        if let edge {
-            accessory.automaticallyAppliesContentInsets = false
-            accessory.preferredScrollEdgeEffectStyle = edge
-        }
+        accessory.automaticallyAppliesContentInsets = false
+        accessory.preferredScrollEdgeEffectStyle = edge
         return accessory
     }
 
