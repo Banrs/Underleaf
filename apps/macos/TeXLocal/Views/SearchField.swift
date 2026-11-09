@@ -57,12 +57,25 @@ extension NSImage {
 /// A stock search field showing a symbol in place of the magnifier and, with a menu, the menu chevron.
 final class FilterSearchField: NSSearchField {
     final class Cell: NSSearchFieldCell {
-        /// Centres the symbol on the field, like Xcode's console filter, with its menu chevron. AppKit's own rect sits a point
-        /// below the middle, with the symbol half a point below that.
+        /// Centres the 15 pt symbol on the field, on whole pixels, as Xcode's console filter does. AppKit's own rect sits a
+        /// point below the middle, with the symbol half a point below that.
         override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
             let button = super.searchButtonRect(forBounds: rect)
-            return NSRect(x: button.minX, y: rect.midY - 8.375, width: button.width, height: 15)
+            let scale = controlView?.window?.backingScaleFactor ?? 2
+            return NSRect(x: button.minX, y: (rect.midY - 7.5).pixelCeiling(scale), width: button.width, height: 15)
         }
+
+        /// Sets the text's capitals on the field's middle, level with the symbol and the bar's labels; AppKit moves the rect
+        /// 2 pt down for text smaller than the field's own, which set it a point low.
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+            var text = super.searchTextRect(forBounds: rect)
+            guard let font else { return text }
+            let scale = controlView?.window?.backingScaleFactor ?? 2
+            text.origin.y = (rect.midY + font.capHeight / 2 - Self.layout.defaultBaselineOffset(for: font)).pixelCeiling(scale)
+            return text
+        }
+
+        private static let layout = NSLayoutManager()
     }
 
     override class var cellClass: AnyClass? {
