@@ -160,25 +160,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Build Rust core";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/../../tools/build-core.sh\"\n";
-		};
 		B0D1E5C0FFEE7E7000000001 /* Bundle TeXpresso */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -197,6 +178,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "B=${TEXPRESSO_BUILD:-$SRCROOT/../../tools/texpresso/source/build}\nif [ -x \"$B/texpresso\" ]; then exec zsh \"$SRCROOT/../../tools/texpresso/bundle.sh\" \"$B\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH\"; fi\necho \"warning: no TeXpresso in $B for Live Preview; build it with tools/texpresso/build.sh\"\n";
+		};
+		D0BFDCD8EC49557EEE2F31DA /* Build Rust core */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust core";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../../tools/build-core.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -311,7 +311,6 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				TEXLOCAL_APP_IDENTIFIER = com.texlocal.mac.dev;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -323,6 +322,7 @@
 				SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
+				TEXLOCAL_APP_IDENTIFIER = com.texlocal.mac.dev;
 			};
 			name = Debug;
 		};
@@ -371,17 +371,17 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				TEXLOCAL_APP_IDENTIFIER = com.texlocal.mac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../crates/texlocal-ffi/include";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
+				TEXLOCAL_APP_IDENTIFIER = com.texlocal.mac;
 			};
 			name = Release;
 		};
@@ -399,8 +399,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TeXLocal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Underleaf contributors";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Underleaf contributors";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -428,8 +428,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TeXLocal/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = TeXLocal;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Underleaf contributors";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Underleaf contributors";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
