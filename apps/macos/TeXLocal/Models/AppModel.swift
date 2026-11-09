@@ -121,7 +121,6 @@ final class AppModel {
                                      DefaultsKey.showPDF: true, DefaultsKey.editorFontSize: 13, DefaultsKey.editorLineNumbers: true,
                                      DefaultsKey.editorAutoPair: true, DefaultsKey.editorAutoComplete: true,
                                      DefaultsKey.editorSpellCheck: true])
-        defaults.removeObject(forKey: "editorSyntaxTheme")
         func choice<T: RawRepresentable<String>>(_ key: String, _ fallback: T) -> T {
             defaults.string(forKey: key).flatMap { T(rawValue: $0) } ?? fallback
         }

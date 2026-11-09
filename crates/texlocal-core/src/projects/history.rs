@@ -37,16 +37,12 @@ pub(crate) enum Taken {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Reason {
-    #[serde(alias = "Before Replace All")]
     #[schemars(title = "Before Replace All")]
     ReplaceAll,
-    #[serde(alias = "Before Rename")]
     #[schemars(title = "Before Rename")]
     Rename,
-    #[serde(alias = "Before Adding a Package")]
     #[schemars(title = "Before Adding a Package")]
     AddPackage,
-    #[serde(alias = "Before Restore")]
     #[schemars(title = "Before Restore")]
     Restore,
     #[schemars(title = "Before Adding a Citation")]
@@ -363,18 +359,5 @@ mod tests {
         let mut objects: Vec<_> = objects.map(|entry| entry.unwrap().file_name()).collect();
         objects.sort_unstable();
         assert_eq!(objects, ["day", "hour", "named", "recent"]);
-    }
-
-    #[test]
-    fn an_old_records_reason_reads_as_its_kind() {
-        let dir = tempfile::tempdir().unwrap();
-        let history = History {
-            dir: dir.path().into(),
-        };
-        let old = r#"{"name":null,"reason":"Before Restore","files":{}}"#;
-        fs::create_dir_all(history.dir.join("snapshots")).unwrap();
-        fs::write(history.record(1), old).unwrap();
-        let listed = serde_json::to_value(history.list().unwrap()).unwrap();
-        assert_eq!(listed[0]["reason"], "restore");
     }
 }

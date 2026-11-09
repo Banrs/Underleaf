@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 
 use crate::events::{Log, LogLevel, Said, Sent};
 use crate::messages;
-use crate::paths::{self, Project};
+use crate::paths::Project;
 use crate::process::Processes;
 use crate::projects::{self, History, Job, Opening, ProjectInfo};
 use crate::protocol::requests;
@@ -94,7 +94,6 @@ requests! {
 
 impl Service {
     pub fn new(data_dir: PathBuf, state_dir: PathBuf, helpers: Option<PathBuf>) -> Self {
-        paths::move_device_state(&data_dir, &state_dir);
         let processes = Arc::new(Processes::default());
         let cache = state_dir.join(".texpresso");
         Self {
