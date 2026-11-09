@@ -81,7 +81,7 @@ private struct QuickOpenView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary).accessibilityHidden(true)
                 SearchField(text: $query, prompt: String(localized: "Open Quickly"), large: true, handle: field,
                             step: { _ in open(rows.selection) }, move: rows.move, close: close)
                     .onChange(of: query) { search(query) }
