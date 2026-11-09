@@ -325,7 +325,6 @@ private struct TemplateButtonStyle: ButtonStyle {
 struct NewProjectSheet: View {
     @Environment(WindowModel.self) private var window
     @State var draft: NewProjectDraft
-    @FocusState private var nameFocused: Bool
 
     private var trimmed: String { draft.name.trimmingCharacters(in: .whitespaces) }
 
@@ -334,9 +333,8 @@ struct NewProjectSheet: View {
                     action: "Create", enabled: !trimmed.isEmpty) {
             try await window.create(name: trimmed, template: draft.template)
         } fields: {
-            DialogField(label: "Name", text: $draft.name, prompt: "Required", focus: $nameFocused)
+            DialogField(label: "Name", text: $draft.name, prompt: "Required")
             Picker("Template", selection: $draft.template) { ForEach(ProjectTemplate.allCases) { Text($0.title).tag($0) } }
         }
-        .defaultFocus($nameFocused, true)
     }
 }

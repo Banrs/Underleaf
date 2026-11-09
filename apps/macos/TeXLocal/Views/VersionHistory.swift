@@ -3,7 +3,6 @@ import SwiftUI
 struct SaveVersionSheet: View {
     let project: ProjectModel
     @State private var name = ""
-    @FocusState private var focused: Bool
 
     var body: some View {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -11,9 +10,8 @@ struct SaveVersionSheet: View {
                     action: "Save", enabled: !trimmed.isEmpty) {
             try await project.saveVersion(named: trimmed)
         } fields: {
-            DialogField(label: "Name", text: $name, prompt: "Required", focus: $focused)
+            DialogField(label: "Name", text: $name, prompt: "Required")
         }
-        .defaultFocus($focused, true)
     }
 }
 
