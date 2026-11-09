@@ -41,6 +41,15 @@ nonisolated extension NSRange {
     static func caret(_ location: Int) -> NSRange { NSRange(location: location, length: 0) }
 }
 
+nonisolated extension Set {
+    /// Whether the member is left out. Setting it removes or inserts the member, so a binding to a set of folded or hidden
+    /// things can drive whether one of them is expanded or shown.
+    subscript(lacks member: Element) -> Bool {
+        get { !contains(member) }
+        set { if newValue { remove(member) } else { insert(member) } }
+    }
+}
+
 nonisolated extension LogItem {
     var isError: Bool { kind == .error }
 

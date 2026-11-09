@@ -227,9 +227,7 @@ struct SearchResults: View {
         ScrollViewReader { proxy in
             List(selection: Bindable(project.search).chosen) {
                 ForEach(groups) { group in
-                    DisclosureGroup(isExpanded: Binding { !folded.contains(group.file) } set: {
-                        if $0 { folded.remove(group.file) } else { folded.insert(group.file) }
-                    }) {
+                    DisclosureGroup(isExpanded: $folded[lacks: group.file]) {
                         ForEach(group.hits) { row($0) }
                     } label: {
                         file(group).selectionDisabled()

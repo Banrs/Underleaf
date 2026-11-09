@@ -436,7 +436,7 @@ private struct IssueList: View {
             List(selection: selection) {
                 ForEach(files, id: \.self) { file in
                     let rows = byFile[file] ?? []
-                    DisclosureGroup(isExpanded: Binding { !folded.contains(file) } set: { if $0 { folded.remove(file) } else { folded.insert(file) } }) {
+                    DisclosureGroup(isExpanded: $folded[lacks: file]) {
                         ForEach(rows, id: \.offset) { IssueRow(item: $0.element, place: $0.offset, project: project, apply: apply) }
                     } label: {
                         Label {
