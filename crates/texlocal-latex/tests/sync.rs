@@ -271,10 +271,13 @@ fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
     let one = first_area(&synctex, 1, 4..=4).unwrap();
     let line = synctex.forward(1, &at(4)).remove(0);
     assert_eq!((one.page, one.h, one.v), (line.page, line.h, line.v));
-    let both = first_area(&synctex, 1, 1..=9).unwrap();
-    assert_eq!(both.page, 1);
-    assert!(both.height >= one.height && both.width >= one.width);
+    assert_eq!(first_area(&synctex, 1, 1..=9).unwrap().page, 1);
     assert!(first_area(&synctex, 1, 900..=901).is_none());
+    let labels = SyncTex::read(LABELS.to_vec()).unwrap();
+    let boxes = (16..=21).flat_map(|line| labels.forward(1, &at(line)));
+    let tallest = boxes.map(|at| at.height).fold(0.0, f32::max);
+    let figure = first_area(&labels, 1, 16..=21).unwrap();
+    assert!(figure.height > tallest, "{figure:?} is one box");
 }
 
 #[test]
