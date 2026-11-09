@@ -429,11 +429,13 @@ private struct IssueList: View {
 
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
-        let files = items.reduce(into: [String?]()) { files, item in if !files.contains(item.element.file) { files.append(item.element.file) } }
+        let byFile = Dictionary(grouping: items, by: \.element.file)
+        var seen = Set<String?>()
+        let files = items.map(\.element.file).filter { seen.insert($0).inserted }
         ScrollViewReader { proxy in
             List(selection: selection) {
                 ForEach(files, id: \.self) { file in
-                    let rows = items.filter { $0.element.file == file }
+                    let rows = byFile[file] ?? []
                     DisclosureGroup(isExpanded: Binding { !folded.contains(file) } set: { if $0 { folded.remove(file) } else { folded.insert(file) } }) {
                         ForEach(rows, id: \.offset) { IssueRow(item: $0.element, place: $0.offset, project: project, apply: apply) }
                     } label: {
