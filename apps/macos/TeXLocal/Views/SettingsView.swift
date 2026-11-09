@@ -38,7 +38,7 @@ private struct GeneralSettings: View {
                         .textSelection(.enabled)
                 }
             } footer: {
-                Text("New and imported projects are kept here.").frame(maxWidth: .infinity, alignment: .leading)
+                Text("New and imported projects are kept here.")
             }
             Section("New Projects") {
                 Picker(selection: $app.newProjectEngine) {
@@ -122,7 +122,6 @@ private struct LivePreviewSettings: View {
                 ProgramFolder(program: .texpresso)
             } footer: {
                 Text("Live Preview is experimental. It uses TeXpresso to update the PDF as you type, without compiling.")
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

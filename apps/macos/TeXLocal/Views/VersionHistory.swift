@@ -220,7 +220,7 @@ private struct DiffView: View {
     }
 
     private func line(_ marker: String, _ text: String, tint: Color) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline) {
             Text(verbatim: marker).foregroundStyle(.secondary).accessibilityHidden(true)
             Text(verbatim: text.isEmpty ? " " : text)
         }
