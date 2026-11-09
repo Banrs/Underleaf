@@ -16,8 +16,8 @@ final class Breadcrumb: NSView {
 
     private let choose: (_ item: Int, _ choice: Int) -> Void
     private var frames: [NSRect] = []
-    private var hovered: Int?
-    private var open: Int?
+    private var hovered: Int? { didSet { if hovered != oldValue { needsDisplay = true } } }
+    private var open: Int? { didSet { needsDisplay = true } }
     private var focused = 0 { didSet { noteFocusRingMaskChanged() } }
     private var watch: [NotificationCenter.ObservationToken] = []
 
@@ -27,6 +27,8 @@ final class Breadcrumb: NSView {
         focusRingType = .exterior
         setAccessibilityElement(true)
         setAccessibilityRole(.list)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect,
+                                                              .enabledDuringMouseDrag], owner: self))
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -98,7 +100,6 @@ final class Breadcrumb: NSView {
             defer { x += width }
             return NSRect(x: x, y: 0, width: width, height: bounds.height)
         }
-        updateTrackingAreas()
         setAccessibilityChildren(zip(items, frames).enumerated().map { index, part in
             Part(parent: self, frame: part.1, value: part.0.choices[part.0.chosen]) { [weak self] in self?.popUp(index) }
         })
@@ -134,38 +135,17 @@ final class Breadcrumb: NSView {
         ]
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        for (index, frame) in frames.enumerated() {
-            var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .enabledDuringMouseDrag]
-            if index == itemUnderMouse { options.insert(.assumeInside) }
-            addTrackingArea(NSTrackingArea(rect: frame, options: options, owner: self, userInfo: ["index": index]))
-        }
-    }
+    /// The item under a point in the window.
+    private func item(at point: NSPoint) -> Int? { frames.firstIndex { $0.contains(convert(point, from: nil)) } }
 
-    private var itemUnderMouse: Int? {
-        guard let window else { return nil }
-        let mouse = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        return frames.firstIndex { $0.contains(mouse) }
-    }
-
-    override func mouseEntered(with event: NSEvent) { hover(event.trackingArea?.userInfo?["index"] as? Int) }
-
-    override func mouseExited(with event: NSEvent) {
-        if hovered == event.trackingArea?.userInfo?["index"] as? Int { hover(nil) }
-    }
-
-    private func hover(_ index: Int?) {
-        hovered = index
-        needsDisplay = true
-    }
+    override func mouseEntered(with event: NSEvent) { hovered = item(at: event.locationInWindow) }
+    override func mouseMoved(with event: NSEvent) { hovered = item(at: event.locationInWindow) }
+    override func mouseExited(with event: NSEvent) { hovered = nil }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        if let index = frames.firstIndex(where: { $0.contains(point) }) { popUp(index) }
+        if let index = item(at: event.locationInWindow) { popUp(index) }
     }
 
     private func popUp(_ index: Int) {
@@ -177,14 +157,13 @@ final class Breadcrumb: NSView {
             (entry.target, entry.tag, entry.representedObject) = (self, choice, index)
         }
         open = index
-        needsDisplay = true
         let part = (accessibilityChildren() as? [NSAccessibilityElement])?[index]
         part?.setAccessibilityChildren([menu])
         defer { part?.setAccessibilityChildren(nil) }
         let place = NSPoint(x: frames[index].minX - 12 + (index == 0 ? 5 : 0), y: frames[index].midY - 11)
         menu.popUp(positioning: menu.item(at: item.chosen), at: place, in: self)
         open = nil
-        hover(itemUnderMouse)
+        hovered = window.flatMap { self.item(at: $0.mouseLocationOutsideOfEventStream) }
     }
 
     @objc private func chose(_ entry: NSMenuItem) {
