@@ -22,7 +22,6 @@ enum BarMetrics {
 private enum Spacing {
     static let lead: CGFloat = 14
     static let items: CGFloat = 16
-    static let group: CGFloat = 8
     static let divider: CGFloat = 9
     static let icon: CGFloat = 4
     static let overhang: CGFloat = 5
@@ -109,7 +108,7 @@ private struct BuildStatus: View {
     }
 
     private var label: some View {
-        HStack(spacing: Spacing.group) {
+        HStack {
             if let state {
                 if let symbol = state.symbol {
                     badge(state.title, symbol, state.color)
