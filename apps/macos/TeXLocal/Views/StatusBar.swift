@@ -113,7 +113,7 @@ private struct BuildStatus: View {
             if let state {
                 if let symbol = state.symbol {
                     badge(state.title, symbol, state.color)
-                        .symbolEffect(.variableColor.iterative, options: .repeating, isActive: project.compiling && !reduceMotion)
+                        .symbolEffect(.variableColor.iterative, options: .repeat(.periodic), isActive: project.compiling && !reduceMotion)
                 } else {
                     Text(state.title)
                 }
