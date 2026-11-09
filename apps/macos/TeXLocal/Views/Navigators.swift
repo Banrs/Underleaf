@@ -88,7 +88,7 @@ final class NavigatorFilterBar: NSView {
                                             help: String(localized: "Show only issues in recent files"))
     private let onlyErrors = FilterToggle("exclamationmark.octagon", label: String(localized: "Only errors"), help: String(localized: "Show only errors"))
     private let filterSymbol = NSImage(systemSymbolName: SearchField.filterSymbol, accessibilityDescription: nil)
-    private lazy var menuSymbol = filterSymbol.map { MenuSymbol($0) }
+    private lazy var menuSymbol = filterSymbol?.withMenuChevron()
     private let windowModel: WindowModel
     private let project: ProjectModel
     private var watch: Task<Void, Never>?
@@ -103,7 +103,7 @@ final class NavigatorFilterBar: NSView {
         field.drawsBackground = false
         field.placeholderString = String(localized: "Filter")
         field.setAccessibilityLabel(String(localized: "Filter"))
-        if let cell = field.cell as? NavigatorField.Cell { (cell.filterBar, cell.menuSymbol) = (true, menuSymbol) }
+        (field.cell as? NavigatorField.Cell)?.filterBar = true
         field.sendsSearchStringImmediately = true
         field.target = self
         field.action = #selector(filter)
@@ -213,7 +213,7 @@ final class NavigatorFilterBar: NSView {
         } else {
             cell.searchMenuTemplate = nil
         }
-        cell.showSearchImage(hidden == nil ? filterSymbol : menuSymbol?.placeholder)
+        cell.showSearchImage(hidden == nil ? filterSymbol : menuSymbol)
     }
 
     @objc private func toggleKind(_ item: NSMenuItem) {
@@ -291,8 +291,6 @@ final class NavigatorField: NSSearchField {
         /// Laid out like Xcode's navigator filter: the text 1 pt after the symbol's rect, 26 pt into the 30 pt frame (34 with a
         /// menu), and the glass behind the field as its background.
         var filterBar = false
-        /// Drawn in the search button's place when the filter has a menu.
-        var menuSymbol: MenuSymbol?
         private var hasMenu: Bool { filterBar && searchMenuTemplate != nil }
 
         /// As wide as AppKit's image (21 pt with its menu chevron; a narrower rect clips it). AppKit draws the image at the
@@ -321,14 +319,6 @@ final class NavigatorField: NSSearchField {
         /// A filter bar's field draws no bezel: its fill over the glass darkened the capsule.
         override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
             if filterBar { drawInterior(withFrame: cellFrame, in: controlView) } else { super.draw(withFrame: cellFrame, in: controlView) }
-        }
-
-        override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-            super.drawInterior(withFrame: cellFrame, in: controlView)
-            if hasMenu, let menuSymbol, let button = searchButtonCell {
-                // A copied button cell draws half a point higher than the field's own, so its rect is moved down to match.
-                menuSymbol.draw(for: button, in: searchButtonRect(forBounds: cellFrame).offsetBy(dx: 0, dy: 0.5), of: controlView)
-            }
         }
     }
 
