@@ -225,6 +225,14 @@ fn lines_move_duplicate_and_delete() {
         json!({ "selections": [caret(5)], "up": true }),
     );
     assert_eq!(moved["edits"][0]["text"], "two\none");
+    let line = json!({ "start": 0, "length": 4 });
+    let down = run(
+        &mut doc,
+        "MoveLines",
+        json!({ "selections": [line], "up": false }),
+    );
+    assert_eq!(down["edits"][0]["text"], "two\none");
+    assert_eq!(down["selections"], json!([{ "start": 4, "length": 3 }]));
     let duplicated = run(
         &mut doc,
         "DuplicateLines",

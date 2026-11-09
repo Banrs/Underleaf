@@ -258,7 +258,8 @@ impl SourceDocument {
                     (start <= at && at < end) || (at == end && at == to && end == len)
                 });
                 let at = found.map_or(at, |&(start, _, first)| at - start + first);
-                span(at, selection.length as usize)
+                // A line moved to the end has no newline, so one selected with it ends with the text.
+                span(at, (selection.length as usize).min(len.saturating_sub(at)))
             })
             .collect();
         Some(Change { edits, selections })
