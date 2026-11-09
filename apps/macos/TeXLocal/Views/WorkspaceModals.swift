@@ -55,11 +55,11 @@ struct WorkspaceModals: ViewModifier {
                 Text(asked.conflict == .gone ? "Another app moved or deleted “\(asked.path)”, which has unsaved changes here."
                      : "Another app changed “\(asked.path)” while it has unsaved changes here.")
             }
-            .alert("Close “\(project.name)” Without Saving?", isPresented: Binding(get: { project.askingToDiscard != nil }, set: { _ in })) {
+            .alert("Close “\(project.name)” Without Saving?", item: Binding(get: { project.askingToDiscard }, set: { _ in })) { _ in
                 Button("Close Without Saving", role: .destructive) { project.answerDiscard(true) }
                 Button("Cancel", role: .cancel) { project.answerDiscard(false) }
-            } message: {
-                let files = (project.askingToDiscard ?? []).map { "“\($0.fileName)”" }.formatted(.list(type: .and))
+            } message: { lost in
+                let files = lost.map { "“\($0.fileName)”" }.formatted(.list(type: .and))
                 if project.store.lifecycle?.stopped != nil {
                     Text("TeXLocal stopped after an internal error and couldn’t save \(files). Copy out what you need first.")
                 } else {
