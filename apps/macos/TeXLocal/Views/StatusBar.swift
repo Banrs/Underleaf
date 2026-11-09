@@ -279,7 +279,8 @@ private struct PanelToggle: View {
             Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
-                .hitTarget()
+                .frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target)
+                .contentShape(.rect)
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
@@ -307,10 +308,6 @@ extension View {
 
     /// Text between the buttons, given the room their capsules take.
     fileprivate func barText() -> some View { padding(.horizontal, Spacing.overhang) }
-
-    fileprivate func hitTarget() -> some View {
-        frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect)
-    }
 }
 
 /// The divider colour is translucent, so it's drawn over the window background, as split view dividers are. Over the
