@@ -174,6 +174,42 @@ fn every_selection_is_wrapped_and_one_already_styled_has_its_style_taken_off() {
     assert_eq!(wrapped["selections"], placed);
 }
 
+/// The text once Bold's edits are made back to front, as the app makes them, and the selections it answers.
+fn bold(text: &str, selections: Value) -> (String, Value) {
+    let mut doc = SourceDocument::new(text);
+    let args = json!({ "selections": selections, "style": "bold" });
+    let toggled = run(&mut doc, "ToggleStyle", args);
+    for edit in toggled["edits"].as_array().unwrap().iter().rev() {
+        apply(&mut doc, edit);
+    }
+    (doc.text(), toggled["selections"].clone())
+}
+
+#[test]
+fn bold_on_or_off_leaves_each_selection_over_what_it_held() {
+    let text = "a \\textbf{x} b";
+    let off = |selected: Value| ("a x b".to_owned(), json!([selected]));
+    let group = json!([{ "start": 2, "length": 10 }]);
+    assert_eq!(bold(text, group), off(json!({ "start": 2, "length": 1 })));
+    assert_eq!(bold(text, json!([caret(11)])), off(caret(3)));
+    let (wrapped, selections) = bold(text, json!([{ "start": 0, "length": 14 }]));
+    assert_eq!(wrapped, "\\textbf{a \\textbf{x} b}");
+    assert_eq!(selections, json!([{ "start": 8, "length": 14 }]));
+}
+
+#[test]
+fn a_style_stays_where_a_wrap_takes_in_its_command_and_a_wrap_just_before_it_is_kept() {
+    let crossing = json!([{ "start": 0, "length": 16 }, { "start": 17, "length": 1 }]);
+    let (text, selections) = bold("plain \\textbf{bold}", crossing);
+    assert_eq!(text, "\\textbf{plain \\textbf{bo}ld}");
+    let placed = json!([{ "start": 8, "length": 16 }, { "start": 26, "length": 1 }]);
+    assert_eq!(selections, placed);
+    let before = json!([caret(2), { "start": 11, "length": 1 }]);
+    let (text, selections) = bold("a \\textbf{bold}", before);
+    assert_eq!(text, "a \\textbf{}bold");
+    assert_eq!(selections, json!([caret(10), { "start": 12, "length": 1 }]));
+}
+
 #[test]
 fn a_brace_finds_its_partner() {
     let mut doc = SourceDocument::new("\\textbf{a{b}c}");
@@ -189,6 +225,14 @@ fn lines_move_duplicate_and_delete() {
         json!({ "selections": [caret(5)], "up": true }),
     );
     assert_eq!(moved["edits"][0]["text"], "two\none");
+    let line = json!({ "start": 0, "length": 4 });
+    let down = run(
+        &mut doc,
+        "MoveLines",
+        json!({ "selections": [line], "up": false }),
+    );
+    assert_eq!(down["edits"][0]["text"], "two\none");
+    assert_eq!(down["selections"], json!([{ "start": 4, "length": 3 }]));
     let duplicated = run(
         &mut doc,
         "DuplicateLines",
@@ -202,14 +246,17 @@ fn lines_move_duplicate_and_delete() {
 }
 
 #[test]
-fn tab_indents_every_selected_line() {
-    let mut doc = SourceDocument::new("a\nb");
-    let answer = run(
-        &mut doc,
-        "InsertTab",
-        json!({ "selections": [{ "start": 0, "length": 3 }], "step": 1 }),
-    );
-    assert_eq!(answer["edits"].as_array().unwrap().len(), 2);
+fn tab_indents_and_shift_tab_outdents_every_selected_line() {
+    for (text, step, tabbed) in [("a\nb", 1, "  a\n  b"), ("    a\n\tb", -1, "  a\n  b")] {
+        let mut doc = SourceDocument::new(text);
+        let selection = json!({ "start": 0, "length": text.len() });
+        let args = json!({ "selections": [selection], "step": step });
+        let answer = run(&mut doc, "InsertTab", args);
+        for edit in answer["edits"].as_array().unwrap().iter().rev() {
+            apply(&mut doc, edit);
+        }
+        assert_eq!(doc.text(), tabbed, "step {step}");
+    }
 }
 
 #[test]

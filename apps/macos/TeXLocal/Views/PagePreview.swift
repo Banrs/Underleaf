@@ -42,7 +42,7 @@ struct PagePreview: View {
                     Spacer()
                 }
                 .frame(width: 104, height: 58)
-                .overlay(Rectangle().strokeBorder(.separator))
+                .overlay { Rectangle().strokeBorder(.separator) }
                 Spacer()
             }
         }

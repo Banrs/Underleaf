@@ -11,6 +11,7 @@ final class BadBoxMark: NSView {
         (self.badBox, self.press) = (badBox, press)
         super.init(frame: .zero)
         wantsLayer = true
+        layerContentsRedrawPolicy = .duringViewResize
         toolTip = badBox.message
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -24,11 +25,6 @@ final class BadBoxMark: NSView {
     override func updateLayer() {
         layer?.backgroundColor = (badBox.tooWide == nil ? NSColor.systemOrange : .systemRed).cgColor
         layer?.cornerRadius = min(bounds.width, bounds.height) / 2
-    }
-
-    override func layout() {
-        super.layout()
-        needsDisplay = true
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }

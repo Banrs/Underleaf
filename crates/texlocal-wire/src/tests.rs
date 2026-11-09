@@ -2,10 +2,10 @@ use std::panic::catch_unwind;
 
 use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::ir::{Ir, Way};
-use crate::stale;
+use crate::{stale, swift};
 
 #[test]
 fn the_generated_files_are_current() {
@@ -14,6 +14,18 @@ fn the_generated_files_are_current() {
         stale.is_empty(),
         "{stale:?} stale: run cargo run -p texlocal-wire -- --write"
     );
+}
+
+#[test]
+fn a_said_message_opens_with_more_hashes_than_follow_any_quote_or_backslash_in_it() {
+    let said = json!([{ "text": "plain" }, { "text": "\\# and #1" }, { "text": "##1" }]);
+    let quoted = r####"nonisolated let wireSaid = [
+    #"{"text":"plain"}"#,
+    ##"{"text":"\\# and #1"}"##,
+    ###"{"text":"##1"}"###,
+]
+"####;
+    assert_eq!(swift::said(&said), quoted);
 }
 
 fn refused<T: JsonSchema>() -> String {

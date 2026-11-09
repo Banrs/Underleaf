@@ -148,6 +148,7 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     assert_eq!(build["result"]["ok"], true, "{}", log(&rig, SESSION));
     assert_eq!(build["issues"], json!([]));
     rig.open_document("part.tex");
+    rig.forget();
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
     rig.event("liveDocument", |_| true);
@@ -157,8 +158,9 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     let log = rig.section("liveLog", |_| true);
     let log = log.as_str().unwrap();
     assert!(!log.lines().any(|line| line.starts_with("! ")), "{log}");
-    assert_eq!(rig.section("live", |_| true)["failures"], json!([]));
     rig.call("StopLive", json!({}));
+    let stopped = rig.section("live", |l| l["phase"] == "stopped");
+    assert_eq!(stopped["failures"], json!([]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -196,6 +198,7 @@ async fn the_live_contents_read_as_the_compiled_ones() {
     let compiled = first_page(build["result"]["pdf"].as_str().unwrap());
     assert!(compiled.contains("Contents 1 Section 1 1"), "{compiled}");
     rig.open_document("main.tex");
+    rig.forget();
     rig.call("StartLive", json!({}));
     rig.call("LiveView", json!({ "first": 0, "last": 0 }));
     rig.event("liveDocument", |e| {

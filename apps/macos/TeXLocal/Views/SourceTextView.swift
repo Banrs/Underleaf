@@ -136,11 +136,15 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     func textContentStorage(_ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange) -> NSTextParagraph? {
         guard let text = textContentStorage.textStorage?.attributedSubstring(from: range), text.length > 0,
               let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
-              let style = (text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+              let shown = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         else { return nil }
         let indent = text.string.prefix { $0 == " " || $0 == "\t" }
         guard !indent.isEmpty else { return nil }
-        let width = { (text: String) in (text as NSString).size(withAttributes: [.font: font, .paragraphStyle: style]).width }
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: shown]
+        let width = { (text: String) in (text as NSString).size(withAttributes: attributes).width }
+        // Measuring puts the style in attributed text, and a paragraph style mustn't change once it's there (changing the
+        // measured one doubled the time to indent 2,000 lines), so the indent goes on a copy made afterwards.
+        let style = shown.mutableCopy() as! NSMutableParagraphStyle
         style.headIndent = min(width(String(indent)), 20 * width(" "))
         let paragraph = NSMutableAttributedString(attributedString: text)
         paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))

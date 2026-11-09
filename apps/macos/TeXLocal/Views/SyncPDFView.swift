@@ -76,7 +76,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
                 let scale = min(wanted.scale, (24e6 / Double(pages.count) / (box.width * box.height)).squareRoot())
                 guard let context = CGContext(data: nil, width: Int((box.width * scale).rounded(.up)), height: Int((box.height * scale).rounded(.up)),
                                               bitsPerComponent: 8, bytesPerRow: 0, space: wanted.space,
-                                              bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+                                              bitmapInfo: CGBitmapInfo(alpha: .noneSkipFirst, byteOrder: .order32Little))
                 else { continue }
                 context.scaleBy(x: scale, y: scale)
                 context.translateBy(x: -box.minX, y: -box.minY)
@@ -123,7 +123,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func flash(_ rect: CGRect, on page: PDFPage) {
         removeMark()
-        let view = MarkView(onDarkPaper: darkPaper)
+        let view = markBox()
         let fading = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(2.2)) } catch { return }
             await NSAnimationContext.runAnimationGroup { _ in view.animator().alphaValue = 0 }
@@ -132,6 +132,19 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         }
         mark = (page, rect, view, fading)
         if let overlay = overlays.object(forKey: page) { place(view, at: rect, on: page, in: overlay) }
+    }
+
+    /// The find colour over the place, edged with Increase Contrast to stand out from the paper it lies on.
+    private func markBox() -> NSBox {
+        let find = NSColor.findHighlightColor
+        let box = NSBox()
+        box.boxType = .custom
+        box.titlePosition = .noTitle
+        box.fillColor = find.withAlphaComponent(0.4)
+        box.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            ? find.legibleAsText(in: darkPaper ? .darkAqua : .aqua, ratio: 3) : find.withAlphaComponent(0.2)
+        box.setAccessibilityElement(false)
+        return box
     }
 
     func removeMark() {
@@ -287,29 +300,6 @@ final class PageOverlay: NSView {
     func uncover() { drawing.contents = nil }
 
     var covered: Bool { drawing.contents != nil }
-}
-
-private final class MarkView: NSView {
-    private let paper: NSAppearance.Name
-
-    init(onDarkPaper dark: Bool) {
-        paper = dark ? .darkAqua : .aqua
-        super.init(frame: .zero)
-        wantsLayer = true
-        setAccessibilityElement(false)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        let find = NSColor.findHighlightColor
-        layer?.backgroundColor = find.withAlphaComponent(0.4).cgColor
-        layer?.borderColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? find.legibleAsText(in: paper, ratio: 3).cgColor : find.withAlphaComponent(0.2).cgColor
-        layer?.borderWidth = 1
-    }
 }
 
 extension NSMenu {

@@ -55,11 +55,11 @@ struct WorkspaceModals: ViewModifier {
                 Text(asked.conflict == .gone ? "Another app moved or deleted “\(asked.path)”, which has unsaved changes here."
                      : "Another app changed “\(asked.path)” while it has unsaved changes here.")
             }
-            .alert("Close “\(project.name)” Without Saving?", isPresented: Binding(get: { project.askingToDiscard != nil }, set: { _ in })) {
+            .alert("Close “\(project.name)” Without Saving?", item: Binding(get: { project.askingToDiscard }, set: { _ in })) { _ in
                 Button("Close Without Saving", role: .destructive) { project.answerDiscard(true) }
                 Button("Cancel", role: .cancel) { project.answerDiscard(false) }
-            } message: {
-                let files = (project.askingToDiscard ?? []).map { "“\($0.fileName)”" }.formatted(.list(type: .and))
+            } message: { lost in
+                let files = lost.map { "“\($0.fileName)”" }.formatted(.list(type: .and))
                 if project.store.lifecycle?.stopped != nil {
                     Text("TeXLocal stopped after an internal error and couldn’t save \(files). Copy out what you need first.")
                 } else {
@@ -94,7 +94,6 @@ private struct GoToSheet: View {
     let limit: () -> Int?
     let go: (Int) -> Void
     @State private var text = ""
-    @FocusState private var focused: Bool
 
     private var number: Int? {
         guard let number = try? Int(text.trimmingCharacters(in: .whitespaces), format: .number.grouping(.never)),
@@ -106,16 +105,14 @@ private struct GoToSheet: View {
         DialogSheet(title: "Go to \(noun)", action: "Go", enabled: number != nil) {
             if let number { go(number) }
         } fields: {
-            DialogField(label: noun, text: $text, prompt: limit().map { "1–\($0)" } ?? "\(noun) number", focus: $focused)
+            DialogField(label: noun, text: $text, prompt: limit().map { "1–\($0)" } ?? "\(noun) number")
         }
-        .defaultFocus($focused, true)
     }
 }
 
 private struct CitationSheet: View {
     let project: ProjectModel
     @State private var text = CitationSheet.copied ?? ""
-    @FocusState private var focused: Bool
 
     /// A DOI or arXiv ID that was copied, read only where the person lets TeXLocal read the pasteboard without asking.
     private static var copied: String? {
@@ -131,9 +128,8 @@ private struct CitationSheet: View {
                     action: "Add", enabled: source != nil) {
             if let source { try await project.addCitation(source) }
         } fields: {
-            DialogField(label: "DOI or arXiv ID", text: $text, prompt: "10.1103/PhysRevLett.116.061102", focus: $focused)
+            DialogField(label: "DOI or arXiv ID", text: $text, prompt: "10.1103/PhysRevLett.116.061102")
         }
-        .defaultFocus($focused, true)
     }
 }
 
@@ -141,7 +137,6 @@ private struct RenameSheet: View {
     let name: String
     let rename: (String) async throws -> Void
     @State private var text: String
-    @FocusState private var focused: Bool
 
     init(name: String, rename: @escaping (String) async throws -> Void) {
         (self.name, self.rename) = (name, rename)
@@ -152,8 +147,7 @@ private struct RenameSheet: View {
         DialogSheet(title: "Rename “\(name)”", action: "Rename", enabled: !text.isEmpty && text != name) {
             try await rename(text)
         } fields: {
-            DialogField(label: "New Name", text: $text, focus: $focused)
+            DialogField(label: "New Name", text: $text)
         }
-        .defaultFocus($focused, true)
     }
 }

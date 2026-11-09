@@ -7,6 +7,7 @@ use texlocal_latex::syntax::{SourceDocument, SyncLines, labelled_lines, sync_lin
 use texlocal_latex::wordmatch::{PdfPage, find_in_pdf, find_in_source};
 
 const TWO_PAGES: &[u8] = include_bytes!("fixtures/two-pages.synctex");
+const LABELS: &[u8] = include_bytes!("fixtures/labels.synctex");
 
 fn at(line: u32) -> SyncLines {
     SyncLines::Within {
@@ -152,33 +153,40 @@ fn other_lines_sync_within_their_environment_or_else_their_paragraph() {
     assert_eq!(sync_lines(PICTURED, 20), within(20, 20..=20));
     let chapter = "\\section{One}\n\\label{one}\n\nWords.\n";
     assert_eq!(sync_lines(chapter, 2), within(2, 1..=2));
+    let listed = "\\begin{document}\n\\begin{figure}\n\\begin{itemize}\n\\item one\n\\end{itemize}\n\\end{figure}\n\\end{document}\n";
+    assert_eq!(sync_lines(listed, 4), within(4, 3..=5));
 }
 
 #[test]
 fn a_forward_search_tries_its_line_then_after_then_before_and_never_leaves_its_range() {
     let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
-    let page = |line, range| {
+    let first = |line, range| {
         let found = synctex.forward(1, &SyncLines::Within { line, range });
-        found.first().map(|at| at.page)
+        found.first().map(|at| (at.page, at.v))
     };
-    assert_eq!(page(2, 1..=3), None);
-    assert_eq!(page(3, 1..=4), Some(1));
-    assert_eq!(page(9, 4..=9), Some(2));
-    assert_eq!(page(1, 1..=9), Some(1));
+    // Lines 4 and 6 are on page 1, 7 and 8 on page 2, and the rest typeset nothing.
+    assert_eq!(first(2, 1..=3), None);
+    assert_eq!(first(3, 1..=4), first(4, 4..=4));
+    assert_eq!(first(5, 4..=6), first(6, 6..=6));
+    assert_eq!(first(9, 4..=9), first(8, 8..=8));
+    assert_eq!(first(1, 1..=9), first(4, 4..=4));
     assert!(synctex.forward(1, &SyncLines::Nowhere).is_empty());
 }
 
 #[test]
 fn a_whole_picture_is_its_largest_box_on_its_first_page() {
-    let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
-    let all = (4..=8).flat_map(|line| synctex.forward(1, &at(line)));
-    let first = all.filter(|at| at.page == 1);
-    let largest = first.map(|at| at.width * at.height).fold(0.0, f32::max);
-    let whole = synctex.forward(1, &SyncLines::Whole(4..=8));
-    let [whole] = &whole[..] else {
-        panic!("one box")
-    };
-    assert_eq!((whole.page, whole.width * whole.height), (1, largest));
+    // Two pages' larger box is on page 2, and the labels figure's caption comes before its larger rule.
+    for (bytes, lines) in [(TWO_PAGES, 4..=8), (LABELS, 16..=21)] {
+        let synctex = SyncTex::read(bytes.to_vec()).unwrap();
+        let all = lines.clone().flat_map(|line| synctex.forward(1, &at(line)));
+        let first = all.filter(|at| at.page == 1);
+        let largest = first.map(|at| at.width * at.height).fold(0.0, f32::max);
+        let whole = synctex.forward(1, &SyncLines::Whole(lines));
+        let [whole] = &whole[..] else {
+            panic!("one box")
+        };
+        assert_eq!((whole.page, whole.width * whole.height), (1, largest));
+    }
 }
 
 #[test]
@@ -247,12 +255,13 @@ fn a_documents_lines_read_on_from_its_checkpoints_match_a_scan_of_its_whole_text
 
 #[test]
 fn a_label_names_its_innermost_environment_its_item_or_its_heading() {
-    let text = "\\begin{document}\n\\section{Intro}\n\\label{sec:intro}\nText.\n\\begin{figure}\n\\begin{center}\n\\includegraphics{a}\n\\end{center}\n\\caption{A}\\label{fig:a}\n\\end{figure}\n\\begin{equation}\\label{eq:e}\nE = mc^2\n\\end{equation}\n\\begin{enumerate}\n\\item First\\label{it:one}\n\\end{enumerate}\nSee \\label{p:here} this.\n\\end{document}\n";
+    let text = "\\begin{document}\n\\section{Intro}\n\\label{sec:intro}\nText.\n\\begin{figure}\n\\begin{center}\n\\begin{subfigure}{.5\\textwidth}\n\\includegraphics{a}\\label{sub:a}\n\\end{subfigure}\n\\caption{A}\\label{fig:a}\n\\end{center}\n\\end{figure}\n\\begin{equation}\\label{eq:e}\nE = mc^2\n\\end{equation}\n\\begin{enumerate}\n\\item First\\label{it:one}\n\\end{enumerate}\nSee \\label{p:here} this.\n\\end{document}\n";
     assert_eq!(labelled_lines(text, 3), 2..=3);
-    assert_eq!(labelled_lines(text, 9), 5..=10);
-    assert_eq!(labelled_lines(text, 11), 11..=13);
-    assert_eq!(labelled_lines(text, 15), 15..=15);
+    assert_eq!(labelled_lines(text, 8), 7..=9);
+    assert_eq!(labelled_lines(text, 10), 5..=12);
+    assert_eq!(labelled_lines(text, 13), 13..=15);
     assert_eq!(labelled_lines(text, 17), 17..=17);
+    assert_eq!(labelled_lines(text, 19), 19..=19);
     assert_eq!(labelled_lines("\\label{x}", 1), 1..=1);
 }
 
@@ -262,10 +271,13 @@ fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
     let one = first_area(&synctex, 1, 4..=4).unwrap();
     let line = synctex.forward(1, &at(4)).remove(0);
     assert_eq!((one.page, one.h, one.v), (line.page, line.h, line.v));
-    let both = first_area(&synctex, 1, 1..=9).unwrap();
-    assert_eq!(both.page, 1);
-    assert!(both.height >= one.height && both.width >= one.width);
+    assert_eq!(first_area(&synctex, 1, 1..=9).unwrap().page, 1);
     assert!(first_area(&synctex, 1, 900..=901).is_none());
+    let labels = SyncTex::read(LABELS.to_vec()).unwrap();
+    let boxes = (16..=21).flat_map(|line| labels.forward(1, &at(line)));
+    let tallest = boxes.map(|at| at.height).fold(0.0, f32::max);
+    let figure = first_area(&labels, 1, 16..=21).unwrap();
+    assert!(figure.height > tallest, "{figure:?} is one box");
 }
 
 #[test]
@@ -288,7 +300,7 @@ fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its
 
 #[test]
 fn a_labels_area_holds_what_it_names_and_not_its_neighbours() {
-    let synctex = SyncTex::read(include_bytes!("fixtures/labels.synctex").to_vec()).unwrap();
+    let synctex = SyncTex::read(LABELS.to_vec()).unwrap();
     let text = include_str!("fixtures/labels.tex");
     let area = |line| first_area(&synctex, 1, labelled_lines(text, line)).unwrap();
     let top = |shown: &Shown| shown.v - shown.height;

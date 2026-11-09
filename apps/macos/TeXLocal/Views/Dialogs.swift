@@ -54,11 +54,12 @@ struct DialogSheet<Fields: View>: View {
     }
 }
 
+/// A dialog's one field, which has the focus as the dialog opens.
 struct DialogField: View {
     let label: String
     @Binding var text: String
     var prompt = ""
-    let focus: FocusState<Bool>.Binding
+    @FocusState private var focused: Bool
 
     var body: some View {
         let fit = typeset(text.isEmpty ? prompt : text, in: .systemFont(ofSize: NSFont.systemFontSize)).width
@@ -68,10 +69,11 @@ struct DialogField: View {
             TextField(label, text: $text, prompt: Text(prompt))
                 .labelsHidden()
                 .multilineTextAlignment(.leading)
-                .focused(focus)
+                .focused($focused)
                 .frame(idealWidth: 0, maxWidth: fit.rounded(.up))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .defaultFocus($focused, true)
     }
 }
 

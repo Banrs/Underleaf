@@ -39,15 +39,10 @@ private struct BuildPanelBar: View {
             .buttonStyle(.borderless)
             .labelsHidden()
             .fixedSize()
-            .layoutPriority(1)
             Spacer(minLength: 0)
             // As Xcode's console filter: a regular field 182 pt wide with small text, before the bar's action.
             SearchField(text: $panel.logFilter, prompt: String(localized: "Filter"), symbol: SearchField.filterSymbol, textSize: .small,
-                        optionsTitle: String(localized: "Show"), options: LogKind.allCases.map { kind in
-                            (kind.title, Binding { !panel.hiddenLogKinds.contains(kind) } set: { shown in
-                                if shown { panel.hiddenLogKinds.remove(kind) } else { panel.hiddenLogKinds.insert(kind) }
-                            })
-                        })
+                        optionsTitle: String(localized: "Show"), options: LogKind.allCases.map { ($0.title, $panel.hiddenLogKinds[lacks: $0]) })
                 .controlSize(.regular)
                 .frame(maxWidth: 182)
             let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog

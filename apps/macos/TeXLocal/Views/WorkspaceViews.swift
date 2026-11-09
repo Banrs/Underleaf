@@ -131,7 +131,8 @@ final class WorkspaceViews: ProjectViews {
         case .editRename: project.window?.prompt = renamable.map(Prompt.rename)
         case .editPasteTable:
             if !editor.textView.pasteTable(booktabs: project.store.outline?.packages.contains("booktabs") == true) { beep() }
-        case .openQuickly: OpenQuickly.show(for: project)
+        // The PDF view stays in this project's window whichever panes show.
+        case .openQuickly: OpenQuickly.show(for: project, over: pdf.view.window)
         case .pdfOpen: if let url = project.buildPDF { NSWorkspace.shared.open(url) }
         case .viewToggleInspector: NSApp.sendAction(#selector(NSSplitViewController.toggleInspector(_:)), to: nil, from: nil)
         default: break

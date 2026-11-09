@@ -93,9 +93,65 @@ impl Rng {
         json!({ "start": start, "length": length })
     }
 
+    /// Selections as the editor gives them, in order and apart, though now and then out of order or past the end.
     fn ranges(&mut self, len: usize) -> Value {
-        Value::Array((0..1 + self.below(3)).map(|_| self.range(len)).collect())
+        let count = 1 + self.below(3);
+        if self.chance(10) {
+            return Value::Array((0..count).map(|_| self.range(len)).collect());
+        }
+        let mut bounds: Vec<usize> = (0..2 * count).map(|_| self.below(len + 1)).collect();
+        bounds.sort_unstable();
+        let range = |pair: &[usize]| json!({ "start": pair[0], "length": pair[1] - pair[0] });
+        Value::Array(bounds.chunks(2).map(range).collect())
     }
+}
+
+fn end(range: &Value) -> u64 {
+    range["start"].as_u64().unwrap() + range["length"].as_u64().unwrap()
+}
+
+/// Whether each range starts at or after the end of the one before, and the last ends by `len`.
+fn in_order(ranges: &[Value], len: usize) -> bool {
+    let apart = |pair: &[Value]| pair[1]["start"].as_u64().unwrap() >= end(&pair[0]);
+    ranges.windows(2).all(apart) && ranges.last().is_none_or(|last| end(last) <= len as u64)
+}
+
+/// The selections a call is given, one or several.
+fn given(args: &Value) -> Vec<Value> {
+    match args.get("selections") {
+        Some(selections) => selections.as_array().unwrap().clone(),
+        None => args.get("selection").into_iter().cloned().collect(),
+    }
+}
+
+/// The text's length once in-order `edits` inside it are made.
+fn edited(len: usize, edits: &[Value]) -> u64 {
+    let grown = |edit: &Value| {
+        utf16::len(edit["text"].as_str().unwrap()) as i64 - edit["length"].as_i64().unwrap()
+    };
+    (len as i64 + edits.iter().map(grown).sum::<i64>()) as u64
+}
+
+/// The ends of what an answer has the editor select once its edits are made: a change's selections, a keystroke's
+/// selection, an insertion's caret or a snippet's next field.
+fn selected_ends(answer: &Value) -> Vec<u64> {
+    let selections = answer["selections"].as_array().into_iter().flatten();
+    let one = [&answer["selection"], &answer["field"]]
+        .into_iter()
+        .filter(|r| r.is_object());
+    let mut ends: Vec<u64> = selections.chain(one).map(end).collect();
+    ends.extend(answer["caret"].as_u64());
+    ends
+}
+
+/// The edits an answer asks for, which the editor makes back to front.
+fn edits(call: &str, answer: &Value) -> Vec<Value> {
+    let edits = match call {
+        "ToggleComment" => answer,
+        _ if answer["edit"].is_object() => return vec![answer["edit"].clone()],
+        _ => &answer["edits"],
+    };
+    edits.as_array().cloned().unwrap_or_default()
 }
 
 fn args(rng: &mut Rng, call: &str, len: usize) -> Value {
@@ -185,18 +241,26 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
             SourceDocument::named(&utf16::lossy(&model), rng.pick(&["main.tex", "refs.bib"]));
         for step in 0..200 {
             let len = model.len();
-            let edit = if rng.chance(2) {
+            let edits = if rng.chance(2) {
                 let start = rng.below(len + 1);
                 let length = rng.below(len - start + 1).min(rng.below(6));
-                Some(json!({ "start": start, "length": length, "text": rng.text(3) }))
+                vec![json!({ "start": start, "length": length, "text": rng.text(3) })]
             } else {
                 let call = *rng.pick(&calls);
-                let answer = Source::call(&mut doc, call, args(&mut rng, call, len));
-                let edit = answer.ok().and_then(|answer| answer.get("edit").cloned());
-                edit.filter(Value::is_object)
+                let args = args(&mut rng, call, len);
+                let apart = in_order(&given(&args), len);
+                let answer = Source::call(&mut doc, call, args).unwrap_or_default();
+                let edits = edits(call, &answer);
+                let edited = edited(len, &edits);
+                let within = selected_ends(&answer).iter().all(|&end| end <= edited);
+                assert!(
+                    !apart || (in_order(&edits, len) && within),
+                    "seed {seed}, step {step}: {call} {answer}"
+                );
+                edits
             };
-            if let Some(edit) = edit {
-                for mirror in apply(&mut doc, &mut model, &edit, false) {
+            for edit in edits.iter().rev() {
+                for mirror in apply(&mut doc, &mut model, edit, false) {
                     apply(&mut doc, &mut model, &mirror, true);
                 }
             }

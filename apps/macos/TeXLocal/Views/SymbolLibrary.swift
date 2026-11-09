@@ -81,8 +81,7 @@ struct SymbolLibraryView: View {
                     ForEach(sections, id: \.title) { section in
                         Section {
                             // A symbol can show both in Recently Used and in its category, and a grid's items need ids unique across it.
-                            ForEach(section.symbols.map { [section.title, $0.command] }, id: \.self) { key in
-                                let symbol = section.symbols.first { $0.command == key[1] }!
+                            ForEach(section.symbols.map { (id: [section.title, $0.command], symbol: $0) }, id: \.id) { _, symbol in
                                 Button { insert(symbol) } label: {
                                     Text(verbatim: symbol.glyph).font(.title2).frame(width: Self.tile, height: Self.tile)
                                 }

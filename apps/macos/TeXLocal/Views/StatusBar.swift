@@ -22,7 +22,6 @@ enum BarMetrics {
 private enum Spacing {
     static let lead: CGFloat = 14
     static let items: CGFloat = 16
-    static let group: CGFloat = 8
     static let divider: CGFloat = 9
     static let icon: CGFloat = 4
     static let overhang: CGFloat = 5
@@ -109,11 +108,11 @@ private struct BuildStatus: View {
     }
 
     private var label: some View {
-        HStack(spacing: Spacing.group) {
+        HStack {
             if let state {
                 if let symbol = state.symbol {
                     badge(state.title, symbol, state.color)
-                        .symbolEffect(.variableColor.iterative, options: .repeating, isActive: project.compiling && !reduceMotion)
+                        .symbolEffect(.variableColor.iterative, options: .repeat(.periodic), isActive: project.compiling && !reduceMotion)
                 } else {
                     Text(state.title)
                 }
@@ -224,7 +223,6 @@ private struct WordCount: View {
             }
             .foregroundStyle(.secondary)
             .barText()
-            .layoutPriority(-1)
             .task(id: views.changes) {
                 let selection = views.selection
                 guard selection.length > 0 else { return selectedWords = nil }
@@ -280,7 +278,8 @@ private struct PanelToggle: View {
             Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
-                .hitTarget()
+                .frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target)
+                .contentShape(.rect)
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
@@ -308,10 +307,6 @@ extension View {
 
     /// Text between the buttons, given the room their capsules take.
     fileprivate func barText() -> some View { padding(.horizontal, Spacing.overhang) }
-
-    fileprivate func hitTarget() -> some View {
-        frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target).contentShape(.rect)
-    }
 }
 
 /// The divider colour is translucent, so it's drawn over the window background, as split view dividers are. Over the

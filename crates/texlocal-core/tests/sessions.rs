@@ -684,6 +684,7 @@ async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     chapter.edit(0, 0, "% mine\n", None, false);
     let refused = rig.refuse("Trash", json!({ "path": "main.tex" }));
     assert_eq!(refused, ErrorKind::Conflict);
+    rig.forget();
     let trashed = rig.call("Trash", json!({ "path": "ch.tex" }));
     let _trashed = Trashed(trashed.as_str().unwrap().into());
     assert!(!rig.root().join("ch.tex").exists());
@@ -798,9 +799,11 @@ async fn a_file_left_open_because_it_couldnt_be_saved_closes_once_it_is() {
     fs::set_permissions(&chapter, fs::Permissions::from_mode(0o444)).unwrap();
     doc.edit(0, 0, "a cat ", None, false);
     rig.open_document("main.tex");
-    rig.section("documents", |d| d.as_array().unwrap().len() == 2);
+    assert!(doc.editable());
     fs::set_permissions(&chapter, fs::Permissions::from_mode(0o644)).unwrap();
+    rig.forget();
     let replaced = rig.call("Replace", replace_cat());
+    assert!(!doc.editable());
     assert!(replaced["edits"].is_null());
     assert_eq!(
         replaced["written"],
@@ -1118,6 +1121,7 @@ async fn a_trashed_project_comes_back_with_its_place_and_grant_but_not_while_ope
     rig.listed(|projects| projects.as_array().unwrap().is_empty());
     rig.ask_library("ReloadProjects", json!({})).unwrap();
     let back = json!({ "id": "P", "trashed": trashed });
+    rig.forget();
     rig.ask_library("PutBackProject", back).unwrap();
     rig.listed(|projects| names(projects, "id") == ["P"]);
     rig.call_to(2, "OpenProject", json!({ "id": "P", "autoCompile": false }));

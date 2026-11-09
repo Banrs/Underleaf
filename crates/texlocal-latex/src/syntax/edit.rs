@@ -258,7 +258,8 @@ impl SourceDocument {
                     (start <= at && at < end) || (at == end && at == to && end == len)
                 });
                 let at = found.map_or(at, |&(start, _, first)| at - start + first);
-                span(at, selection.length as usize)
+                // A line moved to the end has no newline, so one selected with it ends with the text.
+                span(at, (selection.length as usize).min(len.saturating_sub(at)))
             })
             .collect();
         Some(Change { edits, selections })
@@ -311,7 +312,11 @@ impl SourceDocument {
             splice(start, end - start, format!("{prefix}{selected}{suffix}"))
         };
         let edits: Vec<TextEdit> = selections.iter().map(wrap).collect();
-        let selections = placed(&edits, &selections, |_| utf16::len(prefix));
+        let into = utf16::len(prefix);
+        let selections = selections
+            .iter()
+            .map(|&s| placed(&edits, s, into))
+            .collect();
         Change { edits, selections }
     }
 
@@ -322,25 +327,39 @@ impl SourceDocument {
             TextStyle::Underline => (|styles| styles.underline, "underline"),
         };
         let selections = clamped(selections, self.text.len());
-        let (mut edits, mut wrapping) = (Vec::new(), Vec::new());
+        let (mut unwraps, mut wrapping) = (Vec::new(), Vec::new());
         for &selection in &selections {
             match styled(self.text_styles(selection)) {
-                Some(unwrap) => edits.extend(unwrap),
+                Some(unwrap) => unwraps.push(unwrap),
                 None => wrapping.push(selection),
             }
         }
+        // A style stays on where a selection being wrapped takes in part of its command or closing brace, as wrapping
+        // that selection alone leaves it: the wrap already rewrites that text, so taking it out as well would overlap.
+        let crosses = |markup: &TextEdit| {
+            let (start, end) = (markup.start, markup.start + markup.length);
+            wrapping
+                .iter()
+                .any(|s| s.start < end && start < s.start + s.length)
+        };
+        unwraps.retain(|unwrap| !unwrap.iter().any(crosses));
+        let mut edits: Vec<TextEdit> = unwraps.into_iter().flatten().collect();
         let prefix = format!("\\{command}{{");
         edits.extend(self.wrap(&wrapping, &format!("{prefix}$0}}")).edits);
-        edits.sort_by_key(|edit| edit.start);
+        // An insertion goes before a removal at the same place, which, made back to front, would otherwise take it out.
+        edits.sort_by_key(|edit| (edit.start, edit.length));
         edits.dedup();
-        let into = |s| {
+        let into = utf16::len(&prefix);
+        // A selection whose style comes off maps through the edits, which shrink it if it held the command and brace.
+        let mapped = map_selections(&edits, &selections);
+        let place = |(&s, mapped)| {
             if wrapping.contains(&s) {
-                utf16::len(&prefix)
+                placed(&edits, s, into)
             } else {
-                0
+                mapped
             }
         };
-        let selections = placed(&edits, &selections, into);
+        let selections = selections.iter().zip(mapped).map(place).collect();
         Change { edits, selections }
     }
 }
@@ -349,21 +368,14 @@ fn clamped(selections: &[TextRange], len: u32) -> Vec<TextRange> {
     selections.iter().map(|&s| clamp(s, len)).collect()
 }
 
-/// The selections once `edits` are made: each moved past the edits before it, and `into` an edit of its own.
-fn placed(
-    edits: &[TextEdit],
-    selections: &[TextRange],
-    into: impl Fn(TextRange) -> usize,
-) -> Vec<TextRange> {
-    let place = |selection: TextRange| {
-        let before = edits.iter().filter(|edit| edit.start < selection.start);
-        let moved: i64 = before
-            .map(|e| utf16::len(&e.text) as i64 - i64::from(e.length))
-            .sum();
-        let start = (i64::from(selection.start) + moved).max(0) as usize + into(selection);
-        span(start, selection.length as usize)
-    };
-    selections.iter().copied().map(place).collect()
+/// Where a selection is once `edits` are made: moved past the edits before it, and `into` the edit wrapping it.
+fn placed(edits: &[TextEdit], selection: TextRange, into: usize) -> TextRange {
+    let before = edits.iter().filter(|edit| edit.start < selection.start);
+    let moved: i64 = before
+        .map(|e| utf16::len(&e.text) as i64 - i64::from(e.length))
+        .sum();
+    let start = (i64::from(selection.start) + moved).max(0) as usize + into;
+    span(start, selection.length as usize)
 }
 
 pub(crate) fn include_graphics(path: &str, into: &str) -> Option<String> {

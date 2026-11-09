@@ -73,6 +73,13 @@ struct FieldPixelTests {
         project.navigator.hiddenIssueKinds = [.badBox]
         try await shot("bar-issues-some-hidden", bar, height: bar.intrinsicContentSize.height)
         project.navigator.hiddenIssueKinds = []
+        (project.navigator.showsOnlyRecentIssues, project.navigator.showsOnlyErrors) = (true, true)
+        try await shot("bar-issues-toggles-on", bar, height: bar.intrinsicContentSize.height)
+        (project.navigator.showsOnlyRecentIssues, project.navigator.showsOnlyErrors) = (false, false)
+        project.navigator.shown = .files
+        project.navigator.showsOnlyRecentFiles = true
+        try await shot("bar-files-toggle-on", bar, height: bar.intrinsicContentSize.height)
+        project.navigator.showsOnlyRecentFiles = false
 
         let find = FindHeader(project: project, field: FieldHandle())
         try await shot("find-header", find, height: max(find.fittingSize.height, 60))

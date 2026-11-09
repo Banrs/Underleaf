@@ -4,9 +4,9 @@ import SwiftUI
 final class OpenQuickly: FloatingPanel {
     private static weak var shown: OpenQuickly?
 
-    static func show(for project: ProjectModel) {
+    static func show(for project: ProjectModel, over window: NSWindow?) {
         if let shown { return shown.makeKey() }
-        guard let window = NSApp.mainWindow else { return }
+        guard let window else { return }
         let panel = OpenQuickly(project: project)
         let area = window.convertToScreen(window.contentLayoutRect), wide = min(width, area.width - 40)
         panel.show(NSRect(x: area.midX - wide / 2, y: area.maxY - 40 - fieldHeight, width: wide, height: fieldHeight), over: window, animated: false)
@@ -81,7 +81,7 @@ private struct QuickOpenView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary).accessibilityHidden(true)
                 SearchField(text: $query, prompt: String(localized: "Open Quickly"), large: true, handle: field,
                             step: { _ in open(rows.selection) }, move: rows.move, close: close)
                     .onChange(of: query) { search(query) }

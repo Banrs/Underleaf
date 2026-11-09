@@ -120,8 +120,10 @@ struct PDFTests {
         try await showLive(["needle", "filler", "needle", "filler"], in: controller)
         let document = try #require(view.document)
         try await waitUntil { text.pageStrings.count == 4 }
+        let kept = [document.page(at: 0), document.page(at: 2)]
         try await showLive(["needle", "needle", "needle"], changed: [PageRange(first: 1, last: 1)], in: controller)
         #expect(view.document === document && document.pageCount == 3)
+        #expect(document.page(at: 0) === kept[0] && document.page(at: 2) === kept[1])
         try await waitUntil { text.pageStrings.count == 3 && text.pageStrings.allSatisfy { $0.contains("needle") } }
         let many = Array(repeating: "filler", count: PDFController.changedInPlace + 2)
         try await showLive(many, changed: [PageRange(first: 0, last: many.count - 1)], in: controller)

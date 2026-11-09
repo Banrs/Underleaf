@@ -558,11 +558,8 @@ struct ViewsTests {
         try "second\n".write(toFile: chapter, atomically: true, encoding: .utf8)
         let document = try #require(SourceDocument(session: project.session, path: "main.tex"))
         _ = document.edit(NSRange(location: 0, length: 0), with: "% mine\n", changing: nil, mirroring: false)
-        await #expect {
-            try await project.restoreVersion(snapshot, paths: nil)
-        } throws: {
-            $0.localizedDescription == "The file shown changed meanwhile, so nothing was changed. Try again."
-        }
+        let error = await #expect(throws: AppFailure.self) { try await project.restoreVersion(snapshot, paths: nil) }
+        #expect(error?.localizedDescription == "The file shown changed meanwhile, so nothing was changed. Try again.")
         #expect(try String(contentsOfFile: chapter, encoding: .utf8) == "second\n")
         let text = Message(id: .addPackageTitle, args: [:], text: "Add the Package")
         let library = window.app.core.library

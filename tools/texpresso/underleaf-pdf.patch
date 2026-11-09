@@ -84,7 +84,7 @@ index e2f2105..66527f7 100644
  fz_image *dvi_resmanager_get_img(fz_context *ctx, dvi_resmanager *rm, const char *filename);
  void dvi_resmanager_invalidate(fz_context *ctx, dvi_resmanager *rm, dvi_reskind kind, const char *name);
 diff --git a/src/engine/main/main.c b/src/engine/main/main.c
-index 333408e..2831786 100644
+index 333408e..67bd7f9 100644
 --- a/src/engine/main/main.c
 +++ b/src/engine/main/main.c
 @@ -7,6 +7,8 @@
@@ -125,7 +125,48 @@ index 333408e..2831786 100644
  
      if (ipath)
      {
-@@ -1036,7 +1051,17 @@ int main(int argc, char **argv)
+@@ -896,11 +911,21 @@ static bool validate_format(void)
+ 
+ static bool bootstrap_format(void)
+ {
++  // The tape is what makes the format valid, so it gets its name only once the format is dumped.
++  // A build killed with the session, or stopped by TeX, leaves no tape: the next engine builds
++  // again, where it would take a half-written format, or the outdated one this build replaces.
++  char deps[PATH_MAX + 1], part[PATH_MAX + 1];
+   const char *path = format_path(".deps");
+   if (!path)
+     return 0;
++  snprintf(deps, sizeof deps, "%s", path);
++  path = format_path(".deps.part");
++  if (!path)
++    return 0;
++  snprintf(part, sizeof part, "%s", path);
++  unlink(deps);
+ 
+-  dependency_tape = fopen(path, "wb");
++  dependency_tape = fopen(part, "wb");
+   if (!dependency_tape)
+     return 0;
+ 
+@@ -941,8 +966,17 @@ static bool bootstrap_format(void)
+       break;
+   }
+ 
++  if (result == HISTORY_SPOTLESS && rename(part, deps) != 0)
++  {
++    perror("Format generation: naming its tape");
++    result = HISTORY_FATAL_ERROR;
++  }
++
+   if (result != HISTORY_SPOTLESS)
++  {
+     unlink(format_path(".fmt"));
++    unlink(part);
++  }
+ 
+   return (result == HISTORY_SPOTLESS);
+ }
+@@ -1036,7 +1070,17 @@ int main(int argc, char **argv)
  
    // Generate format if necessary
    format_name = "xelatex.ini";

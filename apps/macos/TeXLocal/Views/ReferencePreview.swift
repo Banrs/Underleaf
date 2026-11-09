@@ -44,7 +44,6 @@ struct ReferencePictureView: View {
         let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
         Image(nsImage: picture.image)
             .colorInverted(picture.darkPaper)
-            .frame(width: picture.image.size.width, height: picture.image.size.height)
             .clipShape(shape)
             .overlay { shape.strokeBorder(.separator) }
             .accessibilityHidden(true)

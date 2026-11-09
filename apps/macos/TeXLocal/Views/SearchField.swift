@@ -22,72 +22,59 @@ extension NSSearchFieldCell {
     }
 }
 
-/// A symbol followed by the chevron a search field shows after its magnifier when it has a menu, which AppKit leaves out
-/// beside any other symbol. The chevron is cut from a stock field's image, so it stays crisp at 1x, and sits 11 pt after
-/// the symbol's centre, as in Xcode. The button shows a clear placeholder as wide as both, so a click on either opens the
-/// menu, and copies of its cell draw the two so they keep its tint and highlight.
-final class MenuSymbol {
-    let symbol: NSImage
-    let placeholder: NSImage
-    private var cells: (symbol: NSButtonCell, chevron: NSButtonCell)?
-    private static let stock: NSImage? = {
+extension NSImage {
+    /// The symbol followed by the chevron a search field shows after its magnifier when it has a menu, which AppKit leaves
+    /// out beside any other symbol: one template image, so the search button tints and highlights both as its own. The
+    /// chevron is cut from a stock field's image, where Xcode's console filter draws its own: like Xcode's, it isn't
+    /// moved onto whole pixels.
+    func withMenuChevron() -> NSImage {
+        let stock = Self.stockMenuImage
+        let image = NSImage(size: NSSize(width: size.width + 8, height: size.height), flipped: false) { [self] _ in
+            draw(in: NSRect(origin: .zero, size: size))
+            guard let stock else { return true }
+            // The stock image starts 5.3 pt left of the symbol's centre and 7.25 pt below it, which puts its chevron within a
+            // quarter pixel of Xcode's at 2x, fitted against captures of Xcode's console and navigator filters. The chevron
+            // is the strip from 12 pt across and 5 to 10 pt up, clear of the magnifier and its handle.
+            let origin = NSPoint(x: size.width / 2 - 5.3, y: size.height / 2 - 7.25)
+            NSRect(x: origin.x + 12, y: origin.y + 5, width: stock.size.width - 12, height: 5).clip()
+            stock.draw(in: NSRect(origin: origin, size: stock.size))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    private static let stockMenuImage: NSImage? = {
         let menu = NSMenu()
         menu.addItem(withTitle: "", action: nil, keyEquivalent: "")
         guard let cell = NSSearchField().cell as? NSSearchFieldCell else { return nil }
         cell.searchMenuTemplate = menu
         return cell.searchButtonCell?.image
     }()
-
-    init(_ symbol: NSImage) {
-        self.symbol = symbol
-        placeholder = NSImage(size: NSSize(width: symbol.size.width + 8, height: symbol.size.height))
-    }
-
-    func draw(for button: NSButtonCell, in rect: NSRect, of view: NSView) {
-        if cells == nil, let copy = button.copy() as? NSButtonCell, let other = button.copy() as? NSButtonCell {
-            (copy.image, other.image) = (symbol, Self.stock)
-            cells = (copy, other)
-        }
-        guard let cells, let stock = Self.stock else { return }
-        for cell in [cells.symbol, cells.chevron] {
-            if cell.isEnabled != button.isEnabled { cell.isEnabled = button.isEnabled }
-            if cell.isHighlighted != button.isHighlighted { cell.isHighlighted = button.isHighlighted }
-        }
-        let origin = NSPoint(x: rect.midX - placeholder.size.width / 2, y: rect.midY - placeholder.size.height / 2)
-        let symbolRect = NSRect(origin: origin, size: symbol.size)
-        // The stock chevron is centred 16 pt into its image, after a magnifier that ends before 12 pt and a handle below 10.
-        // It starts on a whole pixel, rounding down, as Xcode's does at 1x.
-        let scale = view.window?.backingScaleFactor ?? 2
-        let stockRect = NSRect(x: symbolRect.minX + ((symbol.size.width / 2 + 11 - 16) * scale).rounded(.down) / scale,
-                               y: symbolRect.minY, width: stock.size.width, height: stock.size.height)
-        // Unaligned, so the cell rounds it to pixels as it rounds its own image.
-        cells.symbol.draw(withFrame: symbolRect, in: view)
-        NSGraphicsContext.saveGraphicsState()
-        NSRect(x: stockRect.minX + 12, y: stockRect.minY + 5, width: stockRect.width - 12, height: 5).clip()
-        cells.chevron.draw(withFrame: stockRect, in: view)
-        NSGraphicsContext.restoreGraphicsState()
-    }
 }
 
 /// A stock search field showing a symbol in place of the magnifier and, with a menu, the menu chevron.
 final class FilterSearchField: NSSearchField {
     final class Cell: NSSearchFieldCell {
-        /// Drawn in the search button's place when the field has a menu.
-        var menuSymbol: MenuSymbol?
-
-        /// Centres the symbol on the field, like Xcode's console filter, an eighth of a point low so that at 1x it rounds down a
-        /// pixel as Xcode's does. AppKit's own rect sits a point below the middle, with the symbol half a point below that.
+        /// Centres the 15 pt symbol on the field, on whole pixels, as Xcode's console filter does. AppKit's own rect sits a
+        /// point below the middle, with the symbol half a point below that.
         override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
             let button = super.searchButtonRect(forBounds: rect)
-            return NSRect(x: button.minX, y: rect.midY - 7.875, width: button.width, height: 15)
+            let scale = controlView?.window?.backingScaleFactor ?? 2
+            return NSRect(x: button.minX, y: (rect.midY - 7.5).pixelCeiling(scale), width: button.width, height: 15)
         }
 
-        override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-            super.drawInterior(withFrame: cellFrame, in: controlView)
-            if searchMenuTemplate != nil, let menuSymbol, let button = searchButtonCell {
-                menuSymbol.draw(for: button, in: searchButtonRect(forBounds: cellFrame), of: controlView)
-            }
+        /// Sets the text's capitals on the field's middle, level with the symbol and the bar's labels; AppKit moves the rect
+        /// 2 pt down for text smaller than the field's own, which set it a point low.
+        override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+            var text = super.searchTextRect(forBounds: rect)
+            guard let font else { return text }
+            let scale = controlView?.window?.backingScaleFactor ?? 2
+            text.origin.y = (rect.midY + font.capHeight / 2 - Self.layout.defaultBaselineOffset(for: font)).pixelCeiling(scale)
+            return text
         }
+
+        private static let layout = NSLayoutManager()
     }
 
     override class var cellClass: AnyClass? {
@@ -123,7 +110,7 @@ struct SearchField: NSViewRepresentable {
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var field: SearchField
         lazy var symbol = field.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
-        lazy var menuSymbol = symbol.map { MenuSymbol($0) }
+        lazy var menuSymbol = symbol?.withMenuChevron()
 
         init(_ field: SearchField) { self.field = field }
 
@@ -158,7 +145,6 @@ struct SearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSSearchField {
         let view = symbol == nil ? NSSearchField() : FilterSearchField()
-        (view.cell as? FilterSearchField.Cell)?.menuSymbol = context.coordinator.menuSymbol
         view.sendsSearchStringImmediately = true
         view.delegate = context.coordinator
         view.target = context.coordinator
@@ -190,7 +176,7 @@ struct SearchField: NSViewRepresentable {
         // The cell restores its magnifier whenever its control size or menu changes, which SwiftUI's environment does after
         // makeNSView.
         if let symbol = context.coordinator.symbol, let cell = view.cell as? NSSearchFieldCell {
-            cell.showSearchSymbol(options.isEmpty ? symbol : context.coordinator.menuSymbol?.placeholder ?? symbol)
+            cell.showSearchSymbol(options.isEmpty ? symbol : context.coordinator.menuSymbol ?? symbol)
         }
         let size = NSFont.systemFontSize(for: textSize ?? view.controlSize)
         if !large, view.font?.pointSize != size { view.font = .systemFont(ofSize: size) }

@@ -168,7 +168,7 @@ final class PDFController: NSObject {
         Task {
             let document = if let file { await Self.loadDocument(file)?.document } else { view.document }
             guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true),
-                  let window = view.window ?? NSApp.mainWindow else { return NSSound.beep() }
+                  let window = view.window else { return NSSound.beep() }
             operation.jobTitle = title
             operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
         }

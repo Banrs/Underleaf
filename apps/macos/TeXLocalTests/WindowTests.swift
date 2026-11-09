@@ -16,16 +16,18 @@ struct WindowTests {
         #expect((again.spellCheck, again.syncAfterCompile, again.newProjectEngine, again.paper, again.settingsPane) == (false, true, .xelatex, .dark, .pdf))
     }
 
-    @Test func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore() async throws {
+    @Test(arguments: [(false, true), (true, false)])
+    func thePDFsPaperAndTheEditorsSpellCheckFollowTheStore(dark: Bool, spellCheck: Bool) async throws {
         let window = defaults.window(), app = window.app
-        (app.paper, app.spellCheck) = (.white, true)
+        (app.paper, app.spellCheck) = (dark ? .dark : .white, spellCheck)
         let views = WorkspaceViews(project: ProjectModel(id: "P", window: window))
         let text = views.editor.textView
-        #expect(!views.pdf.view.darkPaper && text.isContinuousSpellCheckingEnabled)
-        app.paper = .dark
-        try await waitUntil { views.pdf.view.darkPaper }
+        #expect(text.isContinuousSpellCheckingEnabled == spellCheck)
+        try await waitUntil { views.pdf.view.darkPaper == dark }
+        app.paper = dark ? .white : .dark
+        try await waitUntil { views.pdf.view.darkPaper == !dark }
         text.toggleContinuousSpellChecking(nil)
-        #expect(!app.spellCheck)
+        #expect(app.spellCheck == !spellCheck)
     }
 
     @Test func anErrorShowsOnItsWindowAndOneThatComesWhileItIsUpIsOnlyAnnounced() async throws {

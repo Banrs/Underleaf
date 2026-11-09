@@ -3,7 +3,6 @@ import SwiftUI
 struct SaveVersionSheet: View {
     let project: ProjectModel
     @State private var name = ""
-    @FocusState private var focused: Bool
 
     var body: some View {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -11,9 +10,8 @@ struct SaveVersionSheet: View {
                     action: "Save", enabled: !trimmed.isEmpty) {
             try await project.saveVersion(named: trimmed)
         } fields: {
-            DialogField(label: "Name", text: $name, prompt: "Required", focus: $focused)
+            DialogField(label: "Name", text: $name, prompt: "Required")
         }
-        .defaultFocus($focused, true)
     }
 }
 
@@ -28,7 +26,7 @@ struct VersionHistorySheet: View {
     @State private var shown: Shown?
     @State private var restorable = false
     @State private var restoring = false
-    @State private var confirmingRestoreAll = false
+    @State private var confirmingRestoreAll: Snapshot?
     @State private var listFailure: String?
     @State private var restoreFailure: String?
 
@@ -59,7 +57,7 @@ struct VersionHistorySheet: View {
             HStack {
                 Button("Restore File") { if let snapshot, let file { restore(snapshot, paths: [file]) } }
                     .disabled(!restorable || restoring)
-                Button("Restore All") { confirmingRestoreAll = true }
+                Button("Restore All") { confirmingRestoreAll = snapshot }
                     .disabled(snapshot == nil || restoring)
                 if let restoreFailure { FailureText(text: restoreFailure) }
                 Spacer()
@@ -72,8 +70,7 @@ struct VersionHistorySheet: View {
         .task { await list() }
         .onChange(of: chosen) { file = snapshot?.changed.first?.path }
         .task(id: [chosen, file]) { await compare() }
-        .alert("Restore All Files to “\(snapshot?.title ?? "")”?", isPresented: $confirmingRestoreAll,
-               presenting: snapshot) { snapshot in
+        .alert("Restore All Files to “\(confirmingRestoreAll?.title ?? "")”?", item: $confirmingRestoreAll) { snapshot in
             Button("Restore All") { restore(snapshot, paths: nil) }
             Button("Cancel", role: .cancel) {}
         } message: { snapshot in
@@ -223,7 +220,7 @@ private struct DiffView: View {
     }
 
     private func line(_ marker: String, _ text: String, tint: Color) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline) {
             Text(verbatim: marker).foregroundStyle(.secondary).accessibilityHidden(true)
             Text(verbatim: text.isEmpty ? " " : text)
         }

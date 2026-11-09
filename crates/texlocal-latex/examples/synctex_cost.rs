@@ -22,6 +22,15 @@ unsafe impl GlobalAlloc for Counting {
         LIVE.fetch_sub(layout.size(), Relaxed);
         unsafe { System.dealloc(ptr, layout) }
     }
+
+    /// Resizes through System, as the app does, rather than through the default's new block, copy and free, which
+    /// counted both blocks each time one grew.
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        LIVE.fetch_sub(layout.size(), Relaxed);
+        let live = LIVE.fetch_add(new_size, Relaxed) + new_size;
+        PEAK.fetch_max(live, Relaxed);
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
 }
 
 #[global_allocator]
@@ -35,9 +44,10 @@ fn main() {
     let project = std::env::args_os()
         .nth(1)
         .map_or_else(fixture, PathBuf::from);
-    let bytes = std::fs::read(project.join("build/main.synctex.gz")).expect("a built project");
-    let (before, started) = (LIVE.load(Relaxed), Instant::now());
+    let before = LIVE.load(Relaxed);
     PEAK.store(before, Relaxed);
+    let bytes = std::fs::read(project.join("build/main.synctex.gz")).expect("a built project");
+    let started = Instant::now();
     let sync = SyncTex::read(bytes).unwrap();
     let parsed = started.elapsed();
     let (kept, peak) = (LIVE.load(Relaxed) - before, PEAK.load(Relaxed) - before);

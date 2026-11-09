@@ -25,36 +25,6 @@ final class NavigatorArea: NSViewController {
     }
 }
 
-private final class NavigatorChooser: NSSegmentedControl {
-    private weak var project: ProjectModel?
-    private var watch: Task<Void, Never>?
-
-    isolated deinit { watch?.cancel() }
-
-    init(project: ProjectModel) {
-        self.project = project
-        super.init(frame: .zero)
-        let all = Navigator.allCases
-        segmentCount = all.count
-        for (index, navigator) in all.enumerated() {
-            setImage(NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title), forSegment: index)
-            setToolTip("\(navigator.title) (⌘\(index + 1))", forSegment: index)
-        }
-        segmentDistribution = .fillEqually
-        trackingMode = .selectOne
-        role = .tabs
-        controlSize = .large
-        setAccessibilityLabel(String(localized: "Navigators"))
-        target = self
-        action = #selector(choose)
-        watch = track({ project.navigator.shown }) { [weak self] in self?.selectedSegment = all.firstIndex(of: $0)! }
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    @objc private func choose() { project?.showNavigator(Navigator.allCases[selectedSegment]) }
-}
-
 extension Navigator {
     var title: String {
         switch self {
@@ -88,13 +58,9 @@ final class NavigatorFilterBar: NSView {
                                             help: String(localized: "Show only issues in recent files"))
     private let onlyErrors = FilterToggle("exclamationmark.octagon", label: String(localized: "Only errors"), help: String(localized: "Show only errors"))
     private let filterSymbol = NSImage(systemSymbolName: SearchField.filterSymbol, accessibilityDescription: nil)
-    private lazy var menuSymbol = filterSymbol.map { MenuSymbol($0) }
+    private lazy var menuSymbol = filterSymbol?.withMenuChevron()
     private let windowModel: WindowModel
     private let project: ProjectModel
-    private var watch: Task<Void, Never>?
-    private var shown: Shown?
-
-    isolated deinit { watch?.cancel() }
 
     init(project: ProjectModel, window: WindowModel) {
         (self.project, windowModel) = (project, window)
@@ -103,7 +69,8 @@ final class NavigatorFilterBar: NSView {
         field.drawsBackground = false
         field.placeholderString = String(localized: "Filter")
         field.setAccessibilityLabel(String(localized: "Filter"))
-        if let cell = field.cell as? NavigatorField.Cell { (cell.filterBar, cell.menuSymbol) = (true, menuSymbol) }
+        (field.cell as? NavigatorField.Cell)?.filterBar = true
+        (field.cell as? NSSearchFieldCell)?.showSearchImage(filterSymbol)
         field.sendsSearchStringImmediately = true
         field.target = self
         field.action = #selector(filter)
@@ -120,50 +87,35 @@ final class NavigatorFilterBar: NSView {
         add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: String(localized: "Add"))
         (add.bezelStyle, add.borderShape, add.controlSize) = (.glass, .circle, .large)
         (add.target, add.action) = (self, #selector(showAdd(_:)))
-        add.setAccessibilityLabel(String(localized: "Add"))
         addSubview(add)
 
         fieldGlass.cornerRadius = Self.height / 2 - 1
         fieldGlass.effectIsInteractive = true
         addSubview(fieldGlass)
-        watch = track({ Shown(project.navigator) }) { [weak self] in self?.show($0) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private nonisolated struct Shown: Equatable, Sendable {
-        let navigator: Navigator, text: String, recentOnly: Bool, recentIssues: Bool, onlyErrors: Bool, hiddenKinds: Set<IssueKind>
-
-        @MainActor init(_ model: NavigatorModel) {
-            (navigator, text) = (model.shown, model[keyPath: model.shown.filter])
-            (recentOnly, recentIssues, onlyErrors) = (model.showsOnlyRecentFiles, model.showsOnlyRecentIssues, model.showsOnlyErrors)
-            hiddenKinds = model.hiddenIssueKinds
-        }
-    }
-
-    private func show(_ shown: Shown) {
-        if field.stringValue != shown.text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = shown.text }
-        field.toolTip = shown.navigator.filterHelp
-        add.isHidden = shown.navigator != .files
-        recentOnly.isHidden = shown.navigator != .files
-        recentOnly.isOn = shown.recentOnly
-        recentIssues.isHidden = shown.navigator != .issues
-        recentIssues.isOn = shown.recentIssues
-        onlyErrors.isHidden = shown.navigator != .issues
-        onlyErrors.isOn = shown.onlyErrors
-        if self.shown?.navigator != shown.navigator || self.shown?.hiddenKinds != shown.hiddenKinds {
-            showMenu(hiding: shown.navigator == .issues ? shown.hiddenKinds : nil)
-        }
-        self.shown = shown
-        needsLayout = true
-    }
-
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height + 2 * Self.inset) }
 
-    /// Xcode's geometry: a 30 pt field 7 pt from the edges, or 6 pt after a 30 pt + that sits 6 pt in; toggles 16 pt wide
-    /// (18 for errors) and 4 pt apart, the last 7 pt from the field's end, with the clear button 4 pt before the first.
+    /// Shows the navigator's filter as well as placing the controls, since AppKit lays the bar out again whenever what this
+    /// reads of the model changes. Xcode's geometry: a 30 pt field 7 pt from the edges, or 6 pt after a 30 pt + that sits
+    /// 6 pt in; toggles 16 pt wide (18 for errors) and 4 pt apart, the last 7 pt from the field's end, with the clear button
+    /// 4 pt before the first.
     override func layout() {
         super.layout()
+        let model = project.navigator, shown = model.shown, text = model[keyPath: shown.filter]
+        if field.stringValue != text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = text }
+        field.toolTip = shown.filterHelp
+        add.isHidden = shown != .files
+        recentOnly.isHidden = shown != .files
+        recentOnly.isOn = model.showsOnlyRecentFiles
+        recentIssues.isHidden = shown != .issues
+        recentIssues.isOn = model.showsOnlyRecentIssues
+        onlyErrors.isHidden = shown != .issues
+        onlyErrors.isOn = model.showsOnlyErrors
+        showMenu(shown == .issues)
+
         let y = (bounds.height - Self.height) / 2
         // Xcode leaves a 1 pt ring of the bar's colour around each 28 pt capsule.
         let slot = NSRect(x: Self.inset - 1, y: y, width: Self.height, height: Self.height)
@@ -199,21 +151,21 @@ final class NavigatorFilterBar: NSView {
 
     @objc private func toggleRecentIssues() { project.navigator.showsOnlyRecentIssues = recentIssues.isOn }
 
-    /// Only the Issues filter has a menu, listing the kinds of issue it shows.
-    private func showMenu(hiding hidden: Set<IssueKind>?) {
-        guard let cell = field.cell as? NSSearchFieldCell else { return }
-        if let hidden {
+    /// Only the Issues filter has a menu, listing the kinds of issue it shows; each is ticked as the menu opens.
+    private func showMenu(_ shown: Bool) {
+        guard let cell = field.cell as? NSSearchFieldCell, (cell.searchMenuTemplate != nil) != shown else { return }
+        if shown {
             let menu = NSMenu()
             menu.addItem(.sectionHeader(title: String(localized: "Show")))
             for kind in IssueKind.allCases {
                 let item = menu.addItem(withTitle: kind.title, action: #selector(toggleKind(_:)), keyEquivalent: "")
-                (item.target, item.representedObject, item.state) = (self, kind, hidden.contains(kind) ? .off : .on)
+                (item.target, item.representedObject) = (self, kind)
             }
             cell.searchMenuTemplate = menu
         } else {
             cell.searchMenuTemplate = nil
         }
-        cell.showSearchImage(hidden == nil ? filterSymbol : menuSymbol?.placeholder)
+        cell.showSearchImage(shown ? menuSymbol : filterSymbol)
     }
 
     @objc private func toggleKind(_ item: NSMenuItem) {
@@ -242,6 +194,13 @@ final class NavigatorFilterBar: NSView {
     private static let inset: CGFloat = 7
 }
 
+extension NavigatorFilterBar: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if let kind = item.representedObject as? IssueKind { item.state = project.navigator.hiddenIssueKinds.contains(kind) ? .off : .on }
+        return true
+    }
+}
+
 /// A toggle beside a filter's text, filled and in the accent colour while on, as in Xcode.
 final class FilterToggle: NSButton {
     init(_ symbol: String, label: String, help: String) {
@@ -250,10 +209,10 @@ final class FilterToggle: NSButton {
         isBordered = false
         // Shows the alternate image when on; by default a borderless one looks the same on and off.
         (cell as? NSButtonCell)?.showsStateBy = .contentsCellMask
-        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        alternateImage = NSImage(systemSymbolName: symbol + ".fill", accessibilityDescription: nil)
+        // VoiceOver reads the shown image's description: a label set on the button never reaches its cell.
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        alternateImage = NSImage(systemSymbolName: symbol + ".fill", accessibilityDescription: label)
         toolTip = help
-        setAccessibilityLabel(label)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -291,8 +250,6 @@ final class NavigatorField: NSSearchField {
         /// Laid out like Xcode's navigator filter: the text 1 pt after the symbol's rect, 26 pt into the 30 pt frame (34 with a
         /// menu), and the glass behind the field as its background.
         var filterBar = false
-        /// Drawn in the search button's place when the filter has a menu.
-        var menuSymbol: MenuSymbol?
         private var hasMenu: Bool { filterBar && searchMenuTemplate != nil }
 
         /// As wide as AppKit's image (21 pt with its menu chevron; a narrower rect clips it). AppKit draws the image at the
@@ -321,14 +278,6 @@ final class NavigatorField: NSSearchField {
         /// A filter bar's field draws no bezel: its fill over the glass darkened the capsule.
         override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
             if filterBar { drawInterior(withFrame: cellFrame, in: controlView) } else { super.draw(withFrame: cellFrame, in: controlView) }
-        }
-
-        override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-            super.drawInterior(withFrame: cellFrame, in: controlView)
-            if hasMenu, let menuSymbol, let button = searchButtonCell {
-                // A copied button cell draws half a point higher than the field's own, so its rect is moved down to match.
-                menuSymbol.draw(for: button, in: searchButtonRect(forBounds: cellFrame).offsetBy(dx: 0, dy: 0.5), of: controlView)
-            }
         }
     }
 
@@ -376,11 +325,22 @@ private extension Navigator {
     }
 }
 
-private struct Chooser: NSViewRepresentable {
+/// The tabs picker, its segments sharing the sidebar's width as Xcode's choosers do however few their choices.
+private struct Chooser: View {
     let project: ProjectModel
 
-    func makeNSView(context: Context) -> NavigatorChooser { NavigatorChooser(project: project) }
-    func updateNSView(_ view: NavigatorChooser, context: Context) {}
+    var body: some View {
+        Picker("Navigators", selection: Binding { project.navigator.shown } set: { project.showNavigator($0) }) {
+            ForEach(Navigator.allCases, id: \.self) { navigator in
+                // VoiceOver reads a segment by its image's description, which for a symbol Image is the symbol's own ("warning").
+                Image(nsImage: NSImage(systemSymbolName: navigator.symbol, accessibilityDescription: navigator.title)!)
+                    .help("\(navigator.title) (⌘\(String(navigator.shortcut.character)))")
+            }
+        }
+        .pickerStyle(.tabs)
+        .buttonSizing(.flexible)
+        .labelsHidden()
+    }
 }
 
 struct NavigatorPane: View {
@@ -439,21 +399,24 @@ private struct IssueList: View {
 
     var body: some View {
         let selection = Binding { project.chosenIssue } set: { project.chooseIssue($0, focus: false) }
-        let files = items.reduce(into: [String?]()) { files, item in if !files.contains(item.element.file) { files.append(item.element.file) } }
+        let byFile = Dictionary(grouping: items, by: \.element.file)
+        var seen = Set<String?>()
+        let files = items.map(\.element.file).filter { seen.insert($0).inserted }
         ScrollViewReader { proxy in
             List(selection: selection) {
                 ForEach(files, id: \.self) { file in
-                    let rows = items.filter { $0.element.file == file }
-                    DisclosureGroup(isExpanded: Binding { !folded.contains(file) } set: { if $0 { folded.remove(file) } else { folded.insert(file) } }) {
+                    let rows = byFile[file] ?? []
+                    let name = file?.fileName ?? project.name
+                    let errors = rows.contains { $0.element.isError }
+                    DisclosureGroup(isExpanded: $folded[lacks: file]) {
                         ForEach(rows, id: \.offset) { IssueRow(item: $0.element, place: $0.offset, project: project, apply: apply) }
                     } label: {
                         Label {
-                            Text("\(file?.fileName ?? project.name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
-                                .help(file ?? project.name)
+                            Text("\(name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
                         } icon: {
                             Image(systemName: file.map { project.tree.node(at: $0)?.symbol ?? "text.document" } ?? "folder.fill")
                                 .overlay(alignment: .bottomLeading) {
-                                    if rows.contains(where: { $0.element.isError }) {
+                                    if errors {
                                         Image(systemName: "xmark.circle.fill")
                                             .symbolRenderingMode(.multicolor)
                                             .imageScale(.small)
@@ -462,7 +425,10 @@ private struct IssueList: View {
                                 }
                         }
                         .lineLimit(1)
-                        .accessibilityElement(children: .combine)
+                        // VoiceOver reads the name and count shown and what the red badge means, then the path as its hint.
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(errors ? "\(name), \(Self.issues(rows.count)), including errors" : "\(name), \(Self.issues(rows.count))")
+                        .help(file ?? project.name)
                     }
                 }
             }
@@ -476,8 +442,7 @@ private struct IssueList: View {
                 }
             } primaryAction: { rows in if let item = rows.first.flatMap(item) { open(item) } }
             .copyable(project.chosenIssue.flatMap(item).map { [$0.message.text] } ?? [])
-            .alert("\(confirming?.title.text ?? "")?", isPresented: Binding { confirming != nil } set: { if !$0 { confirming = nil } },
-                   presenting: confirming) { fix in
+            .alert("\(confirming?.title.text ?? "")?", item: $confirming) { fix in
                 Button(fix.title.text) { Task { await project.run(fix) } }
                 Button("Cancel", role: .cancel) {}
             } message: { fix in
