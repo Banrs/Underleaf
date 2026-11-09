@@ -65,6 +65,15 @@ TeXpresso inside, copies it to `/Applications` and opens it. To update, pull and
 open `apps/macos/TeXLocal.xcodeproj` in Xcode and press Run. To use another TeXpresso for Live Preview, choose
 its folder in Settings ▸ Live Preview.
 
+### Upgrading from a pre-release build
+
+Builds before 2496 (October 31, 2026) kept a project's remembered place and shell-escape grant in its
+`.texlocal.json`, the opened folders and app settings in the library folder, and snapshot reasons as sentences.
+The code that moved those forward left with build 3011, so a Mac coming straight from an older build starts
+those afresh, and snapshots taken by Rename, Replace All, Add Package or Restore drop out of History until their
+records are rewritten. `zsh tools/check-pre-release.sh` lists what a Mac still holds in the old shapes, and
+`--fix`, with TeXLocal quit, rewrites those records.
+
 ### Releasing
 
 `tools/release.sh` makes a zip for other Macs in `dist/`. It needs the TeXpresso build above, since a release
