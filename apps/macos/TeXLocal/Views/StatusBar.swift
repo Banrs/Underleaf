@@ -223,7 +223,6 @@ private struct WordCount: View {
             }
             .foregroundStyle(.secondary)
             .barText()
-            .layoutPriority(-1)
             .task(id: views.changes) {
                 let selection = views.selection
                 guard selection.length > 0 else { return selectedWords = nil }
