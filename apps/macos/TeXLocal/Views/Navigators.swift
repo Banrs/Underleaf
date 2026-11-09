@@ -61,10 +61,6 @@ final class NavigatorFilterBar: NSView {
     private lazy var menuSymbol = filterSymbol?.withMenuChevron()
     private let windowModel: WindowModel
     private let project: ProjectModel
-    private var watch: Task<Void, Never>?
-    private var shown: Shown?
-
-    isolated deinit { watch?.cancel() }
 
     init(project: ProjectModel, window: WindowModel) {
         (self.project, windowModel) = (project, window)
@@ -74,6 +70,7 @@ final class NavigatorFilterBar: NSView {
         field.placeholderString = String(localized: "Filter")
         field.setAccessibilityLabel(String(localized: "Filter"))
         (field.cell as? NavigatorField.Cell)?.filterBar = true
+        (field.cell as? NSSearchFieldCell)?.showSearchImage(filterSymbol)
         field.sendsSearchStringImmediately = true
         field.target = self
         field.action = #selector(filter)
@@ -95,44 +92,30 @@ final class NavigatorFilterBar: NSView {
         fieldGlass.cornerRadius = Self.height / 2 - 1
         fieldGlass.effectIsInteractive = true
         addSubview(fieldGlass)
-        watch = track({ Shown(project.navigator) }) { [weak self] in self?.show($0) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private nonisolated struct Shown: Equatable, Sendable {
-        let navigator: Navigator, text: String, recentOnly: Bool, recentIssues: Bool, onlyErrors: Bool, hiddenKinds: Set<IssueKind>
-
-        @MainActor init(_ model: NavigatorModel) {
-            (navigator, text) = (model.shown, model[keyPath: model.shown.filter])
-            (recentOnly, recentIssues, onlyErrors) = (model.showsOnlyRecentFiles, model.showsOnlyRecentIssues, model.showsOnlyErrors)
-            hiddenKinds = model.hiddenIssueKinds
-        }
-    }
-
-    private func show(_ shown: Shown) {
-        if field.stringValue != shown.text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = shown.text }
-        field.toolTip = shown.navigator.filterHelp
-        add.isHidden = shown.navigator != .files
-        recentOnly.isHidden = shown.navigator != .files
-        recentOnly.isOn = shown.recentOnly
-        recentIssues.isHidden = shown.navigator != .issues
-        recentIssues.isOn = shown.recentIssues
-        onlyErrors.isHidden = shown.navigator != .issues
-        onlyErrors.isOn = shown.onlyErrors
-        if self.shown?.navigator != shown.navigator || self.shown?.hiddenKinds != shown.hiddenKinds {
-            showMenu(hiding: shown.navigator == .issues ? shown.hiddenKinds : nil)
-        }
-        self.shown = shown
-        needsLayout = true
-    }
-
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: Self.height + 2 * Self.inset) }
 
-    /// Xcode's geometry: a 30 pt field 7 pt from the edges, or 6 pt after a 30 pt + that sits 6 pt in; toggles 16 pt wide
-    /// (18 for errors) and 4 pt apart, the last 7 pt from the field's end, with the clear button 4 pt before the first.
+    /// Shows the navigator's filter as well as placing the controls, since AppKit lays the bar out again whenever what this
+    /// reads of the model changes. Xcode's geometry: a 30 pt field 7 pt from the edges, or 6 pt after a 30 pt + that sits
+    /// 6 pt in; toggles 16 pt wide (18 for errors) and 4 pt apart, the last 7 pt from the field's end, with the clear button
+    /// 4 pt before the first.
     override func layout() {
         super.layout()
+        let model = project.navigator, shown = model.shown, text = model[keyPath: shown.filter]
+        if field.stringValue != text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = text }
+        field.toolTip = shown.filterHelp
+        add.isHidden = shown != .files
+        recentOnly.isHidden = shown != .files
+        recentOnly.isOn = model.showsOnlyRecentFiles
+        recentIssues.isHidden = shown != .issues
+        recentIssues.isOn = model.showsOnlyRecentIssues
+        onlyErrors.isHidden = shown != .issues
+        onlyErrors.isOn = model.showsOnlyErrors
+        showMenu(shown == .issues)
+
         let y = (bounds.height - Self.height) / 2
         // Xcode leaves a 1 pt ring of the bar's colour around each 28 pt capsule.
         let slot = NSRect(x: Self.inset - 1, y: y, width: Self.height, height: Self.height)
@@ -168,21 +151,21 @@ final class NavigatorFilterBar: NSView {
 
     @objc private func toggleRecentIssues() { project.navigator.showsOnlyRecentIssues = recentIssues.isOn }
 
-    /// Only the Issues filter has a menu, listing the kinds of issue it shows.
-    private func showMenu(hiding hidden: Set<IssueKind>?) {
-        guard let cell = field.cell as? NSSearchFieldCell else { return }
-        if let hidden {
+    /// Only the Issues filter has a menu, listing the kinds of issue it shows; each is ticked as the menu opens.
+    private func showMenu(_ shown: Bool) {
+        guard let cell = field.cell as? NSSearchFieldCell, (cell.searchMenuTemplate != nil) != shown else { return }
+        if shown {
             let menu = NSMenu()
             menu.addItem(.sectionHeader(title: String(localized: "Show")))
             for kind in IssueKind.allCases {
                 let item = menu.addItem(withTitle: kind.title, action: #selector(toggleKind(_:)), keyEquivalent: "")
-                (item.target, item.representedObject, item.state) = (self, kind, hidden.contains(kind) ? .off : .on)
+                (item.target, item.representedObject) = (self, kind)
             }
             cell.searchMenuTemplate = menu
         } else {
             cell.searchMenuTemplate = nil
         }
-        cell.showSearchImage(hidden == nil ? filterSymbol : menuSymbol)
+        cell.showSearchImage(shown ? menuSymbol : filterSymbol)
     }
 
     @objc private func toggleKind(_ item: NSMenuItem) {
@@ -209,6 +192,13 @@ final class NavigatorFilterBar: NSView {
 
     private static let height: CGFloat = 30
     private static let inset: CGFloat = 7
+}
+
+extension NavigatorFilterBar: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if let kind = item.representedObject as? IssueKind { item.state = project.navigator.hiddenIssueKinds.contains(kind) ? .off : .on }
+        return true
+    }
 }
 
 /// A toggle beside a filter's text, filled and in the accent colour while on, as in Xcode.
