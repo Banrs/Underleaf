@@ -8,8 +8,11 @@ sources=$(sh ${0:A:h}/sources.sh)
 identity=${EXPANDED_CODE_SIGN_IDENTITY:-"-"}
 sign=(codesign --force --sign $identity)
 [[ $identity == - ]] || sign+=(--options runtime --timestamp)
+# Debug builds run hardened like a release. Signed ad hoc, the helpers have no Team ID to match their libraries by, so
+# library validation is off for them, as it is for the Debug app.
+[[ $identity == - && $CONFIGURATION == Debug ]] && sign+=(--options runtime --entitlements ${0:A:h}/debug.entitlements)
 stamp=${DERIVED_FILE_DIR:+$DERIVED_FILE_DIR/texpresso-bundle.stamp}
-state="$identity $(stat -f %m $B/texpresso $B/texpresso-xetex)"
+state="$sign $(stat -f %m $B/texpresso $B/texpresso-xetex)"
 [[ -n $stamp && -x $H/texpresso && -x $H/texpresso-xetex && $state == "$(<$stamp)" ]] 2>/dev/null && exit 0
 [[ -z $stamp ]] || rm -f $stamp
 rm -rf $H $F; mkdir -p $H $F
