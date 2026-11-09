@@ -684,6 +684,7 @@ async fn a_trashed_file_closes_and_comes_back_but_the_main_file_stays() {
     chapter.edit(0, 0, "% mine\n", None, false);
     let refused = rig.refuse("Trash", json!({ "path": "main.tex" }));
     assert_eq!(refused, ErrorKind::Conflict);
+    rig.forget();
     let trashed = rig.call("Trash", json!({ "path": "ch.tex" }));
     let _trashed = Trashed(trashed.as_str().unwrap().into());
     assert!(!rig.root().join("ch.tex").exists());
