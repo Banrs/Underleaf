@@ -159,14 +159,16 @@ fn other_lines_sync_within_their_environment_or_else_their_paragraph() {
 #[test]
 fn a_forward_search_tries_its_line_then_after_then_before_and_never_leaves_its_range() {
     let synctex = SyncTex::read(TWO_PAGES.to_vec()).unwrap();
-    let page = |line, range| {
+    let first = |line, range| {
         let found = synctex.forward(1, &SyncLines::Within { line, range });
-        found.first().map(|at| at.page)
+        found.first().map(|at| (at.page, at.v))
     };
-    assert_eq!(page(2, 1..=3), None);
-    assert_eq!(page(3, 1..=4), Some(1));
-    assert_eq!(page(9, 4..=9), Some(2));
-    assert_eq!(page(1, 1..=9), Some(1));
+    // Lines 4 and 6 are on page 1, 7 and 8 on page 2, and the rest typeset nothing.
+    assert_eq!(first(2, 1..=3), None);
+    assert_eq!(first(3, 1..=4), first(4, 4..=4));
+    assert_eq!(first(5, 4..=6), first(6, 6..=6));
+    assert_eq!(first(9, 4..=9), first(8, 8..=8));
+    assert_eq!(first(1, 1..=9), first(4, 4..=4));
     assert!(synctex.forward(1, &SyncLines::Nowhere).is_empty());
 }
 
