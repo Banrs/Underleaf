@@ -436,16 +436,17 @@ private struct IssueList: View {
             List(selection: selection) {
                 ForEach(files, id: \.self) { file in
                     let rows = byFile[file] ?? []
+                    let name = file?.fileName ?? project.name
+                    let errors = rows.contains { $0.element.isError }
                     DisclosureGroup(isExpanded: $folded[lacks: file]) {
                         ForEach(rows, id: \.offset) { IssueRow(item: $0.element, place: $0.offset, project: project, apply: apply) }
                     } label: {
                         Label {
-                            Text("\(file?.fileName ?? project.name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
-                                .help(file ?? project.name)
+                            Text("\(name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
                         } icon: {
                             Image(systemName: file.map { project.tree.node(at: $0)?.symbol ?? "text.document" } ?? "folder.fill")
                                 .overlay(alignment: .bottomLeading) {
-                                    if rows.contains(where: { $0.element.isError }) {
+                                    if errors {
                                         Image(systemName: "xmark.circle.fill")
                                             .symbolRenderingMode(.multicolor)
                                             .imageScale(.small)
@@ -454,7 +455,10 @@ private struct IssueList: View {
                                 }
                         }
                         .lineLimit(1)
-                        .accessibilityElement(children: .combine)
+                        // VoiceOver reads the name and count shown and what the red badge means, then the path as its hint.
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(errors ? "\(name), \(Self.issues(rows.count)), including errors" : "\(name), \(Self.issues(rows.count))")
+                        .help(file ?? project.name)
                     }
                 }
             }
