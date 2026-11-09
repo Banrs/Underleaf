@@ -106,12 +106,42 @@ impl Rng {
     }
 }
 
-/// Whether each range starts at or after the end of the one before.
-fn in_order(ranges: &[Value]) -> bool {
-    let end = |range: &Value| range["start"].as_u64().unwrap() + range["length"].as_u64().unwrap();
-    ranges
-        .windows(2)
-        .all(|pair| pair[1]["start"].as_u64().unwrap() >= end(&pair[0]))
+fn end(range: &Value) -> u64 {
+    range["start"].as_u64().unwrap() + range["length"].as_u64().unwrap()
+}
+
+/// Whether each range starts at or after the end of the one before, and the last ends by `len`.
+fn in_order(ranges: &[Value], len: usize) -> bool {
+    let apart = |pair: &[Value]| pair[1]["start"].as_u64().unwrap() >= end(&pair[0]);
+    ranges.windows(2).all(apart) && ranges.last().is_none_or(|last| end(last) <= len as u64)
+}
+
+/// The selections a call is given, one or several.
+fn given(args: &Value) -> Vec<Value> {
+    match args.get("selections") {
+        Some(selections) => selections.as_array().unwrap().clone(),
+        None => args.get("selection").into_iter().cloned().collect(),
+    }
+}
+
+/// The text's length once in-order `edits` inside it are made.
+fn edited(len: usize, edits: &[Value]) -> u64 {
+    let grown = |edit: &Value| {
+        utf16::len(edit["text"].as_str().unwrap()) as i64 - edit["length"].as_i64().unwrap()
+    };
+    (len as i64 + edits.iter().map(grown).sum::<i64>()) as u64
+}
+
+/// The ends of what an answer has the editor select once its edits are made: a change's selections, a keystroke's
+/// selection, an insertion's caret or a snippet's next field.
+fn selected_ends(answer: &Value) -> Vec<u64> {
+    let selections = answer["selections"].as_array().into_iter().flatten();
+    let one = [&answer["selection"], &answer["field"]]
+        .into_iter()
+        .filter(|r| r.is_object());
+    let mut ends: Vec<u64> = selections.chain(one).map(end).collect();
+    ends.extend(answer["caret"].as_u64());
+    ends
 }
 
 /// The edits an answer asks for, which the editor makes back to front.
@@ -218,11 +248,13 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
             } else {
                 let call = *rng.pick(&calls);
                 let args = args(&mut rng, call, len);
-                let apart = args["selections"].as_array().is_none_or(|s| in_order(s));
+                let apart = in_order(&given(&args), len);
                 let answer = Source::call(&mut doc, call, args).unwrap_or_default();
                 let edits = edits(call, &answer);
+                let edited = edited(len, &edits);
+                let within = selected_ends(&answer).iter().all(|&end| end <= edited);
                 assert!(
-                    !apart || in_order(&edits),
+                    !apart || (in_order(&edits, len) && within),
                     "seed {seed}, step {step}: {call} {answer}"
                 );
                 edits
