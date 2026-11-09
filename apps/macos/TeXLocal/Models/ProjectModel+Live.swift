@@ -34,9 +34,12 @@ extension ProjectModel {
             guard await save(reporting: !quietly), !Task.isCancelled, openPath == path else { return }
             weak let shown = views?.shownPDF
             do {
-                let interval = signposts.beginInterval("sync.forward")
-                let loc = try await session.call(request)
-                signposts.endInterval("sync.forward", interval)
+                let loc: ForwardLoc
+                do {
+                    let interval = signposts.beginInterval("sync.forward")
+                    defer { signposts.endInterval("sync.forward", interval) }
+                    loc = try await session.call(request)
+                }
                 guard !Task.isCancelled, openPath == path, views?.shownPDF === shown else { return }
                 window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, wordOnly: wordOnly)))
             } catch {
