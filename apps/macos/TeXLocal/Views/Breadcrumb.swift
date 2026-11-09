@@ -121,12 +121,7 @@ final class Breadcrumb: NSView {
             let tint: NSColor = lit ? .labelColor : !active ? dimmed : dark ? .labelColor : .secondaryLabelColor
             let mark = lit ? Self.popUp : Self.chevron, size = mark.size
             let place = NSRect(x: frame.maxX - 7 - size.width / 2, y: frame.midY - size.height / 2, width: size.width, height: size.height)
-            NSImage(size: mark.size, flipped: false) { rect in
-                mark.draw(in: rect)
-                tint.set()
-                rect.fill(using: .sourceIn)
-                return true
-            }.draw(in: place)
+            mark.withSymbolConfiguration(mark.symbolConfiguration.applying(.init(hierarchicalColor: tint)))?.draw(in: place)
         }
     }
 
