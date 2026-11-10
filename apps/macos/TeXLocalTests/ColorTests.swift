@@ -41,7 +41,9 @@ struct ColorTests {
             let appearance = try #require(NSAppearance(named: name))
             let line = NSColor.currentLine.rgba(in: appearance)
             #expect(line[0] == line[1] && line[1] == line[2])
-            let shown = zip(NSColor.textBackgroundColor.rgba(in: appearance), line).map { $0 * (1 - line[3]) + $1 * line[3] }
+            let background = NSColor.textBackgroundColor.rgba(in: appearance)
+            let shown = zip(background, line).map { $0 * (1 - line[3]) + $1 * line[3] }
+            #expect(NSColor.contrast(shown, background) > 1.1)
             for color in [NSColor.systemPink, .systemTeal, .systemYellow, .secondaryLabelColor] {
                 let ratio = NSColor.contrast(color.legibleAsText(in: name).rgba(in: appearance), shown)
                 #expect(ratio >= (name == .aqua || name == .darkAqua ? 4.45 : 6.95), "\(color) in \(name.rawValue): \(ratio)")
