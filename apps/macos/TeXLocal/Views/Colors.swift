@@ -10,7 +10,12 @@ extension NSView {
 extension NSColor {
     static let textAppearances: [NSAppearance.Name] = [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
 
-    static let currentLine = NSColor.controlAccentColor.withAlphaComponent(0.1)
+    // In Xcode 27.2’s active editor the band blends about 7% text color into the background in both appearances.
+    static let currentLine = NSColor(name: nil) { appearance in
+        var fill = NSColor.clear
+        appearance.performAsCurrentDrawingAppearance { fill = NSColor.textColor.withAlphaComponent(0.067) }
+        return fill
+    }
 
     func legibleAsText(in name: NSAppearance.Name, ratio: Double? = nil) -> NSColor {
         guard let appearance = NSAppearance(named: name) else { return self }

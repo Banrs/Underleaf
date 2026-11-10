@@ -3,12 +3,8 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the lists and popovers (completions and the Open Quickly list, Quick Help with a reference picture, the math
-/// preview, issue boxes, the Symbol Library, the log pane, and the search navigator's header and empty states) as PNGs, in
-/// each state their drawing tells apart: once before and once after a change to how they're drawn, then compare the two
-/// folders pixel for pixel. `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ListsPixelTests`,
-/// which renders at each screen's scale (attach a 2x display for 2x) and at 4x. Headless renders draw no Liquid Glass or
-/// list rows, so the popovers show without their glass and the search results without their rows.
+/// Renders lists and popovers at screen scale and 4x. Headless renders omit Liquid Glass and list rows.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ListsPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct ListsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -46,7 +42,7 @@ struct ListsPixelTests {
             box.addSubview(view)
             window.contentView = box
             window.setContentSize(size)
-            try await settle()
+            try await settlePixelLayout(passes: 5, interval: .milliseconds(30))
             box.displayIfNeeded()
             for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
                 guard let rep else { continue }
@@ -150,12 +146,5 @@ struct ListsPixelTests {
         let image = NSImage(size: size)
         image.addRepresentation(rep)
         return ReferencePicture(image: image, darkPaper: darkPaper)
-    }
-
-    private func settle() async throws {
-        for _ in 0..<5 {
-            try await Task.sleep(for: .milliseconds(30))
-            await Task.yield()
-        }
     }
 }

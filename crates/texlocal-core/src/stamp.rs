@@ -32,7 +32,7 @@ impl Stamp {
 
     // A time in whole seconds may come from a filesystem that keeps only seconds, where a file
     // written again within that second keeps its stamp.
-    fn trusted(&self) -> bool {
+    pub(crate) fn trusted(&self) -> bool {
         self.modified % 1_000_000_000 != 0
     }
 }

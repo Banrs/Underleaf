@@ -165,16 +165,18 @@ fn keep_both(path: &str, clashes: &[Clash]) -> String {
 }
 
 fn occupant(base: &Path, rel: &str) -> Option<String> {
-    let mut end = 0;
-    loop {
-        end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
+    for end in rel
+        .match_indices('/')
+        .map(|(end, _)| end)
+        .chain([rel.len()])
+    {
         let abs = base.join(&rel[..end]);
         let meta = fs::symlink_metadata(&abs).ok()?;
         if end == rel.len() || !(meta.is_dir() || abs.is_dir()) {
             return Some(rel[..end].to_string());
         }
-        end += 1;
     }
+    None
 }
 
 fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<(), CoreError> {

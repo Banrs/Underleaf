@@ -377,19 +377,6 @@ struct PDFTests {
         }
     }
 
-    private func textPDF(_ pages: [String]) throws -> PDFDocument {
-        let document = PDFDocument()
-        for text in pages {
-            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-            view.string = text
-            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-            document.insert(page, at: document.pageCount)
-        }
-        return document
-    }
-
-    private func textPDF(count: Int) throws -> PDFDocument { try textPDF((1...count).map { "Page \($0)" }) }
-
     private func shownPDF() async throws -> (PDFController, SyncPDFView, NSWindow) {
         let controller = PDFController()
         return (controller, controller.view, try await onScreen(controller.view))

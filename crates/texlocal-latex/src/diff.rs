@@ -161,17 +161,10 @@ fn common<T: PartialEq>(a: impl Iterator<Item = T>, b: impl Iterator<Item = T>) 
 
 pub fn delta<'a>(old: &str, new: &'a str) -> (usize, usize, &'a str) {
     let (a, b) = (old.as_bytes(), new.as_bytes());
-    let mut start = common(a.iter(), b.iter());
-    while !old.is_char_boundary(start) || !new.is_char_boundary(start) {
-        start -= 1;
-    }
-    let mut suffix = common(a[start..].iter().rev(), b[start..].iter().rev());
-    while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
-        suffix -= 1;
-    }
-    (
-        start,
-        old.len() - start - suffix,
-        &new[start..new.len() - suffix],
-    )
+    // Shared bytes have the same character boundaries in both strings.
+    let start = old.floor_char_boundary(common(a.iter(), b.iter()));
+    let suffix = common(a[start..].iter().rev(), b[start..].iter().rev());
+    let end = old.ceil_char_boundary(old.len() - suffix);
+    let new_end = new.len() - (old.len() - end);
+    (start, end - start, &new[start..new_end])
 }

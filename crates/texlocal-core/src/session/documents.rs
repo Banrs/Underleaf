@@ -636,7 +636,7 @@ fn as_left(abs: &Path, stamp: Option<Stamp>, text: Option<&str>) -> bool {
     let now = Stamp::at(abs).ok();
     match (stamp, now) {
         (Some(stamp), Some(now)) if stamp == now => {
-            stamp.modified % 1_000_000_000 != 0
+            stamp.trusted()
                 || fs::read(abs)
                     .is_ok_and(|bytes| String::from_utf8(bytes).ok().map(lf).as_deref() == text)
         }

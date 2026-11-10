@@ -67,7 +67,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
     override var intrinsicContentSize: NSSize {
         var height = Self.row + 2 + Self.field
-        if replacing { height += 6 + Self.field + 6 + Self.button }
+        if replacing { height += 6 + Self.field + 6 + replaceAll.intrinsicContentSize.height }
         return NSSize(width: NSView.noIntrinsicMetric, height: height + (groups.isEmpty ? 6 : 5 + Self.band))
     }
 
@@ -111,10 +111,10 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         if replacing {
             replacement.frame = NSRect(x: 6, y: y + 6, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
             y += 6 + Self.field + 6
-            let all = replaceAll.intrinsicContentSize.width, one = replace.intrinsicContentSize.width
-            replaceAll.frame = NSRect(x: width - 6 - all, y: y, width: all, height: Self.button)
-            replace.frame = NSRect(x: replaceAll.frame.minX - 7 - one, y: y, width: one, height: Self.button)
-            y += Self.button
+            let all = replaceAll.intrinsicContentSize, one = replace.intrinsicContentSize
+            replaceAll.frame = NSRect(origin: NSPoint(x: width - 6 - all.width, y: y), size: all)
+            replace.frame = NSRect(origin: NSPoint(x: replaceAll.frame.minX - 7 - one.width, y: y), size: one)
+            y += all.height
         }
         let label = count.intrinsicContentSize.height
         count.frame = NSRect(x: 6, y: y + 5 + (Self.band - label) / 2, width: width - 12, height: label)
@@ -148,7 +148,7 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
         Task { await project.replaceAll() }
     }
 
-    private static let row: CGFloat = 20, field: CGFloat = 24, button: CGFloat = 24, band: CGFloat = 22
+    private static let row: CGFloat = 20, field: CGFloat = 24, band: CGFloat = 22
     private static let modes = [String(localized: "Find"), String(localized: "Replace")]
     private static let criteria = [String(localized: "Containing"), String(localized: "Matching Word")]
 }

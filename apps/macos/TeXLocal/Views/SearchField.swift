@@ -158,10 +158,6 @@ struct SearchField: NSViewRepresentable {
         return view
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
-    }
-
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
         if !options.isEmpty, let cell = view.cell as? NSSearchFieldCell {

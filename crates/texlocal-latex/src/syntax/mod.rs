@@ -246,11 +246,10 @@ impl SourceDocument {
         }
         let units = self.text.line(index);
         let tex_letter = |u: u16| letter(u) || is(u, '@');
-        let end = comment_start(units);
+        let code = &units[..comment_start(units)];
         let word = name.get(1).is_some_and(|&u| tex_letter(u));
         let (mut found, mut from) = (vec![], 0);
-        while let Some(at) = units[from..end].windows(name.len()).position(|w| w == name) {
-            let at = from + at;
+        while let Some(at) = scan::find(code, from, &name) {
             from = at + name.len();
             let longer = word && units.get(from).is_some_and(|&u| tex_letter(u));
             if !escaped(units, at) && !longer {

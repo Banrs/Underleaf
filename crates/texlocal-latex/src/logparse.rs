@@ -662,7 +662,7 @@ pub fn latexmk_errors(output: &str) -> Vec<LogItem> {
 
 pub fn label_number(aux: &str, label: &str) -> Option<String> {
     let key = format!("\\newlabel{{{label}}}{{{{");
-    let number = &aux[aux.find(&key)? + key.len()..];
+    let (_, number) = aux.split_once(&key)?;
     let end = closing_brace(number)?;
     let page = number[end + 1..].strip_prefix('{')?;
     let page = &page[..closing_brace(page)?];
@@ -671,7 +671,7 @@ pub fn label_number(aux: &str, label: &str) -> Option<String> {
 
 pub fn aux_inputs(aux: &str) -> impl Iterator<Item = &str> {
     let inputs = aux.split("\\@input{").skip(1);
-    inputs.filter_map(|rest| rest.get(..rest.find('}')?))
+    inputs.filter_map(|rest| rest.split_once('}').map(|(file, _)| file))
 }
 
 #[cfg(test)]

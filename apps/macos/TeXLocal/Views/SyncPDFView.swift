@@ -308,11 +308,4 @@ extension NSMenu {
         let word = items.firstIndex { $0.action == #selector(NSText.cut(_:)) || $0.action == #selector(NSText.copy(_:)) } ?? 0
         tidy(items[..<word] + items[word...].filter { $0.isSeparatorItem || kept($0) })
     }
-
-    func tidy(_ list: [NSMenuItem]) {
-        var shown: [NSMenuItem] = []
-        for item in list where !item.isSeparatorItem || shown.last?.isSeparatorItem == false { shown.append(item) }
-        if shown.last?.isSeparatorItem == true { shown.removeLast() }
-        items = shown
-    }
 }

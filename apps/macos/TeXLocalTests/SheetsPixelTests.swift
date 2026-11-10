@@ -3,14 +3,10 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the windows and sheets (Projects, the dialog sheets, Version History, Settings, the inspector, Quick Help and
-/// Open Quickly) as PNGs, light and dark, key and inactive, at 2x and 4x: once before and once after a change to how
-/// they're drawn, then compare the two folders pixel for pixel.
-/// `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/SheetsPixelTests` with a 2x
-/// screen attached, where the views are laid out. Sheets are presented through the window's own modals and draw inactive,
-/// as the test host never becomes active; the dialogs are also hosted alone in a key window, and `focus.txt` names what
-/// each one focused. Version History and Open Quickly also show a project the core has open, so the versions' times
-/// differ from run to run. Hover and pressed states need the pointer and aren't drawn, nor is Liquid Glass or what it holds.
+/// Renders windows and sheets in light and dark at 2x and 4x. Attach a 2x display.
+/// Attached sheets draw inactive. Standalone dialogs also draw as key, and focus.txt records their focused controls.
+/// Version History dates vary by run. Headless renders omit hover, pressed states and Liquid Glass.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/SheetsPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct SheetsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -55,9 +51,9 @@ struct SheetsPixelTests {
             host.frame = NSRect(origin: .zero, size: size)
             window.contentView = host
             window.setContentSize(size)
-            try await settle()
+            try await settlePixelLayout()
             if list, let table = host.descendants(of: NSTableView.self).first { window.makeFirstResponder(table) }
-            try await settle()
+            try await settlePixelLayout()
             try write("\(name)-\(suffix)", host)
             focus.append("\(name)-\(suffix): \(Self.describe(window.firstResponder))")
         }
@@ -134,7 +130,7 @@ struct SheetsPixelTests {
         try await waitUntil(timeout: .seconds(10)) { panel.frame.height > OpenQuickly.fieldHeight }
         for dark in [false, true] {
             panel.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-            try await settle()
+            try await settlePixelLayout()
             let suffix = "\(dark ? "dark" : "light")-inactive"
             try write("open-quickly-\(suffix)", try #require(panel.contentView))
             focus.append("open-quickly-\(suffix): \(Self.describe(panel.firstResponder))")
@@ -147,12 +143,12 @@ struct SheetsPixelTests {
                        _ present: () -> Void, dismiss: () -> Void) async throws -> String {
         window.contentView = Self.host(WindowModals(window: model, project: views.project), model, views)
         window.setContentSize(NSSize(width: 1000, height: 700))
-        try await settle()
+        try await settlePixelLayout()
         present()
         try await waitUntil(timeout: .seconds(10)) { window.attachedSheet != nil }
         let sheet = try #require(window.attachedSheet)
         sheet.appearance = window.appearance
-        try await settle()
+        try await settlePixelLayout()
         try write("sheet-\(name)-\(suffix)", try #require(sheet.contentView))
         dismiss()
         try await waitUntil(timeout: .seconds(10)) { window.attachedSheet == nil }
@@ -166,13 +162,6 @@ struct SheetsPixelTests {
             let rep = try #require(rep)
             view.cacheDisplay(in: view.bounds, to: rep)
             try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(label).png"))
-        }
-    }
-
-    private func settle() async throws {
-        for _ in 0..<8 {
-            try await Task.sleep(for: .milliseconds(40))
-            await Task.yield()
         }
     }
 

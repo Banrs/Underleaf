@@ -200,16 +200,13 @@ impl Watching {
                 self.paths.insert(path.clone(), *recursive);
             }
         }
-        let removed: Vec<_> = self
-            .paths
-            .keys()
-            .filter(|path| !paths.contains_key(*path))
-            .cloned()
-            .collect();
-        for path in removed {
-            let _ = self.watcher.unwatch(&path);
-            self.paths.remove(&path);
-        }
+        self.paths.retain(|path, _| {
+            if paths.contains_key(path) {
+                return true;
+            }
+            let _ = self.watcher.unwatch(path);
+            false
+        });
     }
 }
 
