@@ -106,7 +106,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     private var applied: NSFont?
 
     private func applyFont() {
-        let font = Self.font(named: fontName, size: fontSize, dark: effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        let font = Self.font(named: fontName, size: fontSize, dark: inDarkAppearance)
         guard font != applied else { return }
         let resized = applied?.pointSize != font.pointSize || applied?.familyName != font.familyName
         applied = font

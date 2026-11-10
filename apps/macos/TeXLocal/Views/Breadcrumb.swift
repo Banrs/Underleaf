@@ -106,7 +106,7 @@ final class Breadcrumb: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = inDarkAppearance
         let active = window?.isMainWindow == true, dimmed: NSColor = dark ? .secondaryLabelColor : .tertiaryLabelColor
         for (index, (item, frame)) in zip(items, frames).enumerated() {
             let lit = index == hovered || index == open
