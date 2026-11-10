@@ -165,7 +165,7 @@ struct CoreTests {
         let session = SessionClient(core: .shared)
         try await session.call(OpenProject(id: project.id, autoCompile: false))
         try await Core.shared.call(SetTexDir(dir: project.path))
-        try await session.call(Compile(auto: false))
+        try await session.call(Compile())
         try await waitUntil { FileManager.default.fileExists(atPath: project.path + "/started") }
         try await Core.shared.call(SetTexDir(dir: nil))
         let closing = Task.immediate { try await session.close() }

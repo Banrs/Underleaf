@@ -411,7 +411,7 @@ mod tests {
         let open = json!({ "id": "P", "autoCompile": false });
         sessions.send_to(0, 1, "OpenProject", open);
         let pending = [
-            ("Compile", json!({ "auto": false })),
+            ("Compile", json!({})),
             ("Save", json!({ "reporting": true })),
             (
                 "Search",
@@ -454,7 +454,7 @@ mod tests {
         let open = json!({ "id": "P", "autoCompile": false });
         sessions.send_to(0, 9, "OpenProject", open);
         replied(&heard, 0).unwrap();
-        sessions.send_to(1, 9, "Compile", json!({ "auto": false }));
+        sessions.send_to(1, 9, "Compile", json!({}));
         let at = format!("thread 'texlocal-session-9' panicked at {}:", file!());
         let ours = |said: &Value| {
             said["value"]["text"]
@@ -514,9 +514,9 @@ mod tests {
         let (sessions, heard, _dir) = compiling_with(Arc::clone(&holds) as _).await;
         let asked = [
             ("OpenProject", json!({ "id": "P", "autoCompile": false })),
-            ("Compile", json!({ "auto": false })),
+            ("Compile", json!({})),
             ("CloseProject", json!({})),
-            ("Compile", json!({ "auto": false })),
+            ("Compile", json!({})),
             ("Open", json!({ "path": "main.tex" })),
             ("CloseProject", json!({})),
         ];
@@ -595,7 +595,7 @@ mod tests {
         let (sessions, heard, dir, release) = replacing_while_the_history_is_held().await;
         sessions.send_to(2, 1, "SaveVersion", json!({ "name": "Draft" }));
         sessions.send_to(3, 1, "SaveVersion", json!({ "name": "Final" }));
-        sessions.send_to(4, 1, "Compile", json!({ "auto": false }));
+        sessions.send_to(4, 1, "Compile", json!({}));
         assert_eq!(replied(&heard, 4).unwrap_err()["kind"], "internal");
         drop(release);
         for id in [1, 2, 3] {
@@ -615,7 +615,7 @@ mod tests {
             assert!(replied(&heard, asked).unwrap().is_object());
             let registry = lock(&sessions.service.library);
             if stops {
-                sessions.send_to(asked + 1, session, "Compile", json!({ "auto": false }));
+                sessions.send_to(asked + 1, session, "Compile", json!({}));
             }
             sessions.send_to(asked + 2, session, "CloseProject", json!({}));
             let early = replied_within(&heard, asked + 2, Duration::from_millis(300));

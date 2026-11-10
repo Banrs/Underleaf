@@ -1178,7 +1178,7 @@ async fn a_build_sends_its_sections_and_its_log_before_it_finishes_and_its_pdf_f
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
     rig.section("outline", |o| !o.is_null());
     rig.forget();
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     let said = [
         "build",
@@ -1221,7 +1221,7 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
     let rig = Rig::open_with(&[("main.tex", BROKEN)], stub_tex).await;
     let doc = rig.open_document("main.tex");
     rig.forget();
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     let kinds = ["build", "shownPdf", "buildFinished", "reply"];
     let said = ["build", "reply", "build", "shownPdf", "buildFinished"];
@@ -1434,14 +1434,14 @@ async fn a_remembered_live_preview_starts_at_open_and_only_compile_builds_beside
     doc.edit(0, 0, "% more\n", None, false);
     rig.call_to(again, "Save", json!({ "reporting": true }));
     assert_eq!(said_of(&rig, &["build"]), ["build"]);
-    rig.call_to(again, "Compile", json!({ "auto": false }));
+    rig.call_to(again, "Compile", json!({}));
     rig.section("build", |b| b["compiling"] == true);
 }
 
 async fn compiling_slowly() -> Rig {
     let main = "\\documentclass{article}\n% slowly\n\\begin{document}\n\\end{document}\n";
     let rig = Rig::open_with(&[("main.tex", main)], stub_tex).await;
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig
 }
 
@@ -1509,8 +1509,8 @@ async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_buildi
         "OpenProject",
         json!({ "id": other, "autoCompile": false }),
     );
-    rig.call("Compile", json!({ "auto": false }));
-    rig.call_to(2, "Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
+    rig.call_to(2, "Compile", json!({}));
     let build = rig.root().join("build");
     wait_until("both builds start", || {
         build.join("started").exists() && other_build.join("started").exists()
@@ -1535,12 +1535,12 @@ async fn a_stopped_build_discards_what_it_wrote_and_leaves_other_projects_buildi
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_build_keeps_the_last_pdf_it_did_not_touch() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.section("build", |b| b["result"]["ok"] == true);
     let main = "\\documentclass{article}\n% slowly\n\\begin{document}\n\\end{document}\n";
     write(&rig.root(), &[("main.tex", main)]);
     rig.forget();
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     let build = rig.root().join("build");
     wait_until("the build starts", || build.join("started").exists());
     rig.call("StopCompile", json!({}));
@@ -1556,7 +1556,7 @@ async fn a_stopped_build_keeps_the_last_pdf_it_did_not_touch() {
     );
     fs::remove_file(build.join("started")).unwrap();
     rig.forget();
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     wait_until("the build starts over", || build.join("started").exists());
     rig.call("StopCompile", json!({}));
     rig.section("build", |b| b["compiling"] == false);
@@ -1703,13 +1703,13 @@ async fn autosave_waits_while_text_is_composed() {
 async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     let rig = Rig::open_with(&[("main.tex", MAIN), ("ch.tex", CHAPTER)], stub_tex).await;
     let args = || rig.read("build/args");
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-norc"));
     assert!(!args().contains("-shell-escape"));
     rig.forget();
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-shell-escape"));
     assert!(!args().lines().any(|a| a == "-norc"));

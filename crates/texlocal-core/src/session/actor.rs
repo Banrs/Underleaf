@@ -42,7 +42,7 @@ requests! {
         Open { path: RelPath } -> Option<String> = actor.open(&path.0),
         Save { reporting: bool } -> bool = actor.docs.save_edits(&mut actor.core, reporting),
         Resolve { path: RelPath, answer: Resolution } -> () = actor.resolve(&path.0, answer),
-        Compile { auto: bool } -> () = actor.compile(auto),
+        Compile {} -> () = actor.compile(false),
         StopCompile {} -> () = Ok(actor.builds.stop()),
         Clean {} -> () => actor.builds.clean(&actor.core, pending),
         Search { query: String, match_case: bool, whole_word: bool } -> Vec<SearchGroup>

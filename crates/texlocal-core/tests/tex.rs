@@ -15,7 +15,7 @@ fn log(rig: &Rig, session: u64) -> serde_json::Value {
 
 async fn built(files: &[(&str, &str)]) -> (Rig, serde_json::Value) {
     let rig = Rig::open(files).await;
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     let build = rig.section("build", |b| !b["result"].is_null());
     (rig, build)
@@ -142,7 +142,7 @@ async fn a_main_file_in_a_folder_inputs_from_the_root_in_compile_and_live() {
     let rig = Rig::open(&[("sub/main.tex", main), ("part.tex", part)]).await;
     let main_file = json!({ "patch": { "mainFile": "sub/main.tex" } });
     rig.call("SetSettings", main_file);
-    rig.call("Compile", json!({ "auto": false }));
+    rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     let build = rig.section("build", |b| !b["result"].is_null());
     assert_eq!(build["result"]["ok"], true, "{}", log(&rig, SESSION));
@@ -227,7 +227,7 @@ async fn two_projects_compile_and_preview_at_once() {
         json!({ "id": other, "autoCompile": false }),
     );
     for session in both {
-        rig.call_to(session, "Compile", json!({ "auto": false }));
+        rig.call_to(session, "Compile", json!({}));
     }
     for session in both {
         let build = rig.section_in(session, "build", |b| !b["result"].is_null());

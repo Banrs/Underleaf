@@ -162,8 +162,6 @@ nonisolated struct CompareVersion: SessionRequest {
 nonisolated struct Compile: SessionRequest {
     typealias Reply = Done
     static let command = "Compile"
-
-    var auto: Bool
 }
 
 nonisolated struct CompileResult: Decodable, Hashable, Sendable {

@@ -4,7 +4,7 @@ import Foundation
 extension ProjectModel {
     func compile() async {
         guard window?.app.tex?.available == true else { return }
-        await alerting(notSavedTitle()) { try await session.call(Compile(auto: false)) }
+        await alerting(notSavedTitle()) { try await session.call(Compile()) }
     }
 
     func stopCompile() {
