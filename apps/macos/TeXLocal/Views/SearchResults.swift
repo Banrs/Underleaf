@@ -60,9 +60,8 @@ final class FindHeader: NSView, NSSearchFieldDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Replace's field and buttons show unless the header shows usages, which it only finds.
-    private var replacing: Bool { project.search.replacing && project.search.usages == nil }
-    private var groups: [SearchGroup] { project.navigator.filtered(project.search.groups ?? []) }
+    private var replacing: Bool { project.search.showsReplace }
+    private var groups: [SearchGroup] { project.shownGroups }
 
     override var isFlipped: Bool { true }
 
@@ -174,13 +173,12 @@ struct SearchResults: View {
     @State private var folded: Set<String> = []
 
     var body: some View {
-        let groups = project.navigator.filtered(project.search.groups ?? [])
+        let groups = project.shownGroups
         list(groups)
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
             .safeAreaBar(edge: .top, spacing: 0) {
-                let replacing = project.search.replacing && project.search.usages == nil
-                FindHeaderView(project: project, field: field, replacing: replacing, counted: !groups.isEmpty)
+                FindHeaderView(project: project, field: field, replacing: project.search.showsReplace, counted: !groups.isEmpty)
             }
             .overlay {
                 if let failure = project.search.failure {

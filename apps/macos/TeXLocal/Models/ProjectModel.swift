@@ -350,8 +350,11 @@ final class ProjectModel {
         await search.run { try await session.call($0) }
     }
 
+    /// What the search navigator lists: the found groups the navigator's filter lets through.
+    var shownGroups: [SearchGroup] { navigator.filtered(search.groups ?? []) }
+
     func replaceChosen() async {
-        let shown = navigator.filtered(search.groups ?? []).flatMap(\.hits)
+        let shown = shownGroups.flatMap(\.hits)
         guard let hit = shown.first(where: { $0.id == search.chosen }) else { return }
         let replacement = search.replacement
         guard views?.replace(hit, with: replacement) == true else {
@@ -360,7 +363,7 @@ final class ProjectModel {
             return
         }
         guard await search.run({ try await session.call($0) }) else { return }
-        search.choose(after: hit, replacingWith: replacement, in: navigator.filtered(search.groups ?? []))
+        search.choose(after: hit, replacingWith: replacement, in: shownGroups)
     }
 
     func findUsages(in path: String, at offset: Int) async {
@@ -404,7 +407,7 @@ final class ProjectModel {
     /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
     func addCitation(_ source: CitationSource) async throws {
         guard let url = URL(string: source.url) else {
-            throw AppFailure(String(localized: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again."))
+            throw AppFailure.wentWrong
         }
         let citing = openPath
         var request = URLRequest(url: url, timeoutInterval: 20)
