@@ -21,6 +21,7 @@ calls! {
         SetHeading { caret: u32, command: String } -> Insertion = doc.set_heading(caret, &command);
         InsertBlock { id: String, selection: TextRange } -> Option<Insertion> = doc.insert_block(&id, selection);
         InsertSymbol { command: String, selection: TextRange } -> Insertion = doc.insert_symbol(&command, selection);
+        Cite { key: String, selection: TextRange } -> Insertion = doc.cite(&key, selection);
         MathAt { caret: u32 } -> Option<MathPreview> = doc.math_at(caret);
         StylesAt { selection: TextRange } -> TextStyles = doc.text_styles(selection);
         CodeRanges { selection: TextRange, checker: Checker } -> Vec<TextRange> = doc.code_ranges(selection, checker);
@@ -32,6 +33,7 @@ calls! {
         SelectsCommand { selection: TextRange } -> bool = doc.selects_command(selection);
         DefinitionAt { at: u32 } -> Option<Definition> = doc.definition(at);
         SymbolAt { at: u32 } -> Option<SymbolName> = doc.symbol(at);
+        ReferenceAt { at: u32 } -> Option<TextRange> = doc.reference(at);
         StartSnippet { fields: Vec<SnippetField>, at: u32 } -> Option<TextRange> = doc.start_snippet(&fields, at);
         EndSnippet {} -> bool = doc.end_snippet();
         InsertTab { selections: Vec<TextRange>, step: i64 } -> Tabbing = doc.tab(&selections, step);

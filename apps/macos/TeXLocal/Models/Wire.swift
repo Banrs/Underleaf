@@ -126,6 +126,14 @@ nonisolated struct CitationSource: Decodable, Hashable, Sendable {
     var accept: String
 }
 
+nonisolated struct Cite: SourceRequest {
+    typealias Reply = Insertion
+    static let command = "Cite"
+
+    var key: String
+    var selection: TextRange
+}
+
 nonisolated struct Clash: Decodable, Hashable, Sendable {
     var path: String
     var keepBoth: String
@@ -1070,6 +1078,13 @@ nonisolated enum Reason: String, Decodable, CaseIterable, Hashable, Sendable {
         case .addCitation: "Before Adding a Citation"
         }
     }
+}
+
+nonisolated struct ReferenceAt: SourceRequest {
+    typealias Reply = TextRange?
+    static let command = "ReferenceAt"
+
+    var at: Int
 }
 
 nonisolated struct ReloadProjects: LibraryRequest {

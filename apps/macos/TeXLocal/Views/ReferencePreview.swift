@@ -138,14 +138,7 @@ extension SourceTextView {
         let index = characterIndexForInsertion(at: point)
         let rect = { (range: NSRange) in self.convert(window.convertFromScreen(self.firstRect(forCharacterRange: range, actualRange: nil)), from: nil) }
         guard let at = [index, index - 1].first(where: { $0 >= 0 && $0 < length && rect(NSRange(location: $0, length: 1)).contains(point) }),
-              let symbol = document.symbol(at: at), symbol.kind == .label || symbol.kind == .citation else { return nil }
-        let stops = CharacterSet(charactersIn: "{},\\%").union(.whitespacesAndNewlines)
-        let text = source
-        var start = at, end = at
-        while start > 0, let scalar = Unicode.Scalar(text.character(at: start - 1)), !stops.contains(scalar) { start -= 1 }
-        while end < length, let scalar = Unicode.Scalar(text.character(at: end)), !stops.contains(scalar) { end += 1 }
-        guard end > start else { return nil }
-        let range = NSRange(location: start, length: end - start)
+              let range = document.reference(at: at) else { return nil }
         return (range, rect(range).insetBy(dx: -2, dy: -2))
     }
 }

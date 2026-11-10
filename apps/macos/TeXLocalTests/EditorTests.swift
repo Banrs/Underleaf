@@ -506,28 +506,6 @@ struct EditorTests {
 
 @MainActor
 struct CitingTests {
-    @Test func aKeyJoinsTheCitationTheCaretIsInElseGetsItsOwn() {
-        let cite = { (before: String, after: String) in
-            let (text, past) = SourceEditor.citing("k", before: before, after: after)
-            return past == 0 ? text : "\(past) \(text)"
-        }
-        #expect(cite("as shown ", "") == "\\cite{k}")
-        #expect(cite("as shown", "here") == "\\cite{k}")
-        #expect(cite("\\cite{", "}") == "k")
-        #expect(cite("\\citep[p.~3]{a", "}") == ",k")
-        #expect(cite("\\parencite{a, ", "}") == "k")
-        #expect(cite("\\textcite*{a,", "}") == "k")
-        #expect(cite("\\cite{a} and ", "") == "\\cite{k}")
-        // Before a key, between two, inside one, and over lines.
-        #expect(cite("\\cite{", "old}") == "k,")
-        #expect(cite("\\cite{first,", "old}") == "k,")
-        #expect(cite("\\cite{first, ", " old}") == "k,")
-        #expect(cite("\\cite{fi", "rst,old}") == "3 ,k")
-        #expect(cite("\\cite{a,\n  ", "b}") == "k,")
-        #expect(cite("\\cite{a\n", "}") == ",k")
-        #expect(cite("\\cite{a,\n\n", "") == "\\cite{k}")
-    }
-
     @Test func aCitedKeyKeepsTheKeysAroundItApartInOneUndoStep() {
         let source = "See \\cite{first,old}."
         let (editor, window) = EditorTests.editor(source)

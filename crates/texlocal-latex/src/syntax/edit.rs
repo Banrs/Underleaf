@@ -61,6 +61,11 @@ static HEADING: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+static BLANK_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n[ \t]*\n").unwrap());
+
+/// How far either side of the caret a citation is read for the keys already in it.
+const CITED: usize = 1000;
+
 impl SourceDocument {
     pub(crate) fn toggle_comment(&self, selections: &[TextRange]) -> Vec<TextEdit> {
         let text = &self.text;
@@ -205,6 +210,54 @@ impl SourceDocument {
         Insertion {
             edit: edit(selection.start, selection.length, text),
             caret,
+            fields: vec![],
+        }
+    }
+
+    /// Cites `key` at the selection. Inside a citation's braces that is the key alone, with the commas that keep it
+    /// apart from the keys either side, and put after the key the caret is inside so as not to split it; anywhere else
+    /// it is a `\cite` of it. A citation's keys can run over lines but not past a blank one.
+    pub(crate) fn cite(&self, key: &str, selection: TextRange) -> Insertion {
+        let (start, end) = clamp(selection, self.text.len()).bounds();
+        let units = &self.text.units;
+        let before = String::from_utf16_lossy(&units[start.saturating_sub(CITED)..start]);
+        let after = String::from_utf16_lossy(&units[end..(end + CITED).min(units.len())]);
+        let blank = BLANK_LINE.find_iter(&before).last();
+        let paragraph = blank.map_or(&before[..], |blank| &before[blank.end()..]);
+        let open = complete::ARGUMENT.captures(paragraph).filter(|open| {
+            let command = open.get_match().start();
+            complete::unescaped(paragraph, command)
+                && catalog::CATALOG.cite_commands.contains(&open[1])
+        });
+        let in_key = |c: char| !c.is_whitespace() && !",{}".contains(c);
+        let Some(keys) = open.and_then(|_| paragraph.rsplit_once('{')) else {
+            let cite = format!("\\cite{{{key}}}");
+            let caret = (start + utf16::len(&cite)) as u32;
+            return Insertion {
+                edit: splice(start, end - start, cite),
+                caret,
+                fields: vec![],
+            };
+        };
+        let inside = before.chars().next_back().is_some_and(in_key);
+        let rest = &after[..after.find(|c| !inside || !in_key(c)).unwrap_or(after.len())];
+        let keys = format!("{}{rest}", keys.1);
+        let leading = !keys.trim().is_empty() && !keys.trim().ends_with(',');
+        let next = after[rest.len()..].chars().find(|c| !c.is_whitespace());
+        let (lead, trail) = (
+            if leading { "," } else { "" },
+            if next.is_some_and(in_key) { "," } else { "" },
+        );
+        let cite = format!("{lead}{key}{trail}");
+        let past = utf16::len(rest);
+        let (at, length) = if past > 0 {
+            (end + past, 0)
+        } else {
+            (start, end - start)
+        };
+        Insertion {
+            caret: (at + utf16::len(&cite)) as u32,
+            edit: splice(at, length, cite),
             fields: vec![],
         }
     }

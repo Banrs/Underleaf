@@ -72,12 +72,14 @@ final class SourceDocument {
     func insertSymbol(_ command: String, replacing selection: NSRange) -> Insertion? {
         call(InsertSymbol(command: command, selection: TextRange(selection)))
     }
+    func cite(_ key: String, replacing selection: NSRange) -> Insertion? { call(Cite(key: key, selection: TextRange(selection))) }
     func textStyles(_ selection: NSRange) -> TextStyles { call(StylesAt(selection: TextRange(selection))) ?? TextStyles() }
     func mathAt(caret: Int) -> MathPreview? { call(MathAt(caret: caret)) ?? nil }
     func folds() -> [Fold] { call(Folds()) ?? [] }
     func words(in range: NSRange) -> Int { call(Words(selection: TextRange(range))) ?? 0 }
     func definition(at offset: Int) -> Definition? { call(DefinitionAt(at: offset)) ?? nil }
     func symbol(at offset: Int) -> SymbolName? { call(SymbolAt(at: offset)) ?? nil }
+    func reference(at offset: Int) -> NSRange? { (call(ReferenceAt(at: offset)) ?? nil)?.range }
 
     var text: String {
         var count = 0

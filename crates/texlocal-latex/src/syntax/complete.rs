@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::scan::{self, Group, Scanner};
-use super::{INDENT, SourceDocument, Text, catalog, indentation};
+use super::{INDENT, SourceDocument, Text, TextRange, catalog, indentation, range};
 use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, same_folded, segments};
@@ -140,7 +140,10 @@ pub(crate) struct Definition {
     places: Vec<FilePlace>,
 }
 
-static ARGUMENT: LazyLock<Regex> =
+/// A symbol found at an offset: its kind and name, the file it names if it names one, and where it is written.
+type Found = (SymbolKind, String, Option<String>, TextRange);
+
+pub(super) static ARGUMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\([0-9A-Za-z_]+)\*?(?:\[[^\]]*\])*\{[^{}\\]*$").unwrap());
 static ENTRY_TYPE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(@[0-9A-Za-z_]*)$").unwrap());
@@ -285,12 +288,23 @@ impl SourceDocument {
         Some(SymbolName { kind, name })
     }
 
+    /// The label or citation key at an offset, whose Quick Help shows while the pointer rests on it.
+    pub(crate) fn reference(&mut self, at: u32) -> Option<TextRange> {
+        let (kind, _, _, range) = self.found_at(at)?;
+        matches!(kind, SymbolKind::Label | SymbolKind::Citation).then_some(range)
+    }
+
     pub fn symbol_at(&mut self, at: u32) -> Option<(SymbolKind, String, Option<String>)> {
+        let (kind, name, file, _) = self.found_at(at)?;
+        Some((kind, name, file))
+    }
+
+    fn found_at(&mut self, at: u32) -> Option<Found> {
         let kind = file_kind(&self.path);
         if kind == FileKind::Bib {
             // A BibTeX entry can contain blank lines, so a paragraph may omit its header.
             let own = Facts::read(&self.text(), kind);
-            return self.symbol_in(&own, 0, at);
+            return self.found_in(&own, 0, at);
         }
         let text = &self.text;
         let line = text.line_index(at.min(text.len()));
@@ -318,7 +332,7 @@ impl SourceDocument {
         let from = start.max(scanner.i);
         let paragraph = " ".repeat(from - start) + &utf16::lossy(&text.units[from..end]);
         let own = Facts::read(&paragraph, kind);
-        self.symbol_in(&own, first, at)
+        self.found_in(&own, first, at)
     }
 
     pub fn symbol_in(
@@ -327,6 +341,11 @@ impl SourceDocument {
         first: usize,
         at: u32,
     ) -> Option<(SymbolKind, String, Option<String>)> {
+        let (kind, name, file, _) = self.found_in(own, first, at)?;
+        Some((kind, name, file))
+    }
+
+    fn found_in(&self, own: &Facts, first: usize, at: u32) -> Option<Found> {
         let (text, at) = (&self.text, at.min(self.text.len()));
         let line = text.line_index(at);
         let column = at - text.lines[line];
@@ -335,9 +354,11 @@ impl SourceDocument {
                 && (place.column..=place.column + place.length).contains(&column)
         };
         let found = |rel: &str| self.symbols.spelt(rel);
+        let range = |place: &Place| range(text.lines[line] + place.column, place.length);
         if let Some(input) = own.inputs.iter().find(|input| holds(&input.place)) {
             let file = input_file(input, &self.path, found);
-            return Some((SymbolKind::File, input.name.clone(), file));
+            let at = range(&input.place);
+            return Some((SymbolKind::File, input.name.clone(), file, at));
         }
         let uses = own.uses.iter().rev();
         let mut names = uses
@@ -347,7 +368,7 @@ impl SourceDocument {
         let file = (named.kind == SymbolKind::File)
             .then(|| graphic(&named.name, found))
             .flatten();
-        Some((named.kind, named.name.clone(), file))
+        Some((named.kind, named.name.clone(), file, range(&named.place)))
     }
 
     pub fn defined(&self, kind: SymbolKind, name: &str) -> Vec<(String, Place)> {
@@ -444,7 +465,7 @@ enum At {
 }
 
 /// Whether the backslash at `at` begins a command, rather than ending an escaped one such as `\\`.
-fn unescaped(text: &str, at: usize) -> bool {
+pub(super) fn unescaped(text: &str, at: usize) -> bool {
     let slashes = text[..at].bytes().rev().take_while(|&b| b == b'\\').count();
     slashes.is_multiple_of(2)
 }

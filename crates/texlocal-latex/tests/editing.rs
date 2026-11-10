@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
 use texlocal_latex::syntax::{Installed, Source, SourceDocument, Syntax};
+use texlocal_latex::utf16;
 
 fn free(command: &str, args: Value) -> Value {
     Syntax::call(command, args).expect(command)
@@ -350,6 +351,67 @@ fn the_symbol_under_the_caret_is_read_from_its_paragraph_alone() {
     let lamport = json!({ "kind": "citation", "name": "lamport" });
     assert_eq!(run(&mut doc, "SymbolAt", at("lamport")), lamport);
     assert_eq!(run(&mut doc, "SymbolAt", at("Intro")), Value::Null);
+    let key = |find: &str| json!({ "start": text.find(find).unwrap(), "length": find.len() });
+    for find in ["one", "fig:a", "knuth", "lamport"] {
+        assert_eq!(run(&mut doc, "ReferenceAt", at(find)), key(find), "{find}");
+    }
+    for find in ["Intro", "ref", "ch}"] {
+        let reference = run(&mut doc, "ReferenceAt", at(find));
+        assert_eq!(reference, Value::Null, "{find}");
+    }
+}
+
+#[test]
+fn a_key_joins_the_citation_the_caret_is_in_else_gets_its_own() {
+    let cite = |before: &str, after: &str| {
+        let mut doc = SourceDocument::new(&format!("{before}{after}"));
+        let at = utf16::len(before) as u32;
+        let cited = run(
+            &mut doc,
+            "Cite",
+            json!({ "key": "k", "selection": caret(at) }),
+        );
+        let (past, text) = (
+            cited["edit"]["start"].as_u64().unwrap() - u64::from(at),
+            &cited["edit"]["text"],
+        );
+        assert_eq!(cited["edit"]["length"], 0);
+        assert_eq!(
+            cited["caret"],
+            u64::from(at) + past + utf16::len(text.as_str().unwrap()) as u64
+        );
+        match past {
+            0 => text.as_str().unwrap().to_owned(),
+            past => format!("{past} {}", text.as_str().unwrap()),
+        }
+    };
+    assert_eq!(cite("as shown ", ""), "\\cite{k}");
+    assert_eq!(cite("as shown", "here"), "\\cite{k}");
+    assert_eq!(cite("\\cite{", "}"), "k");
+    assert_eq!(cite("\\citep[p.~3]{a", "}"), ",k");
+    assert_eq!(cite("\\parencite{a, ", "}"), "k");
+    assert_eq!(cite("\\textcite*{a,", "}"), "k");
+    assert_eq!(cite("\\cite{a} and ", ""), "\\cite{k}");
+    // Before a key, between two, inside one, and over lines.
+    assert_eq!(cite("\\cite{", "old}"), "k,");
+    assert_eq!(cite("\\cite{first,", "old}"), "k,");
+    assert_eq!(cite("\\cite{first, ", " old}"), "k,");
+    assert_eq!(cite("\\cite{fi", "rst,old}"), "3 ,k");
+    assert_eq!(cite("\\cite{a,\n  ", "b}"), "k,");
+    assert_eq!(cite("\\cite{a\n", "}"), ",k");
+    assert_eq!(cite("\\cite{a,\n\n", ""), "\\cite{k}");
+    // Only a citation's braces hold keys, and a line break's second backslash begins no command.
+    assert_eq!(cite("\\emph{", "}"), "\\cite{k}");
+    assert_eq!(cite("\\\\cite{", "}"), "\\cite{k}");
+    let mut doc = SourceDocument::new("See \\cite{first,old}.");
+    let selection = json!({ "start": 16, "length": 3 });
+    let cited = run(
+        &mut doc,
+        "Cite",
+        json!({ "key": "new", "selection": selection }),
+    );
+    let replaced = json!({ "start": 16, "length": 3, "text": "new" });
+    assert_eq!((&cited["edit"], &cited["caret"]), (&replaced, &json!(19)));
 }
 
 #[test]

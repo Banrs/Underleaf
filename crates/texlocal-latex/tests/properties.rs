@@ -179,7 +179,8 @@ fn args(rng: &mut Rng, call: &str, len: usize) -> Value {
             json!({ "selection": selection, "text": rng.text(1), "autoPair": rng.chance(2) })
         }
         "DeleteBackward" => json!({ "selection": selection, "autoPair": rng.chance(2) }),
-        "Partner" | "DefinitionAt" | "SymbolAt" => json!({ "at": at }),
+        "Partner" | "DefinitionAt" | "SymbolAt" | "ReferenceAt" => json!({ "at": at }),
+        "Cite" => json!({ "key": rng.pick(&["k", "a,b", ""]), "selection": selection }),
         "StartSnippet" => {
             let mut field = || json!({ "start": rng.below(8), "length": rng.below(4), "index": 0 });
             json!({ "fields": [field(), field()], "at": at })
