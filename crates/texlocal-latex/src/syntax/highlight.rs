@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::catalog::CATALOG;
-use super::scan::blank_line;
+use super::scan::{blank_line, inline_code_end};
 use super::stack::Stack;
 use super::{NAME, Text, ascii, is, letter};
 
@@ -164,7 +164,9 @@ fn normal(s: &mut Stream, state: &mut State) -> Option<HighlightKind> {
         let name = &s.text[name];
         match ascii(name, &mut [0; NAME]) {
             word @ ("verb" | "lstinline" | "mintinline") => {
-                s.eat("*");
+                if word == "verb" {
+                    s.eat("*");
+                }
                 let end = inline_code_end(s.text, s.pos, word);
                 if end > s.pos {
                     state.mode = Mode::Verb(end);
@@ -381,32 +383,6 @@ fn verb(s: &mut Stream, state: &mut State, end: usize) -> Option<HighlightKind> 
     s.pos = end;
     state.mode = Mode::Normal;
     None
-}
-
-fn inline_code_end(line: &[u16], mut i: usize, name: &str) -> usize {
-    let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
-    let past = |i: usize, close: u16| {
-        let found = line[i..].iter().position(|&u| u == close);
-        found.map_or(line.len(), |at| i + at + 1)
-    };
-    if name != "verb" && at(i, '[') {
-        i = past(i, b']'.into());
-    }
-    if name == "mintinline" && at(i, '{') {
-        i = past(i, b'}'.into());
-    }
-    let Some(&delimiter) = line.get(i) else {
-        return i;
-    };
-    if name != "verb" && is(delimiter, '{') {
-        let mut depth = 0;
-        let close = line[i..].iter().position(|&u| {
-            depth += is(u, '{') as i32 - is(u, '}') as i32;
-            depth == 0
-        });
-        return close.map_or(line.len(), |close| i + close + 1);
-    }
-    past(i + 1, delimiter)
 }
 
 struct Stream<'a> {

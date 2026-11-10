@@ -107,6 +107,31 @@ pub(crate) fn environment_name(src: &[u16], from: usize) -> Option<(&[u16], usiz
     is(rest[close], '}').then_some((&rest[1..close], from + leading + close + 1))
 }
 
+/// Where the code after `\verb`, `\lstinline` or `\mintinline` ends on its line: past its options and its closing
+/// delimiter, or at the line's end if nothing closes it.
+pub(crate) fn inline_code_end(line: &[u16], mut i: usize, name: &str) -> usize {
+    let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
+    let past = |i: usize, close: u16| find(line, i, &[close]).map_or(line.len(), |at| at + 1);
+    if name != "verb" && at(i, '[') {
+        i = past(i, b']'.into());
+    }
+    if name == "mintinline" && at(i, '{') {
+        i = past(i, b'}'.into());
+    }
+    let Some(&delimiter) = line.get(i) else {
+        return i;
+    };
+    if name != "verb" && is(delimiter, '{') {
+        let mut depth = 0;
+        let close = line[i..].iter().position(|&u| {
+            depth += is(u, '{') as i32 - is(u, '}') as i32;
+            depth == 0
+        });
+        return close.map_or(line.len(), |close| i + close + 1);
+    }
+    past(i + 1, delimiter)
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum End {
     Brace,
@@ -367,32 +392,11 @@ impl Scanner {
     }
 
     fn verb(&mut self, src: &[u16], name: &str) -> usize {
-        let line_end = find(src, self.i, &[NEWLINE]);
-        let line = &src[..line_end.unwrap_or(src.len())];
-        let at = |i: usize, c| line.get(i).is_some_and(|&u| is(u, c));
-        let past = |i: usize, close| find(line, i, &[close as u16]).map_or(line.len(), |i| i + 1);
-        if name == "verb" {
-            self.i += at(self.i, '*') as usize;
-        } else if at(self.i, '[') {
-            self.i = past(self.i, ']');
-        }
-        if name == "mintinline" && at(self.i, '{') {
-            self.i = past(self.i, '}');
-        }
-        let Some(&delimiter) = src.get(self.i) else {
-            return self.i + 1;
-        };
-        if name != "verb" && is(delimiter, '{') {
-            let mut depth = 0;
-            let close = line[self.i..].iter().position(|&u| {
-                depth += is(u, '{') as i32 - is(u, '}') as i32;
-                depth == 0
-            });
-            self.i = close.map_or(line.len(), |close| self.i + close + 1);
-        } else {
-            self.skip_literal(src, self.i + 1, &[delimiter], line_end);
-        }
-        line_end.unwrap_or(src.len()) + 1
+        let line_end = find(src, self.i, &[NEWLINE]).unwrap_or(src.len());
+        let line = &src[..line_end];
+        let starred = name == "verb" && line.get(self.i).is_some_and(|&u| is(u, '*'));
+        self.i = inline_code_end(line, self.i + starred as usize, name);
+        line_end + 1
     }
 
     fn environment(
@@ -415,7 +419,7 @@ impl Scanner {
             self.close(start..after, &end, visit);
         } else if CATALOG.verbatim_environments.contains(name) {
             let end: Vec<u16> = format!("\\end{{{name}}}").encode_utf16().collect();
-            self.skip_literal(src, after, &end, None);
+            self.skip_literal(src, after, &end);
             if src[..self.i].ends_with(&end) {
                 visit.literal(start, self.i - end.len()..self.i);
             }
@@ -429,12 +433,10 @@ impl Scanner {
         (false, read)
     }
 
-    fn skip_literal(&mut self, src: &[u16], from: usize, end: &[u16], line_end: Option<usize>) {
-        let limit = line_end.unwrap_or(src.len());
-        self.i = match (find(&src[..limit], from, end), line_end) {
-            (Some(at), _) => at + end.len(),
-            (None, Some(line_end)) => line_end,
-            (None, None) => {
+    fn skip_literal(&mut self, src: &[u16], from: usize, end: &[u16]) {
+        self.i = match find(src, from, end) {
+            Some(at) => at + end.len(),
+            None => {
                 self.stack = Stack::default();
                 src.len()
             }

@@ -167,6 +167,7 @@ fn a_maths_environment_is_maths_until_its_own_end() {
 fn inline_code_and_text_in_maths_open_and_close_maths_where_the_scanner_does() {
     for (text, command) in [
         ("\\lstinline|a$b| c", "\\lstinline"),
+        ("\\lstinline*a$b* c", "\\lstinline"),
         ("\\lstinline[language=sh]{a{$}b} c", "\\lstinline"),
         ("\\mintinline{py}{a$b} c", "\\mintinline"),
     ] {
@@ -197,6 +198,7 @@ fn the_scanner_knows_where_maths_is() {
         ("$a\\\n\nb ", false),
         ("% $", false),
         ("\\verb|$| ", false),
+        ("\\[ \\verb|x", true),
         ("\\begin{verbatim}$\\end{verbatim} ", false),
         ("\\[ \\text{if ", false),
     ];
