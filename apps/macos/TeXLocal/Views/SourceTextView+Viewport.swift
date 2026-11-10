@@ -29,10 +29,9 @@ extension SourceTextView {
     func center(_ location: any NSTextLocation) {
         guard let manager = textLayoutManager, let scrollY else { return }
         let middle = shownRect.midY - scrollY
-        scroll(location) { [unowned self] paragraph in
+        scroll(location) { paragraph in
             guard let fragment = manager.textLayoutFragment(for: location) else { return paragraph.midY - middle }
-            let inParagraph = offset(location) - offset(fragment.rangeInElement.location)
-            let line = fragment.textLineFragments.last { $0.characterRange.location <= inParagraph } ?? fragment.textLineFragments.first
+            let line = fragment.textLineFragment(for: location, isUpstreamAffinity: false) ?? fragment.textLineFragments.last
             return paragraph.minY + (line?.typographicBounds.midY ?? paragraph.height / 2) - middle
         }
     }
@@ -73,14 +72,15 @@ extension SourceTextView {
         guard size.width != frame.width else { return super.setFrameSize(size) }
         let top = shownTop
         super.setFrameSize(size)
-        textContainer?.size.width = max(0, size.width - gutter.width - linePadding)
+        // TextKit 2 can defer width tracking during a live resize when the editor is scrolled (macOS 27.2).
+        textContainer?.size.width = max(0, size.width - sourceTextStart)
         top.map(scroll(toShownTop:))
     }
 
     var shownRect: NSRect {
         guard let scroll = enclosingScrollView else { return visibleRect }
         let insets = scroll.contentInsets
-        var shown = convert(scroll.contentView.bounds, from: scroll.contentView)
+        var shown = scroll.documentVisibleRect
         shown.origin.y += insets.top
         shown.size.height -= insets.top + insets.bottom
         return shown

@@ -88,7 +88,7 @@ final class IssueOverlay {
         }
         if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
         if !reported.tokens.isEmpty, let textFont = view.font {
-            let thickness = max(1, view.onPixels(CTFontGetUnderlineThickness(textFont as CTFont)))
+            let thickness = max(1, view.onPixels(textFont.underlineThickness))
             for token in reported.tokens {
                 for line in lines {
                     let part = NSIntersectionRange(token.range, line.characterRange)
@@ -96,7 +96,7 @@ final class IssueOverlay {
                     let lineLeft = left + line.typographicBounds.minX
                     let start = view.onPixels(lineLeft + line.locationForCharacter(at: part.location).x)
                     let end = view.onPixels(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
-                    let under = top + line.typographicBounds.minY + line.glyphOrigin.y - CTFontGetUnderlinePosition(textFont as CTFont)
+                    let under = top + line.typographicBounds.minY + line.glyphOrigin.y - textFont.underlinePosition
                     issue.tokens.append(CGRect(x: start, y: view.onPixels(under), width: end - start, height: thickness))
                 }
             }

@@ -31,7 +31,7 @@ extension PDFController {
         context.translateBy(x: bounds.minX - area.minX, y: bounds.minY - area.minY)
         page.draw(with: SyncPDFView.box, to: context)
         rep.size = size
-        let image = NSImage(size: size)
+        let image = NSImage()
         image.addRepresentation(rep)
         return ReferencePicture(image: image, darkPaper: view.darkPaper)
     }

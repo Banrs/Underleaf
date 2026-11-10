@@ -259,8 +259,8 @@ final class NavigatorField: NSSearchField {
             let scale = controlView?.window?.backingScaleFactor ?? 2
             let image = searchButtonCell?.image?.size ?? NSSize(width: 16, height: 15)
             // Find's small magnifier is centred and 5 pt in, as in Xcode.
-            let top = filterBar ? rect.midY - 7.5 : rect.midY - image.height / 2
-            return NSRect(x: rect.minX + (filterBar ? 6 : 5), y: top.pixelCeiling(scale), width: image.width, height: filterBar ? 15 : image.height)
+            let top = rect.midY - image.height / 2
+            return NSRect(x: rect.minX + (filterBar ? 6 : 5), y: top.pixelCeiling(scale), width: image.width, height: image.height)
         }
 
         override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {

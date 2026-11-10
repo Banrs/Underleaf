@@ -88,8 +88,8 @@ final class PDFController: NSObject {
 
     private var pageScale: CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
-        let margins = view.pageBreakMargins, box = page.bounds(for: view.displayBox)
-        let pageHeight = page.rotation.isMultiple(of: 180) ? box.height : box.width
+        let margins = view.pageBreakMargins, box = view.displayBox
+        let pageHeight = abs(page.bounds(for: box).size.applying(page.transform(for: box)).height)
         return min(view.shownHeight / (pageHeight + margins.top + margins.bottom), view.scaleFactorForSizeToFit)
     }
 
