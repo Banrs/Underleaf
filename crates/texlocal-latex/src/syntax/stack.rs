@@ -57,15 +57,12 @@ impl<T> Stack<T> {
         pick: impl Fn(&T) -> bool,
         taken: impl FnOnce(&T),
     ) {
-        let mut found = None;
-        for frame in self.frames() {
-            if pick(&frame.item) {
-                found = Some(frame);
-                if !outermost {
-                    break;
-                }
-            }
-        }
+        let matching = |frame: &&Frame<T>| pick(&frame.item);
+        let found = if outermost {
+            self.frames().filter(matching).last()
+        } else {
+            self.frames().find(matching)
+        };
         if let Some(frame) = found {
             let below = frame.below.clone();
             taken(&frame.item);
