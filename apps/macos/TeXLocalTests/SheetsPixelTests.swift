@@ -4,10 +4,8 @@ import Testing
 @testable import TeXLocal
 
 /// Writes the windows and sheets (Projects, the dialog sheets, Version History, Settings, the inspector, Quick Help and
-/// Open Quickly) as PNGs, light and dark, key and inactive, at 2x and 4x: once before and once after a change to how
-/// they're drawn, then compare the two folders pixel for pixel.
-/// `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/SheetsPixelTests` with a 2x
-/// screen attached, where the views are laid out. Sheets are presented through the window's own modals and draw inactive,
+/// Open Quickly) as PNGs, light and dark, key and inactive, at native scale and 4x. Attach a 2x screen for 2x layout.
+/// Sheets are presented through the window's own modals and draw inactive,
 /// as the test host never becomes active; the dialogs are also hosted alone in a key window, and `focus.txt` names what
 /// each one focused. Version History and Open Quickly also show a project the core has open, so the versions' times
 /// differ from run to run. Hover and pressed states need the pointer and aren't drawn, nor is Liquid Glass or what it holds.
@@ -55,9 +53,9 @@ struct SheetsPixelTests {
             host.frame = NSRect(origin: .zero, size: size)
             window.contentView = host
             window.setContentSize(size)
-            try await settle()
+            try await settlePixelLayout()
             if list, let table = host.descendants(of: NSTableView.self).first { window.makeFirstResponder(table) }
-            try await settle()
+            try await settlePixelLayout()
             try write("\(name)-\(suffix)", host)
             focus.append("\(name)-\(suffix): \(Self.describe(window.firstResponder))")
         }
@@ -134,7 +132,7 @@ struct SheetsPixelTests {
         try await waitUntil(timeout: .seconds(10)) { panel.frame.height > OpenQuickly.fieldHeight }
         for dark in [false, true] {
             panel.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-            try await settle()
+            try await settlePixelLayout()
             let suffix = "\(dark ? "dark" : "light")-inactive"
             try write("open-quickly-\(suffix)", try #require(panel.contentView))
             focus.append("open-quickly-\(suffix): \(Self.describe(panel.firstResponder))")
@@ -147,12 +145,12 @@ struct SheetsPixelTests {
                        _ present: () -> Void, dismiss: () -> Void) async throws -> String {
         window.contentView = Self.host(WindowModals(window: model, project: views.project), model, views)
         window.setContentSize(NSSize(width: 1000, height: 700))
-        try await settle()
+        try await settlePixelLayout()
         present()
         try await waitUntil(timeout: .seconds(10)) { window.attachedSheet != nil }
         let sheet = try #require(window.attachedSheet)
         sheet.appearance = window.appearance
-        try await settle()
+        try await settlePixelLayout()
         try write("sheet-\(name)-\(suffix)", try #require(sheet.contentView))
         dismiss()
         try await waitUntil(timeout: .seconds(10)) { window.attachedSheet == nil }
@@ -164,27 +162,14 @@ struct SheetsPixelTests {
         let scale = Int(view.window?.backingScaleFactor ?? 1)
         for (label, rep) in [("\(scale)x", view.bitmapImageRepForCachingDisplay(in: view.bounds)), ("4x", bitmap(view.bounds.size, scale: 4))] {
             let rep = try #require(rep)
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(label).png"))
-        }
-    }
-
-    private func settle() async throws {
-        for _ in 0..<8 {
-            try await Task.sleep(for: .milliseconds(40))
-            await Task.yield()
+            try writePixels(view, in: view.bounds, using: rep, to: folder.appending(path: "\(name)@\(label).png"))
         }
     }
 
     /// A nearly transparent window on the 2x screen, drawn as key or inactive.
     private static func window(on screen: NSScreen, dark: Bool, key: Bool) -> NSWindow {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-                                                                 styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        let window = pixelWindow(NSSize(width: 400, height: 300), dark: dark, key: key)
+        showPixelWindow(window, on: screen)
         return window
     }
 

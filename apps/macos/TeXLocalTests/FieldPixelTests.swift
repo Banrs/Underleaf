@@ -3,10 +3,7 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes every search and filter field the app shows, in each state their drawing tells apart, as PNGs: once before and
-/// once after a change to how they're drawn, then compare the two folders pixel for pixel.
-/// `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/FieldPixelTests`, which renders at
-/// each screen's scale (attach a 2x display for 2x) and at 4x.
+/// Writes the search and filter fields in every drawing state at native scale and 4x. Attach a 2x display for native 2x.
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct FieldPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -28,13 +25,8 @@ struct FieldPixelTests {
     }
 
     private func shoot(_ project: ProjectModel, _ windowModel: WindowModel, on screen: NSScreen, dark: Bool, key: Bool) async throws -> Int {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
-                                                                 styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        let window = pixelWindow(NSSize(width: 360, height: 120), dark: dark, key: key)
+        showPixelWindow(window, on: screen)
         defer { window.close() }
         let scale = Int(window.backingScaleFactor)
         let suffix = "\(dark ? "dark" : "light")-\(key ? "key" : "inactive")"
@@ -45,17 +37,11 @@ struct FieldPixelTests {
             box.addSubview(view)
             window.contentView = box
             window.setContentSize(box.frame.size)
-            try await settle()
+            try await settlePixelLayout(passes: 5, interval: .milliseconds(30))
             let fields = view.descendants(of: NSSearchField.self)
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = true } }
             for field in fields { field.needsDisplay = true }
-            box.displayIfNeeded()
-            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
-                guard let rep else { continue }
-                box.cacheDisplay(in: box.bounds, to: rep)
-                try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)-\(suffix)@\(scale)x-\(label).png"))
-                written += 1
-            }
+            written += try writeNativePixels("\(name)-\(suffix)", of: box, scale: scale, to: folder)
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = false } }
         }
 
@@ -97,13 +83,6 @@ struct FieldPixelTests {
             }
         }
         return written
-    }
-
-    private func settle() async throws {
-        for _ in 0..<5 {
-            try await Task.sleep(for: .milliseconds(30))
-            await Task.yield()
-        }
     }
 }
 

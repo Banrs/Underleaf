@@ -7,9 +7,7 @@ import Testing
 /// Writes the source editor's gutter (line numbers, the current line, fold chevrons and a folded line's mark), the PDF's
 /// bad-box marks, sync mark and find bar, the source column with no file open, and the workspace's columns with the
 /// divider and status bar between and beneath them as PNGs at 2x and 4x, light and dark,
-/// key and inactive: once before and once after a change to how they're drawn, then compare the two folders pixel for
-/// pixel. `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/EditorPDFPixelTests`,
-/// with a 2x screen attached for the 2x renders to lay out at 2x.
+/// key and inactive. Attach a 2x screen for the 2x renders to lay out at 2x.
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct EditorPDFPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -65,7 +63,7 @@ struct EditorPDFPixelTests {
         view.autoresizingMask = [.width, .height]
         content.addSubview(view)
         controller.show(try Self.textPDF())
-        try await settle()
+        try await settlePixelLayout(passes: 6)
         let page = try #require(view.document?.page(at: 0))
         view.mark([0: Self.badBoxes], press: { _ in })
         try await write("badboxes-\(suffix)", view)
@@ -108,38 +106,22 @@ struct EditorPDFPixelTests {
         window.contentViewController = workspace
         views.project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
         views.pdf.show(try Self.textPDF())
-        try await settle()
+        try await settlePixelLayout(passes: 6)
         views.editor.open(path: "main.tex", source: SourceDocument(text: Self.source))
         try await write("workspace-\(suffix)", workspace.columns.view)
     }
 
     private func write(_ name: String, _ view: NSView) async throws {
-        try await settle()
+        try await settlePixelLayout(passes: 6)
         view.displayIfNeeded()
-        for scale in [2, 4] {
-            let rep = try #require(bitmap(view.bounds.size, scale: scale))
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
-        }
-    }
-
-    private func settle() async throws {
-        for _ in 0..<6 {
-            try await Task.sleep(for: .milliseconds(40))
-            await Task.yield()
-        }
+        try writeScaledPixels(name, of: view, in: view.bounds, to: folder)
     }
 
     /// On a 2x screen when there is one, so the 2x renders are laid out at 2x.
     private static func window(_ size: NSSize, dark: Bool, key: Bool) -> NSWindow {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled],
-                                                                 backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let window = pixelWindow(size, dark: dark, key: key)
         let screen = NSScreen.screens.first { $0.backingScaleFactor == 2 } ?? NSScreen.screens[0]
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        showPixelWindow(window, on: screen)
         return window
     }
 

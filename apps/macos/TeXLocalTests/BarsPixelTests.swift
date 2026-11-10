@@ -7,9 +7,7 @@ import Testing
 /// apart (first and other choices; at rest, with the pointer over each item, with the keyboard on each item), and the
 /// status bar's other items (Not Saved, Live Preview, PDF Out of Date, Last Successful Build, word count) and the whole
 /// Logs panel at the widths that give their full, symbol and short forms; light and dark, key and inactive, at each
-/// screen's scale and 4x. Once before and once after a change to how they're drawn, then compare the two folders pixel
-/// for pixel. `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/BarsPixelTests`
-/// (attach a 2x display for 2x).
+/// screen's scale and 4x. Attach a 2x display for native 2x captures.
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct BarsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -39,14 +37,9 @@ struct BarsPixelTests {
     }
 
     private func window(_ size: NSSize, on screen: NSScreen?, dark: Bool, key: Bool, style: NSWindow.StyleMask = [.titled]) -> NSWindow {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size), styleMask: style,
-                                                                 backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let window = pixelWindow(size, dark: dark, key: key, style: style)
         let place = screen ?? NSScreen.screens.first { $0.backingScaleFactor == 2 } ?? NSScreen.screens.first
-        window.setFrameOrigin(NSPoint(x: (place?.visibleFrame.minX ?? 0) + 40, y: (place?.visibleFrame.minY ?? 0) + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        showPixelWindow(window, on: place)
         return window
     }
 
@@ -63,15 +56,8 @@ struct BarsPixelTests {
         window.setContentSize(box.frame.size)
         var written = 0
         func shot(_ name: String) async throws {
-            try await settle()
-            box.displayIfNeeded()
-            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
-                guard let rep else { continue }
-                box.cacheDisplay(in: box.bounds, to: rep)
-                ring(into: rep)
-                try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "crumb-\(name)-\(suffix)@\(scale)x-\(label).png"))
-                written += 1
-            }
+            try await settlePixelLayout()
+            written += try writeNativePixels("crumb-\(name)-\(suffix)", of: box, scale: scale, to: folder, overlay: ring)
         }
         /// The focus ring, which AppKit draws apart from the view and so leaves out of a cached render, drawn from the
         /// focused view's mask.
@@ -145,16 +131,12 @@ struct BarsPixelTests {
             views.pdf.show(try Self.pdf())
             let columns = workspace.columns.view
             func shot(_ name: String) async throws {
-                try await settle()
+                try await settlePixelLayout()
                 columns.displayIfNeeded()
                 let rect = NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48)
-                for scale in [Int(window.backingScaleFactor), 4] {
-                    let rep = try #require(bitmap(rect.size, scale: scale))
-                    columns.cacheDisplay(in: rect, to: rep)
-                    try rep.representation(using: .png, properties: [:])?
-                        .write(to: folder.appending(path: "status-\(name)-\(Int(width))-\(suffix)@\(scale)x.png"))
-                    written += 1
-                }
+                let scales = [Int(window.backingScaleFactor), 4]
+                try writeScaledPixels("status-\(name)-\(Int(width))-\(suffix)", of: columns, in: rect, to: folder, scales: scales)
+                written += scales.count
             }
 
             project.store.apply(.build(BuildState(compiling: false, auto: false, outdated: true,
@@ -178,7 +160,7 @@ struct BarsPixelTests {
             let long = (1...80).map { "Line \($0) of a log long enough to scroll" }.joined(separator: "\n")
             project.store.apply(.buildLog("This is pdfTeX\nOutput written on main.pdf (1 page)."))
             project.panel.shown = true
-            try await settle()
+            try await settlePixelLayout()
             let area = columns.superview?.superview ?? columns
             let above = columns.convert(columns.bounds, to: area)
             let panel = area.isFlipped ? NSRect(x: above.minX, y: above.maxY, width: above.width, height: area.bounds.maxY - above.maxY)
@@ -187,15 +169,11 @@ struct BarsPixelTests {
                                              ("long", .log, "", long)] {
                 (project.panel.tab, project.panel.logFilter) = (tab, filter)
                 if !log.isEmpty { project.store.apply(.buildLog(log)) }
-                try await settle()
+                try await settlePixelLayout()
                 area.displayIfNeeded()
-                for scale in [Int(window.backingScaleFactor), 4] {
-                    let rep = try #require(bitmap(panel.size, scale: scale))
-                    area.cacheDisplay(in: panel, to: rep)
-                    try rep.representation(using: .png, properties: [:])?
-                        .write(to: folder.appending(path: "panel-\(name)-\(Int(width))-\(suffix)@\(scale)x.png"))
-                    written += 1
-                }
+                let scales = [Int(window.backingScaleFactor), 4]
+                try writeScaledPixels("panel-\(name)-\(Int(width))-\(suffix)", of: area, in: panel, to: folder, scales: scales)
+                written += scales.count
             }
         }
         return written
@@ -204,12 +182,5 @@ struct BarsPixelTests {
     private static func pdf() throws -> PDFDocument {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
         return try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds)))
-    }
-
-    private func settle() async throws {
-        for _ in 0..<8 {
-            try await Task.sleep(for: .milliseconds(40))
-            await Task.yield()
-        }
     }
 }

@@ -5,9 +5,7 @@ import Testing
 
 /// Writes the lists and popovers (completions and the Open Quickly list, Quick Help with a reference picture, the math
 /// preview, issue boxes, the Symbol Library, the log pane, and the search navigator's header and empty states) as PNGs, in
-/// each state their drawing tells apart: once before and once after a change to how they're drawn, then compare the two
-/// folders pixel for pixel. `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ListsPixelTests`,
-/// which renders at each screen's scale (attach a 2x display for 2x) and at 4x. Headless renders draw no Liquid Glass or
+/// each drawing state at native scale and 4x. Attach a 2x display for native 2x. Headless renders draw no Liquid Glass or
 /// list rows, so the popovers show without their glass and the search results without their rows.
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct ListsPixelTests {
@@ -29,13 +27,8 @@ struct ListsPixelTests {
     }
 
     private func shoot(_ windowModel: WindowModel, on screen: NSScreen, dark: Bool, key: Bool) async throws -> Int {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
-                                                                 styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        let window = pixelWindow(NSSize(width: 360, height: 120), dark: dark, key: key)
+        showPixelWindow(window, on: screen)
         defer { window.close() }
         let scale = Int(window.backingScaleFactor)
         let suffix = "\(dark ? "dark" : "light")-\(key ? "key" : "inactive")"
@@ -46,14 +39,8 @@ struct ListsPixelTests {
             box.addSubview(view)
             window.contentView = box
             window.setContentSize(size)
-            try await settle()
-            box.displayIfNeeded()
-            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
-                guard let rep else { continue }
-                box.cacheDisplay(in: box.bounds, to: rep)
-                try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)-\(suffix)@\(scale)x-\(label).png"))
-                written += 1
-            }
+            try await settlePixelLayout(passes: 5, interval: .milliseconds(30))
+            written += try writeNativePixels("\(name)-\(suffix)", of: box, scale: scale, to: folder)
         }
         /// Shows the view at its fitting size, or in the width or height given.
         func hosted(_ name: String, width: CGFloat? = nil, height: CGFloat? = nil, _ content: some View) async throws {
@@ -150,12 +137,5 @@ struct ListsPixelTests {
         let image = NSImage(size: size)
         image.addRepresentation(rep)
         return ReferencePicture(image: image, darkPaper: darkPaper)
-    }
-
-    private func settle() async throws {
-        for _ in 0..<5 {
-            try await Task.sleep(for: .milliseconds(30))
-            await Task.yield()
-        }
     }
 }

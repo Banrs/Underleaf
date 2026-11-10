@@ -5,9 +5,7 @@ import Testing
 @testable import TeXLocal
 
 /// Writes the window chrome (status bar, navigators and their filter bar, Find header, Logs bar) as PNGs at 2x and 4x,
-/// light and dark: once before and once after a change to how it's drawn, then compare the two folders.
-/// `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ChromePixelTests`. Headless
-/// renders draw no Liquid Glass, list rows or scroll edge effects. With `TEST_RUNNER_TEXLOCAL_SCREEN=<folder>` the window
+/// light and dark. Headless renders draw no Liquid Glass, list rows or scroll edge effects. With `TEST_RUNNER_TEXLOCAL_SCREEN=<folder>` the window
 /// also goes on a 2x screen, and the harness asks a watcher to capture it (`shot name window`) and to move the pointer
 /// (`move x y`, `click x y`) by writing numbered `.req` files there and waiting for each to become `.done`.
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
@@ -29,11 +27,7 @@ struct ChromePixelTests {
         let project = views.project
         let size = NSSize(width: 1300, height: 700)
         let workspace = WorkspaceController(window: model, views: views, size: size)
-        let window = (screen == nil ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
-                                                                          styleMask: [.titled, .resizable, .fullSizeContentView],
-                                                                          backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let window = pixelWindow(size, dark: dark, key: screen == nil, style: [.titled, .resizable, .fullSizeContentView])
         workspace.view.setFrameSize(size)
         window.contentViewController = workspace
         window.toolbar = workspace.toolbar.toolbar
@@ -49,11 +43,11 @@ struct ChromePixelTests {
         defer { workspace.close(); window.close() }
         let suffix = dark ? "dark" : "light"
         if let screen {
-            try await settle()
+            try await settlePixelLayout()
             // A click in the title bar makes the test host active, with this window key; another app can take it back.
             for _ in 0..<5 where !(NSApp.isActive && window.isKeyWindow) {
                 try await screen.ask("click", at: NSPoint(x: window.frame.midX, y: window.frame.maxY - 12))
-                try await settle()
+                try await settlePixelLayout()
             }
             try #require(NSApp.isActive && window.isKeyWindow)
         }
@@ -63,7 +57,7 @@ struct ChromePixelTests {
         project.expandedFolders = ["chapters", "figures"]
         project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
         views.pdf.show(try Self.pdf(pages: 3))
-        try await settle()
+        try await settlePixelLayout()
 
         func capture(_ name: String) async throws {
             guard let screen else { return }
@@ -74,12 +68,12 @@ struct ChromePixelTests {
         func hover(_ view: NSView, _ point: NSPoint) async throws {
             guard let screen else { return }
             try await screen.ask("move", at: window.convertPoint(toScreen: view.convert(point, to: nil)))
-            try await settle()
+            try await settlePixelLayout()
         }
 
         let columns = workspace.columns.view
         func bar(_ name: String) async throws {
-            try await settle()
+            try await settlePixelLayout()
             try write("status-\(name)-\(suffix)", columns, NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48))
             try await capture("status-\(name)")
         }
@@ -100,7 +94,7 @@ struct ChromePixelTests {
         let sidebar = workspace.splitViewItems[0].viewController.view
         let filterBar = try #require(workspace.splitViewItems[0].bottomAlignedAccessoryViewControllers.first?.view)
         func navigator(_ name: String) async throws {
-            try await settle()
+            try await settlePixelLayout()
             try write("navigator-\(name)-\(suffix)", sidebar, sidebar.bounds)
             try write("filterbar-\(name)-\(suffix)", filterBar, filterBar.bounds)
             try await capture("navigator-\(name)")
@@ -109,7 +103,7 @@ struct ChromePixelTests {
         project.navigator.fileSelection = nil
         try await navigator("files")
         project.navigator.fileSelection = "refs.bib"
-        try await settle()
+        try await settlePixelLayout()
         if let list = sidebar.descendants(of: NSOutlineView.self).first(where: { !$0.isHiddenOrHasHiddenAncestor && $0.alphaValue > 0 }) {
             window.makeFirstResponder(list)
         }
@@ -130,7 +124,7 @@ struct ChromePixelTests {
         }
 
         project.panel.shown = true
-        try await settle()
+        try await settlePixelLayout()
         let area = columns.superview?.superview ?? columns
         try write("logs-bar-\(suffix)", area, NSRect(x: columns.convert(columns.bounds, to: area).minX, y: area.isFlipped ? area.bounds.maxY - 48 : 0,
                                                     width: columns.bounds.width, height: 48))
@@ -178,18 +172,7 @@ struct ChromePixelTests {
 
     private func write(_ name: String, _ view: NSView, _ rect: NSRect) throws {
         view.displayIfNeeded()
-        for scale in [2, 4] {
-            let rep = try #require(bitmap(rect.size, scale: scale))
-            view.cacheDisplay(in: rect, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
-        }
-    }
-
-    private func settle() async throws {
-        for _ in 0..<8 {
-            try await Task.sleep(for: .milliseconds(40))
-            await Task.yield()
-        }
+        try writeScaledPixels(name, of: view, in: rect, to: folder)
     }
 }
 
