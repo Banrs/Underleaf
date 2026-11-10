@@ -39,15 +39,18 @@ fn texlive_bins() -> impl Iterator<Item = PathBuf> {
 
 pub(crate) fn tool_paths(app: &AppSettings, helpers: Option<&PathBuf>) -> (String, String) {
     let user = std::env::var_os("PATH").unwrap_or_default();
-    let tex: Vec<PathBuf> = (app.tex_dir.iter().cloned())
-        .chain(absolute_dirs(&user))
-        .chain(TEX_DIRS.map(PathBuf::from))
-        .chain(tinytex::root().map(|root| tinytex::bin(&root)))
-        .chain(texlive_bins())
-        .collect();
+    let tex = join_path(
+        app.tex_dir
+            .iter()
+            .cloned()
+            .chain(absolute_dirs(&user))
+            .chain(TEX_DIRS.map(PathBuf::from))
+            .chain(tinytex::root().map(|root| tinytex::bin(&root)))
+            .chain(texlive_bins()),
+    );
     // Only a TeXpresso built with the app's patch works; one on PATH or from Homebrew is upstream's viewer.
     let texpresso = join_path(app.texpresso_dir.iter().chain(helpers).cloned());
-    (join_path(tex), texpresso)
+    (tex, texpresso)
 }
 
 pub(crate) fn join_path(dirs: impl IntoIterator<Item = PathBuf>) -> String {

@@ -141,10 +141,9 @@ struct State {
     link: Option<Link>,
     output: Output,
     log: Output,
-    live: bool,
     protocol_seen: bool,
     stderr: Output,
-    error: Option<Message>,
+    failed: bool,
 }
 
 struct Session {
@@ -182,7 +181,7 @@ impl Session {
             let mut state = lock(&self.state);
             let link = state.link.take();
             if link.is_some() {
-                state.error.clone_from(&error);
+                state.failed = error.is_some();
             }
             link
         };
@@ -228,7 +227,7 @@ impl LiveRun for Session {
     fn log(&self) -> String {
         let state = lock(&self.state);
         let mut log = state.log.text();
-        if !state.protocol_seen || state.error.is_some() {
+        if !state.protocol_seen || state.failed {
             log.push_str(tail(&state.stderr.text(), 16 * 1024));
         }
         let texts = [tail(&log, MAX_OUTPUT), &state.output.text()];
@@ -416,16 +415,16 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
         };
         let count = chunk.len();
         if protocol {
-            let mut rest = chunk;
-            while let Some(end) = rest.iter().position(|&byte| byte == b'\n') {
-                keep(&mut pending, &rest[..end]);
-                if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
-                    apply_message(&session, message);
+            for part in chunk.split_inclusive(|&byte| byte == b'\n') {
+                let line = part.strip_suffix(b"\n");
+                keep(&mut pending, line.unwrap_or(part));
+                if line.is_some() {
+                    if let Ok(message) = serde_json::from_slice::<Value>(&pending) {
+                        apply_message(&session, message);
+                    }
+                    pending.clear();
                 }
-                pending.clear();
-                rest = &rest[end + 1..];
             }
-            keep(&mut pending, rest);
         } else {
             let mut state = lock(&session.state);
             let end = state.stderr.end();
@@ -440,15 +439,15 @@ async fn read_output(reader: impl AsyncRead + Unpin, session: Arc<Session>, prot
 fn apply_message(session: &Session, mut message: Value) {
     let verb = message[0].as_str().unwrap_or_default();
     let number = |index: usize| message[index].as_u64().and_then(|n| u32::try_from(n).ok());
-    let live = {
+    let protocol_seen = {
         let mut state = lock(&session.state);
-        if !state.live && verb == "live" && message[1] == LIVE_VERSION {
-            (state.live, state.protocol_seen) = (true, true);
+        if !state.protocol_seen && verb == "live" && message[1] == LIVE_VERSION {
+            state.protocol_seen = true;
             return;
         }
-        state.live
+        state.protocol_seen
     };
-    if !live {
+    if !protocol_seen {
         return session.end(Some(messages::live_unpatched()));
     }
     let event = match verb {
@@ -480,7 +479,6 @@ fn apply_message(session: &Session, mut message: Value) {
                 ("append", Some(offset), Some(text)) => output.append(offset, text.as_bytes()),
                 _ => return,
             }
-            state.protocol_seen = true;
             LiveEvent::Log
         }
         _ => return,
@@ -506,7 +504,7 @@ fn document(session: &Session, message: Value) -> Option<LiveEvent> {
     Some(LiveEvent::Document {
         path: session
             .pdf
-            .with_extension(format!("pdf.{serial}.pdf"))
+            .with_added_extension(format!("{serial}.pdf"))
             .to_string_lossy()
             .into_owned(),
         revision,

@@ -28,9 +28,10 @@ fn home_trash() -> io::Result<PathBuf> {
 }
 
 fn record(trash: &Path, name: &OsStr) -> PathBuf {
-    let mut record = name.to_owned();
-    record.push(".trashinfo");
-    trash.join("info").join(record)
+    trash
+        .join("info")
+        .join(name)
+        .with_added_extension("trashinfo")
 }
 
 fn trash_in(trash: &Path, path: &Path) -> io::Result<PathBuf> {

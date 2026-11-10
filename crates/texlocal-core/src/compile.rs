@@ -60,7 +60,7 @@ enum End {
     Exited(i32),
     TimedOut,
     Stopped,
-    Unstarted(String),
+    Unstarted,
 }
 
 struct CompileRun {
@@ -183,7 +183,7 @@ pub async fn wait(
 ) -> Result<CompileResult, CoreError> {
     let Started { run, spawned } = started;
     let (end, output) = match spawned {
-        Err(err) => (End::Unstarted(err.to_string()), err.to_string()),
+        Err(err) => (End::Unstarted, err.to_string()),
         Ok((mut child, tree)) => {
             let (code, output, timed_out) =
                 drive(&mut child, &tree, auto.then_some(COMPILE_TIMEOUT)).await;
@@ -230,8 +230,8 @@ fn finish(run: &CompileRun, end: &End, ok: bool, output: String) -> CompileResul
         End::TimedOut => errors.push(LogItem::error(messages::timed_out(
             COMPILE_TIMEOUT.as_secs() / 60,
         ))),
-        End::Unstarted(err) => {
-            errors = vec![LogItem::error(messages::latexmk_unstarted(err))];
+        End::Unstarted => {
+            errors = vec![LogItem::error(messages::latexmk_unstarted(&output))];
         }
         &End::Exited(code) if !ok && errors.is_empty() => {
             errors = latexmk_errors(&output);
