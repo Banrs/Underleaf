@@ -149,7 +149,7 @@ final class WorkspaceViews: ProjectViews {
         }
     }
 
-    func perform(_ action: PDFAction, find: () -> Void) {
+    func perform(_ action: PDFAction) {
         guard hasPDF else { return }
         switch action {
         case .zoomIn: pdf.zoom(in: true)
@@ -158,7 +158,7 @@ final class WorkspaceViews: ProjectViews {
         case .fitWidth: pdf.fitWidth()
         case .fitPage: pdf.fitPage()
         case .goToPage(let page): pdf.go(toPage: page)
-        case .find: find()
+        case .find: pdf.view.find.perform(.showFindInterface)
         case let .reveal(loc, source): pdf.reveal(loc, from: source)
         case .inverseFromView:
             guard case let (page, point)? = pdf.sourcePoint() else { return }

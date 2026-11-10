@@ -277,7 +277,7 @@ final class WorkspaceController: ThinSplitViewController {
         fitColumns()
         setCollapsed(pdfItem, false) { [weak self] in
             guard let self else { return }
-            views.perform(action) { pdf.view.find.perform(.showFindInterface) }
+            views.perform(action)
         }
     }
 }
