@@ -19,9 +19,10 @@ dirs=($L/*/.texlocal-history/snapshots(/N) $S/.opened/*/history/snapshots(/N) $L
 (( $#dirs )) || exit 0
 for rec in ${(f)"$(grep -rlsE '"reason":"Before ' $dirs)"}; do
   if [[ $1 == --fix ]]; then
-    sed -i '' 's/"reason":"Before Replace All"/"reason":"replaceAll"/;s/"reason":"Before Rename"/"reason":"rename"/;s/"reason":"Before Adding a Package"/"reason":"addPackage"/;s/"reason":"Before Restore"/"reason":"restore"/' $rec || continue
+    sed -i '' 's/"reason":"Before Replace All"/"reason":"replaceAll"/;s/"reason":"Before Rename"/"reason":"rename"/;s/"reason":"Before Adding a Package"/"reason":"addPackage"/;s/"reason":"Before Restore"/"reason":"restore"/' $rec || { failed=1; continue }
     echo "$rec: reason rewritten"
   else
     echo "$rec: old snapshot reason, hidden from History until rewritten with --fix"
   fi
 done
+exit ${failed:-0}
