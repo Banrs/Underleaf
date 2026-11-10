@@ -1,17 +1,24 @@
-use std::ffi::{CString, OsString};
-use std::fs::{File, Metadata, Permissions};
+//! What the core asks of the operating system. What every Unix answers alike is here; what each answers its own
+//! way is in a module per system, which a port adds beside these.
+
+use std::ffi::OsString;
+use std::fs::{Metadata, Permissions};
 use std::io;
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use objc2_foundation::{NSFileManager, NSURL};
 use tokio::process::{Child, Command};
 
-use crate::atomic::Flush;
-use crate::error::CoreError;
-use crate::messages;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "linux")]
+pub(crate) use linux::{copy_xattrs, flush, put_back, rename_exclusive, trash};
+#[cfg(target_os = "macos")]
+pub(crate) use macos::{copy_xattrs, flush, put_back, rename_exclusive, trash};
 
 pub(crate) struct Group(u32);
 
@@ -91,55 +98,10 @@ pub(crate) fn default_signals(command: &mut Command) {
     }
 }
 
-pub(crate) fn trash(path: &Path) -> Result<PathBuf, CoreError> {
-    let failed = |said: String| CoreError::internal(messages::trash_failed(said));
-    let unnamed = || failed(path.display().to_string());
-    let url = NSURL::from_file_path(path).ok_or_else(unnamed)?;
-    let mut trashed = None;
-    NSFileManager::defaultManager()
-        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
-        .map_err(|err| failed(err.localizedDescription().to_string()))?;
-    trashed
-        .and_then(|url| url.to_file_path())
-        .ok_or_else(unnamed)
-}
-
-pub(crate) fn flush(file: &File, flush: Flush) -> io::Result<()> {
-    match flush {
-        Flush::Full => file.sync_all(),
-        Flush::Ordered => match unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } {
-            -1 => Err(io::Error::last_os_error()),
-            _ => Ok(()),
-        },
-    }
-}
-
-pub(crate) fn copy_xattrs(from: &Path, to: &File) {
-    if let Ok(from) = File::open(from) {
-        unsafe {
-            libc::fcopyfile(
-                from.as_raw_fd(),
-                to.as_raw_fd(),
-                std::ptr::null_mut(),
-                libc::COPYFILE_XATTR,
-            );
-        }
-    }
-}
-
-pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
-    let from = CString::new(from.as_os_str().as_encoded_bytes())?;
-    let to = CString::new(to.as_os_str().as_encoded_bytes())?;
-    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::os::unix::process::ExitStatusExt;
+    use std::path::Path;
 
     use super::*;
     use crate::process;

@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::bib::{entries, field, fields, surnames};
+use crate::percent_encoded;
 
 #[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct CitationSource {
@@ -46,21 +47,12 @@ pub fn citation_source(text: &str) -> Option<CitationSource> {
             break;
         }
     }
-    let encoded: String = doi.bytes().map(path_byte).collect();
+    let encoded = percent_encoded(doi.as_bytes());
     Some(CitationSource {
         id: doi.to_owned(),
         url: format!("https://doi.org/{encoded}"),
         accept: "application/x-bibtex; charset=utf-8".into(),
     })
-}
-
-fn path_byte(byte: u8) -> String {
-    match byte {
-        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-            char::from(byte).to_string()
-        }
-        _ => format!("%{byte:02X}"),
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

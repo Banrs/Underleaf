@@ -35,6 +35,17 @@ pub fn segments(rel: &str) -> Option<Vec<&str>> {
     Some(segments)
 }
 
+/// A path as a URL writes it: every byte but a slash and the unreserved characters as `%` and two hex digits.
+pub fn percent_encoded(path: &[u8]) -> String {
+    let encoded = path.iter().map(|&byte| match byte {
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+            char::from(byte).to_string()
+        }
+        _ => format!("%{byte:02X}"),
+    });
+    encoded.collect()
+}
+
 pub fn fold_case(path: &str) -> String {
     path.to_uppercase().to_lowercase()
 }

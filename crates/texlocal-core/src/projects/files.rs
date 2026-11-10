@@ -173,7 +173,7 @@ pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreE
 
 pub(crate) fn untrash(trashed: &Path, to: &Path) -> Result<(), CoreError> {
     fs::create_dir_all(to.parent().unwrap_or(to))?;
-    sys::rename_exclusive(trashed, to).map_err(|err| match err.kind() {
+    sys::put_back(trashed, to).map_err(|err| match err.kind() {
         ErrorKind::AlreadyExists => {
             let name = to.file_name().unwrap_or_default().to_string_lossy();
             CoreError::conflict(messages::exists_already(name))
