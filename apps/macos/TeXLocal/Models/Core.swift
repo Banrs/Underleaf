@@ -34,6 +34,8 @@ nonisolated extension LogLevel {
 }
 
 nonisolated struct AppFailure: LocalizedError {
+    static let wentWrong = AppFailure(String(localized: "Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again."))
+
     let errorDescription: String?
 
     init(_ text: String) { errorDescription = text }
@@ -135,7 +137,7 @@ final class Core {
 
     private nonisolated static func fault(_ command: String, _ problem: String) -> AppFailure {
         log.error("\(command, privacy: .public): \(problem, privacy: .public)")
-        return AppFailure("Something went wrong inside TeXLocal. Try again, or quit TeXLocal and open it again.")
+        return .wentWrong
     }
 
     @discardableResult
