@@ -18,6 +18,7 @@ struct TeXLocalApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) static weak var shared: AppDelegate?
     let app = AppModel(core: .shared)
+    private var menuTracking: NotificationCenter.ObservationToken?
 
     override init() {
         super.init()
@@ -28,6 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // ToolbarCommands wraps its items in a section, leaving extra separators in View.
+        menuTracking = NotificationCenter.default.addObserver(of: NSMenu.self, for: .didBeginTracking) { message in
+            guard message.menu === NSApp.mainMenu else { return }
+            let toggleToolbar = #selector(NSWindow.toggleToolbarShown(_:))
+            message.menu.items.lazy.compactMap(\.submenu)
+                .first { $0.items.contains { $0.action == toggleToolbar } }?.hideExtraSeparators()
+        }
         NSApp.registerServicesMenuSendTypes([], returnTypes: SourceTextView.imported)
         guard app.core.isOpen else {
             for window in app.windows { window.controller?.close() }

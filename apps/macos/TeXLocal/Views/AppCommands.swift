@@ -88,7 +88,6 @@ struct AppCommands: Commands {
                 SymbolItems(project: project)
                 items(.symbolLibrary)
             }
-            Divider()
             InsertMenuItems(project: project)
             items(.insertCitation)
         }
