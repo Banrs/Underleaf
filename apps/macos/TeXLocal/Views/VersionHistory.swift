@@ -21,14 +21,17 @@ struct VersionHistorySheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var app
     @State private var snapshots: [Snapshot]?
-    @State private var chosen: Snapshot.ID?
-    @State private var file: String?
-    @State private var shown: Shown?
-    @State private var restorable = false
+    @State private var selected = Selection()
+    @State private var compared: (selection: Selection, result: Shown)?
     @State private var restoring = false
     @State private var confirmingRestoreAll: Snapshot?
     @State private var listFailure: String?
     @State private var restoreFailure: String?
+
+    private struct Selection: Equatable {
+        var version: Snapshot.ID?
+        var file: String?
+    }
 
     private enum Shown { case diff([DiffLine]), same, failed(String) }
 
@@ -40,7 +43,13 @@ struct VersionHistorySheet: View {
         return formatter
     }()
 
-    private var snapshot: Snapshot? { snapshots?.first { $0.id == chosen } }
+    private var snapshot: Snapshot? { snapshots?.first { $0.id == selected.version } }
+    private var file: String? { selected.file }
+    private var shown: Shown? { compared?.selection == selected ? compared?.result : nil }
+    private var restorable: Bool {
+        guard case .diff = shown else { return false }
+        return snapshot?.changed.contains { $0.path == file && $0.change != .deleted } == true
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,8 +77,7 @@ struct VersionHistorySheet: View {
         }
         .frame(minWidth: 760, idealWidth: 920, minHeight: 440, idealHeight: 600)
         .task { await list() }
-        .onChange(of: chosen) { file = snapshot?.changed.first?.path }
-        .task(id: [chosen, file]) { await compare() }
+        .task(id: selected) { [selected] in await compare(selected) }
         .alert("Restore All Files to “\(confirmingRestoreAll?.title ?? "")”?", item: $confirmingRestoreAll) { snapshot in
             Button("Restore All") { restore(snapshot, paths: nil) }
             Button("Cancel", role: .cancel) {}
@@ -80,7 +88,7 @@ struct VersionHistorySheet: View {
     }
 
     private var snapshotList: some View {
-        List(snapshots ?? [], selection: $chosen) { snapshot in
+        List(snapshots ?? [], selection: Binding(get: { selected.version }, set: selectVersion)) { snapshot in
             VStack(alignment: .leading, spacing: 2) {
                 Text(snapshot.title).fontWeight(snapshot.name == nil ? .regular : .bold)
                 Text(snapshot.date, formatter: Self.listDates)
@@ -102,7 +110,7 @@ struct VersionHistorySheet: View {
     }
 
     private var fileList: some View {
-        List(snapshot?.changed ?? [], id: \.path, selection: $file) { change in
+        List(snapshot?.changed ?? [], id: \.path, selection: $selected.file) { change in
             HStack {
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
@@ -154,25 +162,31 @@ struct VersionHistorySheet: View {
         do {
             let listed = try await project.session.call(ListVersions())
             snapshots = listed
-            chosen = listed.first?.id
+            selectVersion(listed.first?.id)
         } catch {
             listFailure = error.localizedDescription
         }
     }
 
-    private func compare() async {
-        (shown, restorable) = (nil, false)
-        guard let chosen, let file else { return }
-        let rows: [DiffLine]
+    private func selectVersion(_ version: Snapshot.ID?) {
+        guard version != selected.version else { return }
+        let file = snapshots?.first { $0.id == version }?.changed.first?.path
+        selected = Selection(version: version, file: file)
+    }
+
+    private func compare(_ selection: Selection) async {
+        guard !Task.isCancelled, selection == selected else { return }
+        compared = nil
+        guard let version = selection.version, let file = selection.file else { return }
+        let result: Shown
         do {
-            rows = try await project.session.call(CompareVersion(id: chosen, path: file))
+            let rows = try await project.session.call(CompareVersion(id: version, path: file))
+            result = rows.isEmpty ? .same : .diff(rows)
         } catch {
-            if !Task.isCancelled { shown = .failed(error.localizedDescription) }
-            return
+            result = .failed(error.localizedDescription)
         }
-        guard !Task.isCancelled else { return }
-        restorable = !rows.isEmpty && snapshot?.changed.first(where: { $0.path == file })?.change != .deleted
-        shown = rows.isEmpty ? .same : .diff(rows)
+        guard !Task.isCancelled, selection == selected else { return }
+        compared = (selection, result)
     }
 
     private func restore(_ snapshot: Snapshot, paths: [String]?) {
