@@ -78,7 +78,7 @@ final class IssueOverlay {
         let room = (band.maxX - (left + first.typographicBounds.maxX) - gap).rounded(.down)
         if let fit = fits(number, reported, live: live, issues: said.count).first(where: { $0.width <= room }) {
             let width = fit.box.truncates ? room : fit.width
-            let foot = view.onPixels(top + first.typographicBounds.maxY + view.rowShift)
+            let foot = view.onPixels(top + first.typographicBounds.maxY)
             let rect = CGRect(x: band.maxX - width, y: band.minY, width: width, height: foot - band.minY)
             let message = former ?? IssueMessageView(fit.box)
             if message.rootView != fit.box { message.rootView = fit.box }

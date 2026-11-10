@@ -85,13 +85,13 @@ extension SourceTextView: NSTextContentStorageDelegate {
             guard hiddenRange != nil || offered[line] != nil, let first = fragment.textLineFragments.first else { continue }
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
             let image = hiddenRange == nil ? down : right
-            let y = frame.minY + first.typographicBounds.midY + rowShift - image.size.height / 2
+            let y = frame.minY + first.typographicBounds.midY - image.size.height / 2
             let arrow = CGRect(origin: CGPoint(x: middle - image.size.width / 2, y: y), size: image.size)
             image.draw(in: centerScanRect(arrow), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             guard let hiddenRange, let last = fragment.textLineFragments.last(where: { $0.characterRange.length > 0 })
                     ?? fragment.textLineFragments.first else { continue }
             let origin = CGPoint(x: frame.minX + last.typographicBounds.maxX + linePadding,
-                                 y: frame.minY + last.typographicBounds.midY + rowShift - badgeSize.height / 2)
+                                 y: frame.minY + last.typographicBounds.midY - badgeSize.height / 2)
             let mark = centerScanRect(CGRect(origin: origin, size: badgeSize))
             foldMarks.append((mark, hiddenRange))
             if mark.intersects(rect) { badge.draw(withFrame: mark, in: self) }
@@ -121,11 +121,15 @@ extension SourceTextView: NSTextContentStorageDelegate {
             setFolds(folds.ranges.filter { $0 != mark.range })
             return true
         }
-        guard point.x >= gutter.numbersEnd, point.x < sourceTextStart else { return false }
-        let line = document.line(at: characterIndexForInsertion(at: NSPoint(x: textContainerOrigin.x, y: point.y)))
-        guard foldedLines[line] != nil || foldable[line] != nil else { return false }
+        guard let line = foldLine(at: point) else { return false }
         toggleFold(line: line)
         return true
+    }
+
+    func foldLine(at point: NSPoint) -> Int? {
+        guard point.x >= gutter.numbersEnd, point.x < sourceTextStart else { return nil }
+        let line = document.line(at: characterIndexForInsertion(at: NSPoint(x: textContainerOrigin.x, y: point.y)))
+        return foldable[line] != nil || foldedLines[line] != nil ? line : nil
     }
 
     func gutterHover(_ hovering: Bool) {

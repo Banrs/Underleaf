@@ -291,8 +291,20 @@ struct EditorTests {
         #expect(text.foldClick(at: chevron) && text.folds.isEmpty)
     }
 
+    @Test func theCurrentLineAlignsWithTheTextKitRow() throws {
+        let (editor, window) = Self.editor("first\ncurrent\nlast")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(9)
+        window.displayIfNeeded()
+        let caret = text.firstRect(forCharacterRange: text.selection, actualRange: nil)
+        let row = text.convert(window.convertFromScreen(caret), from: nil)
+        let band = try #require(text.currentLine?.rect)
+        #expect(band.minY == text.onPixels(row.minY) && band.maxY == text.onPixels(row.maxY))
+    }
+
     @Test(arguments: [true, false])
-    func clickingThePaddingOnAPlainLinePlacesTheCaret(showLineNumbers: Bool) throws {
+    func gutterClicksKeepTheSelectionAndPaddingClicksPlaceTheCaret(showLineNumbers: Bool) throws {
         let (editor, window) = Self.editor("Plain text")
         defer { window.close() }
         let text = editor.textView
@@ -301,14 +313,25 @@ struct EditorTests {
         text.selection = .caret(5)
         let line = try #require(text.fragments.first?.fragment)
         let origin = text.textContainerOrigin
-        let point = text.convert(NSPoint(x: origin.x + text.linePadding / 2, y: origin.y + line.layoutFragmentFrame.midY), to: nil)
-        func mouse(_ type: NSEvent.EventType, pressure: Float) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: pressure))
+        func click(at x: CGFloat) throws {
+            let point = text.convert(NSPoint(x: x, y: origin.y + line.layoutFragmentFrame.midY), to: nil)
+            func mouse(_ type: NSEvent.EventType, pressure: Float) throws -> NSEvent {
+                try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: pressure))
+            }
+            let down = try mouse(.leftMouseDown, pressure: 1), up = try mouse(.leftMouseUp, pressure: 0)
+            window.postEvent(up, atStart: true)
+            text.mouseDown(with: down)
+            if window.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .eventTracking, dequeue: false) === up {
+                _ = window.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .eventTracking, dequeue: true)
+            }
         }
-        let down = try mouse(.leftMouseDown, pressure: 1)
-        NSApp.postEvent(try mouse(.leftMouseUp, pressure: 0), atStart: true)
-        text.mouseDown(with: down)
+        try click(at: text.gutter.numbersEnd / 2)
+        #expect(text.selection == .caret(5))
+        try click(at: (text.gutter.numbersEnd + origin.x) / 2)
+        #expect(text.selection == .caret(0))
+        text.selection = .caret(5)
+        try click(at: origin.x + text.linePadding / 2)
         #expect(text.selection == .caret(0))
     }
 

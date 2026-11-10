@@ -43,8 +43,8 @@ extension SourceTextView {
 
     func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> CGRect {
         let frame = fragment.layoutFragmentFrame
-        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
-        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
+        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0))
+        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height))
         // Xcode 27.2's line highlight is inset 14 pt and 8 pt on a 2× display.
         let leading: CGFloat = 14, trailing: CGFloat = 8
         return CGRect(x: leading, y: top, width: max(0, bounds.width - leading - trailing), height: bottom - top)

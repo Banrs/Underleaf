@@ -102,7 +102,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     var fontSize = NSFont.systemFontSize { didSet { if fontSize != oldValue { applyFont() } } }
     var fontName = "" { didSet { if fontName != oldValue { applyFont() } } }
-    private(set) var rowShift: CGFloat = 0
     private var applied: NSFont?
 
     private func applyFont() {
@@ -124,7 +123,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let natural = font.ascender.rounded(.up) - font.descender.rounded(.down) + font.leading
         let style = NSMutableParagraphStyle()
         style.minimumLineHeight = (natural * 1.1).rounded()
-        rowShift = (style.minimumLineHeight - natural) / 2
         defaultParagraphStyle = style
         textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
@@ -457,17 +455,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     private func setsCursor(with event: NSEvent) -> Bool {
-        let overGutter = inGutter(event, before: sourceTextStart)
+        let point = convert(event.locationInWindow, from: nil)
+        let overGutter = inGutter(point, before: sourceTextStart)
         gutterHover(overGutter)
         if updateDividerCursor(with: event) { return true }
-        guard overGutter || issue(at: event) != nil else { return false }
+        let overControl = overGutter && (point.x < gutter.numbersEnd || foldLine(at: point) != nil)
+        guard overControl || issue(at: event) != nil else { return false }
         NSCursor.arrow.set()
         return true
     }
 
-    private func inGutter(_ event: NSEvent, before edge: CGFloat) -> Bool {
-        let point = convert(event.locationInWindow, from: nil)
-        return visibleRect.contains(point) && point.x < edge
+    private func inGutter(_ point: NSPoint, before edge: CGFloat) -> Bool {
+        visibleRect.contains(point) && point.x < edge
     }
 
     private func issue(at event: NSEvent) -> IssueOverlay.Row? { issues.message(at: convert(event.locationInWindow, from: nil)) }
@@ -488,8 +487,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     override func mouseDown(with event: NSEvent) {
-        if event.type == .leftMouseDown, foldClick(at: convert(event.locationInWindow, from: nil)) { return }
-        if event.type == .leftMouseDown, inGutter(event, before: textContainerOrigin.x) { return selectLines(with: event) }
+        if event.type == .leftMouseDown {
+            let point = convert(event.locationInWindow, from: nil)
+            if foldClick(at: point) || inGutter(point, before: gutter.numbersEnd) { return }
+        }
         let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
         if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {
             if row.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true { issues.clicked(row.line) }
@@ -517,28 +518,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             }
         }
         return nil
-    }
-
-    private func selectLines(with event: NSEvent) {
-        func line(at event: NSEvent) -> NSRange {
-            let point = NSPoint(x: textContainerOrigin.x, y: convert(event.locationInWindow, from: nil).y)
-            return source.lineRange(for: .caret(characterIndexForInsertion(at: point)))
-        }
-        let first = line(at: event)
-        let anchor = event.modifierFlags.contains(.shift) ? selectedRange() : first
-        window?.makeFirstResponder(self)
-        // Periodic events keep it scrolling while the pointer holds still past an edge, as a drag in the text does.
-        NSEvent.startPeriodicEvents(afterDelay: 0.1, withPeriod: 0.05)
-        defer { NSEvent.stopPeriodicEvents() }
-        var current = event
-        repeat {
-            setSelectedRange(NSUnionRange(anchor, line(at: current)))
-            autoscroll(with: current)
-            guard let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .periodic]) else { break }
-            if next.type != .periodic { current = next }
-        } while current.type != .leftMouseUp
-        let number = document.line(at: first.location)
-        if selectedRange() == first, issues.issue(on: number) != nil { issues.clicked(number) }
     }
 
     private func files(_ board: NSPasteboard) -> [URL] {
