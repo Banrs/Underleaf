@@ -135,7 +135,6 @@ final class Breadcrumb: NSView {
         ]
     }
 
-    /// The item under a point in the window.
     private func item(at point: NSPoint) -> Int? { frames.firstIndex { $0.contains(convert(point, from: nil)) } }
 
     override func mouseEntered(with event: NSEvent) { hovered = item(at: event.locationInWindow) }

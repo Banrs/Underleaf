@@ -14,7 +14,6 @@ final class ProjectSearch {
     }
     var replacement = ""
     var replacing = false
-    /// Replace's field and buttons show unless the header shows usages, which it only finds.
     var showsReplace: Bool { replacing && usages == nil }
     var isSearching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
     private(set) var groups: [SearchGroup]?
