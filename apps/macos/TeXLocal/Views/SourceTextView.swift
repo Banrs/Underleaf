@@ -457,16 +457,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     private func setsCursor(with event: NSEvent) -> Bool {
-        gutterHover(inGutter(event))
+        let overGutter = inGutter(event)
+        gutterHover(overGutter)
         if updateDividerCursor(with: event) { return true }
-        guard inGutter(event) || issue(at: event) != nil else { return false }
+        guard overGutter || issue(at: event) != nil else { return false }
         NSCursor.arrow.set()
         return true
     }
 
     private func inGutter(_ event: NSEvent) -> Bool {
         let point = convert(event.locationInWindow, from: nil)
-        return visibleRect.contains(point) && point.x < textContainerOrigin.x
+        return visibleRect.contains(point) && point.x < sourceTextStart
     }
 
     private func issue(at event: NSEvent) -> IssueOverlay.Row? { issues.message(at: convert(event.locationInWindow, from: nil)) }

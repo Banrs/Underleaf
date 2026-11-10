@@ -69,49 +69,47 @@ extension SourceTextView: NSTextContentStorageDelegate {
         needsDisplay = true
     }
 
-    private var chevronX: CGFloat { (gutter.numbersEnd + textContainerOrigin.x + linePadding) / 2 }
-
-    func inChevrons(_ point: NSPoint) -> Bool { point.x >= gutter.numbersEnd && point.x < textContainerOrigin.x }
-
     func drawFolds(in rect: CGRect) {
         foldMarks.removeAll(keepingCapacity: true)
         guard !folds.isEmpty || gutterHovered else { return }
         let foldedLines = foldedLines, offered = gutterHovered ? foldable : [:]
+        let middle = (gutter.numbersEnd + sourceTextStart) / 2
+        let down = Self.symbol("chevron.down", size: gutter.font.capHeight, scale: .small)
+        let right = Self.symbol("chevron.right", size: gutter.font.capHeight, scale: .small)
+        let badge = Self.foldBadge
+        badge.image = Self.symbol("ellipsis", size: fontSize, scale: .large)
+        let badgeSize = badge.cellSize
         for (offset, fragment) in fragments {
             let line = document.line(at: offset)
             let hiddenRange = foldedLines[line]
             guard hiddenRange != nil || offered[line] != nil, let first = fragment.textLineFragments.first else { continue }
             let frame = fragment.layoutFragmentFrame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-            let height = first.typographicBounds.height
-            let chevron = Self.symbol(hiddenRange != nil ? "chevron.right" : "chevron.down", size: max(8, fontSize * 0.62))
-            let y = frame.minY + first.typographicBounds.minY + rowShift + (height - 2 * rowShift - chevron.size.height) / 2
-            draw(chevron, at: CGPoint(x: (chevronX - chevron.size.width / 2).rounded(), y: onPixels(y)))
+            let image = hiddenRange == nil ? down : right
+            let y = frame.minY + first.typographicBounds.midY + rowShift - image.size.height / 2
+            let arrow = CGRect(origin: CGPoint(x: middle - image.size.width / 2, y: y), size: image.size)
+            image.draw(in: centerScanRect(arrow), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             guard let hiddenRange, let last = fragment.textLineFragments.last(where: { $0.characterRange.length > 0 })
                     ?? fragment.textLineFragments.first else { continue }
-            let lineTop = frame.minY + last.typographicBounds.minY + rowShift
-            let lineHeight = last.typographicBounds.height - 2 * rowShift
-            let mark = CGRect(x: frame.minX + last.typographicBounds.maxX + 6, y: lineTop + 2,
-                              width: (fontSize * 1.9).rounded(), height: max(lineHeight - 4, 8))
+            let origin = CGPoint(x: frame.minX + last.typographicBounds.maxX + linePadding,
+                                 y: frame.minY + last.typographicBounds.midY + rowShift - badgeSize.height / 2)
+            let mark = centerScanRect(CGRect(origin: origin, size: badgeSize))
             foldMarks.append((mark, hiddenRange))
-            guard mark.intersects(rect) else { continue }
-            NSColor.quaternarySystemFill.setFill()
-            NSBezierPath(roundedRect: mark, xRadius: mark.height / 2, yRadius: mark.height / 2).fill()
-            let dots = Self.symbol("ellipsis", size: max(8, fontSize * 0.7))
-            draw(dots, at: CGPoint(x: mark.midX - dots.size.width / 2, y: mark.midY - dots.size.height / 2))
+            if mark.intersects(rect) { badge.draw(withFrame: mark, in: self) }
         }
     }
 
-    private func draw(_ image: NSImage, at origin: CGPoint) {
-        image.draw(in: CGRect(origin: origin, size: image.size), from: .zero, operation: .sourceOver, fraction: 1,
-                   respectFlipped: true, hints: nil)
-    }
-
+    private static let foldBadge: NSButtonCell = {
+        let badge = NSButtonCell(imageCell: nil)
+        badge.bezelStyle = .badge
+        badge.imagePosition = .imageOnly
+        return badge
+    }()
     private static var symbols: [String: NSImage] = [:]
 
-    private static func symbol(_ name: String, size: CGFloat) -> NSImage {
-        let key = "\(name) \(size)"
+    private static func symbol(_ name: String, size: CGFloat, scale: NSImage.SymbolScale) -> NSImage {
+        let key = "\(name) \(size) \(scale.rawValue)"
         if let made = symbols[key] { return made }
-        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold)
+        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold, scale: scale)
             .applying(.init(hierarchicalColor: .secondaryLabelColor))
         let made = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration) ?? NSImage()
         symbols[key] = made
@@ -123,7 +121,7 @@ extension SourceTextView: NSTextContentStorageDelegate {
             setFolds(folds.ranges.filter { $0 != mark.range })
             return true
         }
-        guard inChevrons(point) else { return false }
+        guard point.x >= gutter.numbersEnd, point.x < sourceTextStart else { return false }
         let line = document.line(at: characterIndexForInsertion(at: NSPoint(x: textContainerOrigin.x, y: point.y)))
         guard foldedLines[line] != nil || foldable[line] != nil else { return false }
         toggleFold(line: line)
@@ -134,6 +132,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         guard hovering != gutterHovered else { return }
         gutterHovered = hovering
         let shown = visibleRect
-        setNeedsDisplay(NSRect(x: gutter.numbersEnd, y: shown.minY, width: textContainerOrigin.x - gutter.numbersEnd, height: shown.height))
+        setNeedsDisplay(NSRect(x: 0, y: shown.minY, width: sourceTextStart, height: shown.height))
     }
 }

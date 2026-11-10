@@ -54,6 +54,8 @@ struct EditorPDFPixelTests {
         text.showsLineNumbers = true
         text.fontSize = 18
         try await write("folded-hover-large-\(suffix)", view)
+        let badge = try #require(text.foldMarks.first?.rect)
+        #expect(text.foldClick(at: CGPoint(x: badge.midX, y: badge.midY)) && text.folds.isEmpty)
     }
 
     private func pdf(dark: Bool, key: Bool, suffix: String) async throws {

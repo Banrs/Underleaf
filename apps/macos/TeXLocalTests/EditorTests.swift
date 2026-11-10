@@ -277,6 +277,20 @@ struct EditorTests {
         #expect(text.folds.isEmpty)
     }
 
+    @Test func theChevronTogglesFoldingInThePaddingBeforeTheSourceText() throws {
+        let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\end{itemize}")
+        defer { window.close() }
+        window.displayIfNeeded()
+        let text = editor.textView
+        let first = try #require(text.fragments.first?.fragment)
+        let origin = text.textContainerOrigin
+        let y = origin.y + first.layoutFragmentFrame.midY
+        let chevron = NSPoint(x: origin.x + text.linePadding / 2, y: y)
+        #expect(!text.foldClick(at: NSPoint(x: text.sourceTextStart, y: y)))
+        #expect(text.foldClick(at: chevron) && !text.folds.isEmpty)
+        #expect(text.foldClick(at: chevron) && text.folds.isEmpty)
+    }
+
     @Test func markedTextIsComposedInTheCoresCopyAndOffersNoCompletionsUntilItIsCommitted() {
         let (editor, window) = Self.editor("")
         defer { window.close() }

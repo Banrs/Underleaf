@@ -9,6 +9,8 @@ extension SourceTextView {
 
     var linePadding: CGFloat { textContainer?.lineFragmentPadding ?? 0 }
 
+    var sourceTextStart: CGFloat { textContainerOrigin.x + linePadding }
+
     override var textContainerOrigin: NSPoint { NSPoint(x: gutter.width, y: textContainerInset.height) }
 
     func onPixels(_ y: CGFloat) -> CGFloat {
@@ -43,7 +45,9 @@ extension SourceTextView {
         let frame = fragment.layoutFragmentFrame
         let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) + rowShift)
         let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + rowShift)
-        return CGRect(x: linePadding, y: top, width: bounds.width - 2 * linePadding, height: bottom - top)
+        // Xcode 27.2's line highlight is inset 14 pt and 8 pt on a 2× display.
+        let leading: CGFloat = 14, trailing: CGFloat = 8
+        return CGRect(x: leading, y: top, width: max(0, bounds.width - leading - trailing), height: bottom - top)
     }
 
     func drawNumbers(in rect: CGRect, current: Int?) {

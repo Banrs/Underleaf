@@ -23,9 +23,11 @@ struct EditorGutter {
 
     mutating func fit(lineCount: Int, numbered: Bool, padding: CGFloat) -> Bool {
         digits = Self.digits(lineCount)
-        let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
-        numbersEnd = padding + (numbered ? padding + CGFloat(digits) * digit : 0)
-        let fitted = (numbersEnd + digit).rounded(.up)
+        let digit = number(0).width
+        let numbers = numbered ? CGFloat(digits) * digit : 0
+        // At 13 pt, Xcode's numbers end at 39.7 pt and its source text starts at 51 pt.
+        numbersEnd = padding + numbers + (numbered ? padding / 2 : 0)
+        let fitted = (padding + numbers + digit).rounded(.up)
         guard fitted != width else { return false }
         width = fitted
         return true
