@@ -100,6 +100,24 @@ project. That choice is stored on your Mac, not in the project, so a project you
 starts with it off. A project's own `latexmkrc` is read only when shell escape is on for it; your
 personal `~/.latexmkrc` is always read.
 
+## How the code is laid out
+
+- `crates/texlocal-latex` knows LaTeX and needs no disk or process: syntax, completion, edits, and reading logs and
+  SyncTeX. It builds for any target, a browser included.
+- `crates/texlocal-core` is projects, sessions, compiling and history, driven by JSON requests and answering with
+  replies and events. What it asks of the operating system is in `src/sys.rs`, with what each system answers its own
+  way in a module beside it (`sys/macos.rs`, `sys/linux.rs`).
+- `crates/texlocal-ffi` is the C ABI an app links, and `crates/texlocal-wire` writes an app's wire types from the
+  core's schemas, in Swift today.
+- `apps/macos` is the Mac app, the only app there is.
+
+Three rules keep another system or a web client a matter of adding to this, not untangling it. A rule about LaTeX or
+about a project goes in a crate, and an app draws and forwards. A system call only one system has goes in `sys`. And across
+the boundary, offsets are UTF-16 code units and paths inside a project are relative, with `/`.
+
+CI builds and tests the crates on Linux as well as on a Mac, and builds texlocal-latex for a browser, so a change
+that breaks either shows at once. A port to another system starts with a module in `sys`.
+
 ## Licence
 
 MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under TeXpresso's own MIT
