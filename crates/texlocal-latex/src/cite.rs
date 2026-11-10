@@ -6,7 +6,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::bib::{entries, field, fields};
+use crate::bib::{entries, field, fields, surnames};
 
 #[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct CitationSource {
@@ -103,14 +103,7 @@ pub fn tidy(source: &str, taken: impl Fn(&str) -> bool) -> Option<Tidied> {
     });
     let parsed = fields(body);
     let field = |name: &str| field(&parsed, name).map(|value| value.trim().to_owned());
-    let surname = field("author").and_then(|authors| {
-        let first = authors.split(" and ").next()?.trim().to_owned();
-        let surname = match first.split_once(',') {
-            Some((last, _)) => last.to_owned(),
-            None => first.rsplit(' ').next()?.to_owned(),
-        };
-        Some(ascii_word(&surname))
-    });
+    let surname = surnames(&parsed).first().map(|surname| ascii_word(surname));
     let year = field("year").or_else(|| field("date")).and_then(|year| {
         year.get(..4)
             .filter(|year| year.bytes().all(|b| b.is_ascii_digit()))
@@ -355,6 +348,8 @@ mod tests {
         assert_eq!(tidied.eprint.as_deref(), Some("1706.03762"));
         let unicode = "@book{k, author={Gödel, Kurt}, title={On Formally Undecidable Propositions}, year={1931}}";
         assert_eq!(tidy(unicode, |_| false).unwrap().key, "godel1931formally");
+        let wrapped = "@book{k, author={Donald Knuth\nand Leslie Lamport}, title={Literate Programming}, year={1984}}";
+        assert_eq!(tidy(wrapped, |_| false).unwrap().key, "knuth1984literate");
         let bare = "@misc{Some_Key:1, howpublished={x}}";
         assert_eq!(tidy(bare, |_| false).unwrap().key, "Some_Key:1");
         assert_eq!(tidy("no entry", |_| false), None);

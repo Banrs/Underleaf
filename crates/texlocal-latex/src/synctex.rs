@@ -341,7 +341,7 @@ impl Reader {
             }
             _ => false,
         };
-        if !handled || matches!(first, b'c' | b'!') {
+        if !handled {
             self.reset_kern();
         }
         true

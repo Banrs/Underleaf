@@ -77,17 +77,20 @@ fn year(fields: &[(String, String)]) -> Option<String> {
     field(fields, "year").or_else(date).and_then(plain_title)
 }
 
-pub(crate) fn detail(fields: &[(String, String)]) -> Option<String> {
-    let field = |name| field(fields, name);
-    let last = |name: &str| {
+pub(crate) fn surnames(fields: &[(String, String)]) -> Vec<String> {
+    authors(fields, |name| {
         let name = name.trim();
         let last = match parted(name, ",").as_slice() {
             [last, _, ..] => *last,
             _ => *parted(name, " ").last().expect("a part at least"),
         };
         plain_title(last)
-    };
-    let authors = match authors(fields, last).as_slice() {
+    })
+}
+
+pub(crate) fn detail(fields: &[(String, String)]) -> Option<String> {
+    let field = |name| field(fields, name);
+    let authors = match surnames(fields).as_slice() {
         [] => None,
         [one] => Some(one.clone()),
         [one, two] => Some(format!("{one} and {two}")),
