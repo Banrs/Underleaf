@@ -90,7 +90,6 @@ requests! {
 
 pub(crate) enum Later {
     Compile(bool),
-    Restart,
     Rescan,
 }
 
@@ -211,10 +210,11 @@ impl Actor {
             ..Shown::default()
         };
         let ui = settings::read_ui(&project.ui);
-        let mut later = VecDeque::new();
+        let mut timers = BTreeMap::from([(Timer::Symbols, Instant::now())]);
         if ui.live_preview && sessions.preview.available(&sessions.service.tool_paths().1) {
-            later.push_back(Later::Restart);
+            timers.insert(Timer::Restart, Instant::now());
         }
+        let mut later = VecDeque::new();
         if auto_compile && pdf.built.is_none() {
             later.push_back(Later::Compile(true));
         }
@@ -230,7 +230,7 @@ impl Actor {
             tx,
             sent: Sent::default(),
             later,
-            timers: BTreeMap::from([(Timer::Symbols, Instant::now())]),
+            timers,
             auto_compile,
             pdf,
             history,
@@ -377,7 +377,7 @@ impl Actor {
                 Timer::Caret => self.live.caret_settled(),
                 Timer::Follow => self.live.follow(cx, docs),
                 Timer::Halting => self.live.halted(cx, docs, true),
-                Timer::Restart => cx.later.push_back(Later::Restart),
+                Timer::Restart => self.live.start(cx, docs),
                 Timer::Disk => self.live.refresh_disk(cx, docs),
                 Timer::Log => self.live.publish_log(cx),
                 Timer::Issues => self.live.issues_settled(cx, docs, &self.tree),
@@ -395,7 +395,6 @@ impl Actor {
                 Later::Compile(auto) => {
                     let _ = self.compile(auto);
                 }
-                Later::Restart => self.live.start(&mut self.core, &self.docs),
                 Later::Rescan => self.live.rescan(),
             }
         }
