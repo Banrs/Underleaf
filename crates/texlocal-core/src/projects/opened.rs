@@ -86,14 +86,16 @@ pub(super) fn list(state_dir: &Path) -> Vec<ProjectInfo> {
     folders(state_dir).into_iter().map(info).collect()
 }
 
-pub(crate) fn find(state_dir: &Path, id: &str) -> Result<Project, CoreError> {
+pub(super) fn recorded(state_dir: &Path, id: &str) -> Option<Project> {
     let store = store(state_dir, id);
-    let Some(Folder { path, .. }) = read(&store) else {
-        return Err(CoreError::not_found(messages::no_such_project(id)));
-    };
-    let project = project(&path, &store);
-    if !path.is_dir() {
-        let moved = messages::folder_moved(project.name(), path.display());
+    read(&store).map(|folder| project(&folder.path, &store))
+}
+
+pub(crate) fn find(state_dir: &Path, id: &str) -> Result<Project, CoreError> {
+    let project = recorded(state_dir, id)
+        .ok_or_else(|| CoreError::not_found(messages::no_such_project(id)))?;
+    if !project.root.is_dir() {
+        let moved = messages::folder_moved(project.name(), project.root.display());
         return Err(CoreError::not_found(moved));
     }
     Ok(project)

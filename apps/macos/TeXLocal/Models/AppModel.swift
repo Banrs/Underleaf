@@ -182,11 +182,15 @@ final class AppModel {
         await reloadProjects()
     }
 
+    func restoreProjects() async {
+        for window in windows { await window.reopen() }
+    }
+
     func reloadProjects() async {
         guard core.isOpen else { return }
         do {
             try await core.call(ReloadProjects())
-            for project in projects where project.missing { await follow(project) }
+            for project in projects where project.missing { _ = await follow(project.id) }
             libraryProblem = nil
         } catch {
             libraryProblem = AppAlert("Couldn’t Load Projects", error)
@@ -220,8 +224,8 @@ final class AppModel {
         return openableTypes.contains { type.conforms(to: $0) }
     }
 
-    func openPath(_ url: URL) async throws -> Opening {
-        let opening = try await core.call(OpenPath(path: url.path(percentEncoded: false)))
+    func openPath(_ url: URL, deferRelist: Bool? = nil) async throws -> Opening {
+        let opening = try await core.call(OpenPath(path: url.path(percentEncoded: false), deferRelist: deferRelist))
         if opening.project.opened {
             bookmarks[opening.project.id] = try? opening.project.folder.bookmarkData()
         }
@@ -233,14 +237,16 @@ final class AppModel {
         set { defaults.set(newValue, forKey: DefaultsKey.folderBookmarks) }
     }
 
-    private func follow(_ project: ProjectInfo) async {
+    func follow(_ id: String, deferRelist: Bool? = nil) async -> ProjectInfo? {
         var stale = false, trashed = FileManager.URLRelationship.other
-        guard let bookmark = bookmarks[project.id],
+        guard let bookmark = bookmarks[id],
               let url = try? URL(resolvingBookmarkData: bookmark, options: [.withoutUI, .withoutMounting], bookmarkDataIsStale: &stale),
               (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-        else { return }
+        else { return nil }
         try? FileManager.default.getRelationship(&trashed, of: .trashDirectory, in: .userDomainMask, toItemAt: url)
-        if trashed != .contains { _ = try? await openPath(url) }
+        guard trashed != .contains else { return nil }
+        let opening = try? await openPath(url, deferRelist: deferRelist)
+        return opening?.project.id == id ? opening?.project : nil
     }
 
     func forget(_ project: ProjectInfo) async throws {

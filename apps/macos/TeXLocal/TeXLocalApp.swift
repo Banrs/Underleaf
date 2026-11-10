@@ -36,8 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if app.windows.isEmpty { app.showHome() }
         Task { [app] in
+            await app.restoreProjects()
             await app.reloadProjects()
-            for window in app.windows { await window.reopen() }
         }
     }
 

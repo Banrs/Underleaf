@@ -13,7 +13,7 @@ use crate::events::{Log, LogLevel, Said, Sent};
 use crate::messages;
 use crate::paths::Project;
 use crate::process::Processes;
-use crate::projects::{self, History, Job, Opening, ProjectInfo};
+use crate::projects::{self, History, Job, Opening, ProjectInfo, RestorationProject};
 use crate::protocol::requests;
 use crate::settings::{AppSettings, Engine};
 use crate::tex::{self, TexStatus};
@@ -69,6 +69,8 @@ requests! {
             installed.map(|()| status)
         },
         ReloadProjects {} -> () = service.publish_projects(),
+        FindRestorationProject { id: String } -> Option<RestorationProject>
+            = projects::restoration_project(service, &id),
         CreateProject { name: String, template: ProjectTemplate, engine: Option<Engine> } -> ProjectInfo
             = service.relisted(projects::create_project(service, &name, template, engine)),
         DuplicateProject { id: String, name: String } -> ProjectInfo
@@ -87,7 +89,10 @@ requests! {
         PutBackProject { id: String, trashed: PathBuf } -> ()
             = service.relisted(projects::put_back_project(service, &id, &trashed)),
         KillAll {} -> () = Ok(service.kill_all()),
-        OpenPath { path: PathBuf } -> Opening = service.relisted(projects::open_path(service, &path)),
+        OpenPath { path: PathBuf, defer_relist: Option<bool> } -> Opening = {
+            let opening = projects::open_path(service, &path);
+            if defer_relist == Some(true) { opening } else { service.relisted(opening) }
+        },
         ForgetFolder { id: String } -> () = service.relisted(projects::forget_folder(service, &id)),
     }
 }

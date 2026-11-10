@@ -61,6 +61,35 @@ impl ProjectInfo {
     }
 }
 
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct RestorationProject {
+    pub name: String,
+    pub missing: bool,
+}
+
+/// Looks up one saved window's project without enumerating or ordering the library.
+pub(crate) fn restoration_project(
+    service: &Service,
+    id: &str,
+) -> Result<Option<RestorationProject>, CoreError> {
+    if !texlocal_latex::segments(id).is_some_and(|segments| segments == [id]) {
+        return Ok(None);
+    }
+    let project = if is_opened(id) {
+        opened::recorded(&service.state_dir, id)
+    } else if skip_unreadable(fs::symlink_metadata(service.data_dir.join(id)))?
+        .is_some_and(|meta| meta.is_dir())
+    {
+        skip_unreadable(Project::in_library(service, id))?
+    } else {
+        None
+    };
+    Ok(project.map(|project| RestorationProject {
+        name: project.name(),
+        missing: !project.root.is_dir(),
+    }))
+}
+
 pub struct Located {
     pub id: String,
     pub path: String,
@@ -291,6 +320,41 @@ pub fn locate(service: &Service, path: &Path) -> Result<Option<Located>, CoreErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_folder_can_be_resolved_even_when_the_library_cannot_be_enumerated() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let state = dir.path().join("state");
+        let service = Service::new(data.clone(), state, None);
+        let root = dir.path().join("External");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("main.tex"), "text").unwrap();
+        let info = opened::open_path(&service, &root).unwrap().project;
+        fs::remove_dir(&data).unwrap();
+
+        assert!(list_projects(&service).is_err());
+        let target = restoration_project(&service, &info.id).unwrap().unwrap();
+        assert_eq!(target.name, "External");
+        assert!(!target.missing);
+        fs::remove_dir_all(&root).unwrap();
+        assert!(
+            restoration_project(&service, &info.id)
+                .unwrap()
+                .unwrap()
+                .missing
+        );
+        assert!(
+            restoration_project(&service, "forgotten")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            restoration_project(&service, "../External")
+                .unwrap()
+                .is_none()
+        );
+    }
 
     fn guessed(files: &[(&str, &str)]) -> Option<String> {
         let root = tempfile::tempdir().unwrap();

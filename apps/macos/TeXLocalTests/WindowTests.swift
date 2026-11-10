@@ -194,6 +194,41 @@ struct WindowTests {
         #expect(gone.project?.closed == true && !gone.app.windows.contains { $0 === gone } && gone.alert == nil)
     }
 
+    @Test func restoredWindowsCanEditBeforeTheLibraryIsReloadedIncludingAMovedFolder() async throws {
+        let app = windowedApp()
+        let first = try await newProject()
+        let parent = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let folder = parent.appending(path: "Original")
+        let moved = parent.appending(path: "Moved")
+        let unavailable = parent.appending(path: "Unavailable")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        for url in [folder, unavailable] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try "Restored source".write(to: url.appending(path: "main.tex"), atomically: true, encoding: .utf8)
+        }
+        let second = try await app.openPath(folder).project
+        let unrelated = try await app.openPath(unavailable).project
+        try FileManager.default.moveItem(at: folder, to: moved)
+        try FileManager.default.removeItem(at: unavailable)
+
+        let restored = [app.openWindow(first.id), app.openWindow(second.id)]
+        await app.restoreProjects()
+        #expect(!app.projectsLoaded)
+        for model in restored {
+            let project = try #require(model.project)
+            #expect(project.initialLoadComplete && project.editsText)
+            #expect(SourceDocument(session: project.session, path: "main.tex") != nil)
+        }
+        #expect(restored[1].project?.url("")?.resolvingSymlinksInPath().path == moved.resolvingSymlinksInPath().path)
+
+        await app.reloadProjects()
+        #expect(app.projectsLoaded)
+        #expect(app.projects.first { $0.id == unrelated.id }?.missing == true)
+        await close(app)
+        try await app.forget(second)
+        try await app.forget(unrelated)
+    }
+
     @Test func theToolbarFollowsTheLayoutAndCompileTurnsCompactBeforeAnythingOverflows() async throws {
         let model = defaults.window()
         let (window, workspace) = workspaceWindow(model, toolbar: true)
