@@ -67,6 +67,25 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo shear
 
+  linux:
+    name: Rust on Linux
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - name: The LaTeX crate builds for a browser
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --locked -p texlocal-latex --target wasm32-unknown-unknown
+
   deps:
     name: Dependencies
     needs: changes
@@ -143,7 +162,7 @@ jobs:
           -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO
 
   ci-ok:
-    needs: [changes, rust, deps, mac, release]
+    needs: [changes, rust, linux, deps, mac, release]
     if: always()
     runs-on: ubuntu-latest
     steps:
