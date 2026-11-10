@@ -52,11 +52,18 @@ jobs:
         id: texpresso
         with:
           path: ${{ env.TEXPRESSO }}
-          key: texpresso-${{ steps.brew.outputs.versions }}-${{ env.TINYTEX }}-${{ hashFiles('tools/texpresso/**') }}
+          key: texpresso-hardened-${{ steps.brew.outputs.versions }}-${{ env.TINYTEX }}-${{ hashFiles('tools/texpresso/**') }}
       - if: steps.texpresso.outputs.cache-hit != 'true'
         run: |
           tools/texpresso/build.sh "$RUNNER_TEMP/texpresso-source"
-          zsh tools/texpresso/bundle.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
+          CONFIGURATION=Debug zsh tools/texpresso/bundle.sh "$RUNNER_TEMP/texpresso-source/build" "$TEXPRESSO"
+      - name: The helpers are signed as a Debug build's are, hardened and with library validation off
+        run: |
+          for helper in texpresso texpresso-xetex; do
+            codesign --verify --strict "$TEXPRESSO/Helpers/$helper"
+            signed=$(codesign -d --verbose=4 --entitlements - "$TEXPRESSO/Helpers/$helper" 2>&1)
+            [[ $signed == *flags=*runtime* && $signed == *disable-library-validation* ]] || { echo "$signed"; exit 1; }
+          done
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
