@@ -14,11 +14,47 @@ struct Change {
     text: String,
 }
 
+#[derive(Clone, Copy, Default)]
+struct Position {
+    units: usize,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct Sent {
+    text: String,
+    checkpoint: Position,
+}
+
+impl Sent {
+    /// Use the nearer of the beginning and the last valid edit or caret position.
+    fn locate(&self, units: usize) -> Option<Position> {
+        let from = self.checkpoint;
+        let bytes = if let Some(ahead) = units.checked_sub(from.units) {
+            from.bytes + byte_offset(&self.text[from.bytes..], ahead)?
+        } else if from.units - units < units {
+            let mut remaining = from.units - units;
+            let mut bytes = from.bytes;
+            for ch in self.text[..from.bytes].chars().rev() {
+                remaining = remaining.checked_sub(ch.len_utf16())?;
+                bytes -= ch.len_utf8();
+                if remaining == 0 {
+                    break;
+                }
+            }
+            bytes
+        } else {
+            byte_offset(&self.text[..from.bytes], units)?
+        };
+        Some(Position { units, bytes })
+    }
+}
+
 /// The text TeXpresso was sent and has acknowledged, in bytes. A viewport can acknowledge edits
 /// before a whole PDF arrives, so Live keeps that PDF's source snapshot separately.
 #[derive(Default)]
 pub(super) struct Sources {
-    sent: HashMap<String, String>,
+    sent: HashMap<String, Sent>,
     pub read: HashMap<String, Arc<str>>,
     acknowledged: u64,
     unread: VecDeque<Change>,
@@ -26,9 +62,15 @@ pub(super) struct Sources {
 
 impl Sources {
     pub fn send(&mut self, run: &dyn LiveRun, path: &str, text: &str) {
-        let Some(sent) = self.sent.get(path) else {
+        let Some(sent) = self.sent.get_mut(path) else {
             run.open(path, text);
-            self.sent.insert(path.to_owned(), text.to_owned());
+            self.sent.insert(
+                path.to_owned(),
+                Sent {
+                    text: text.to_owned(),
+                    ..Sent::default()
+                },
+            );
             return self.unread.push_back(Change {
                 path: path.to_owned(),
                 offset: 0,
@@ -36,28 +78,35 @@ impl Sources {
                 text: text.to_owned(),
             });
         };
-        let (offset, remove, inserted) = delta(sent, text);
+        let (offset, remove, inserted) = delta(&sent.text, text);
         if remove > 0 || !inserted.is_empty() {
-            self.change(run, path, offset, remove, inserted);
+            if offset < sent.checkpoint.bytes {
+                sent.checkpoint = Position::default();
+            }
+            sent.text.replace_range(offset..offset + remove, inserted);
+            self.changed(run, path, offset, remove, inserted);
         }
     }
 
     /// Sends an edit given in UTF-16 units; false when it doesn't fit the text sent, as in a file not sent.
     pub fn edit(&mut self, run: &dyn LiveRun, path: &str, edit: &TextEdit) -> bool {
-        let fits = self.sent.get(path).and_then(|sent| {
-            let offset = byte_offset(sent, edit.start as usize)?;
-            Some((offset, byte_offset(&sent[offset..], edit.length as usize)?))
-        });
-        let Some((offset, remove)) = fits else {
+        let Some(sent) = self.sent.get_mut(path) else {
             return false;
         };
-        self.change(run, path, offset, remove, &edit.text);
+        let Some(start) = sent.locate(edit.start as usize) else {
+            return false;
+        };
+        let offset = start.bytes;
+        let Some(remove) = byte_offset(&sent.text[offset..], edit.length as usize) else {
+            return false;
+        };
+        sent.text.replace_range(offset..offset + remove, &edit.text);
+        sent.checkpoint = start;
+        self.changed(run, path, offset, remove, &edit.text);
         true
     }
 
-    fn change(&mut self, run: &dyn LiveRun, path: &str, offset: usize, remove: usize, text: &str) {
-        let sent = self.sent.get_mut(path).expect("sent");
-        sent.replace_range(offset..offset + remove, text);
+    fn changed(&mut self, run: &dyn LiveRun, path: &str, offset: usize, remove: usize, text: &str) {
         run.change(path, offset, remove, text);
         self.unread.push_back(Change {
             path: path.to_owned(),
@@ -67,13 +116,17 @@ impl Sources {
         });
     }
 
-    /// Sends the caret, given in UTF-16 units; false when its file wasn't sent.
-    pub fn caret(&self, run: &dyn LiveRun, path: &str, units: usize) -> bool {
-        let offset = self
-            .sent
-            .get(path)
-            .and_then(|text| byte_offset(text, units));
-        offset.inspect(|&offset| run.caret(path, offset)).is_some()
+    /// Sends the caret, given in UTF-16 units; false if the position doesn't fit the text sent.
+    pub fn caret(&mut self, run: &dyn LiveRun, path: &str, units: usize) -> bool {
+        let Some(sent) = self.sent.get_mut(path) else {
+            return false;
+        };
+        let Some(position) = sent.locate(units) else {
+            return false;
+        };
+        sent.checkpoint = position;
+        run.caret(path, position.bytes);
+        true
     }
 
     /// Takes the changes an output says TeXpresso read into the acknowledged text, rebuilding only the files
@@ -173,6 +226,32 @@ mod tests {
         ];
         assert_eq!(*run.0.lock().unwrap(), heard);
         assert_eq!(sources.revision(), 3);
+    }
+
+    #[test]
+    fn checkpoints_follow_the_sent_text_across_edits_caret_jumps_and_resends() {
+        let (run, mut sources) = (Heard::default(), Sources::default());
+        let path = "main.tex";
+        let initial = format!("{}é🔎x", "a".repeat(4096));
+        sources.send(&run, path, &initial);
+        assert!(sources.caret(&run, path, 4100));
+        assert!(!sources.caret(&run, path, 4098)); // A backwards lookup inside 🔎.
+        assert!(!sources.edit(&run, path, &edit(4097, 1, "")));
+        assert!(sources.edit(&run, path, &edit(4097, 2, "β💡")));
+        assert!(!sources.caret(&run, path, 4099)); // A forwards lookup inside 💡.
+        assert!(sources.caret(&run, path, 4101));
+        assert!(sources.edit(&run, path, &edit(0, 1, "🔎")));
+        assert!(sources.caret(&run, path, 4102));
+        assert!(sources.edit(&run, path, &edit(4101, 1, "")));
+        let replacement = "短🔎
+";
+        sources.send(&run, path, replacement);
+        assert!(!sources.caret(&run, path, 4101));
+        assert!(!sources.caret(&run, path, 2));
+        assert!(sources.caret(&run, path, 3));
+        assert_eq!(run.0.lock().unwrap().last().unwrap(), "caret main.tex 7");
+        sources.acknowledge(sources.revision()).unwrap();
+        assert_eq!(&*sources.read[path], replacement);
     }
 
     #[test]
