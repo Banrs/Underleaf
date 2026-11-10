@@ -5,9 +5,8 @@
 # clear. The first two kinds come back as you use the app; with --fix, run while TeXLocal is quit, the snapshot
 # records are rewritten so those snapshots show in History again and the project's history prunes.
 L=${TEXLOCAL_DATA:-$HOME/TeXLocal}; S=${TEXLOCAL_STATE:-$HOME/Library/Application Support/com.texlocal.mac}
-for f in .opened .texlocal-app.json; do
-  [[ -e $L/$f ]] && echo "library still holds $f: opened folders and app settings start afresh"
-done
+[[ -e $L/.texlocal-app.json ]] && echo "library still holds .texlocal-app.json: app settings start afresh"
+[[ -e $L/.opened ]] && echo "library still holds .opened: opened folders start afresh, and the version history each kept stays there unread. To keep one whose folder you haven't opened in TeXLocal since, quit TeXLocal and move it from $L/.opened into $S/.opened"
 old='"(ui|shellEscapeFor)"'
 for p in $L/*(/N); do
   grep -qsE $old $p/.texlocal.json && [[ ! -f $S/.ui/${p:t}.json ]] && echo "${p:t}: remembered place and grant start afresh"
@@ -16,7 +15,7 @@ for o in $S/.opened/*(/N); do
   r=$(plutil -extract path raw -o - $o/folder.json 2>/dev/null) || continue
   grep -qsE $old $r/.texlocal.json && [[ ! -f $o/project.json ]] && echo "${r:t}: remembered place and grant start afresh"
 done
-dirs=($L/*/.texlocal-history/snapshots(/N) $S/.opened/*/history/snapshots(/N))
+dirs=($L/*/.texlocal-history/snapshots(/N) $S/.opened/*/history/snapshots(/N) $L/.opened/*/history/snapshots(/N))
 (( $#dirs )) || exit 0
 for rec in ${(f)"$(grep -rlsE '"reason":"Before ' $dirs)"}; do
   if [[ $1 == --fix ]]; then
