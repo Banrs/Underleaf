@@ -3,13 +3,9 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-/// Writes the bars ChromePixelTests leaves out as PNGs: the Find navigator's breadcrumb in each state its drawing tells
-/// apart (first and other choices; at rest, with the pointer over each item, with the keyboard on each item), and the
-/// status bar's other items (Not Saved, Live Preview, PDF Out of Date, Last Successful Build, word count) and the whole
-/// Logs panel at the widths that give their full, symbol and short forms; light and dark, key and inactive, at each
-/// screen's scale and 4x. Once before and once after a change to how they're drawn, then compare the two folders pixel
-/// for pixel. `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/BarsPixelTests`
-/// (attach a 2x display for 2x).
+/// Renders the breadcrumb, status bar and Logs at screen scale and 4x, in light and dark with key and inactive windows.
+/// Attach a 2x display for 2x renders.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/BarsPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct BarsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -63,7 +59,7 @@ struct BarsPixelTests {
         window.setContentSize(box.frame.size)
         var written = 0
         func shot(_ name: String) async throws {
-            try await settle()
+            try await settlePixelLayout()
             box.displayIfNeeded()
             for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
                 guard let rep else { continue }
@@ -145,7 +141,7 @@ struct BarsPixelTests {
             views.pdf.show(try Self.pdf())
             let columns = workspace.columns.view
             func shot(_ name: String) async throws {
-                try await settle()
+                try await settlePixelLayout()
                 columns.displayIfNeeded()
                 let rect = NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48)
                 for scale in [Int(window.backingScaleFactor), 4] {
@@ -174,11 +170,10 @@ struct BarsPixelTests {
                                                   issues: [], lines: [:])))
             try await shot("stopped")
 
-            // The whole Logs panel with its bar: a short log, one long enough to follow its end, a filter, the Live Preview tab.
             let long = (1...80).map { "Line \($0) of a log long enough to scroll" }.joined(separator: "\n")
             project.store.apply(.buildLog("This is pdfTeX\nOutput written on main.pdf (1 page)."))
             project.panel.shown = true
-            try await settle()
+            try await settlePixelLayout()
             let area = columns.superview?.superview ?? columns
             let above = columns.convert(columns.bounds, to: area)
             let panel = area.isFlipped ? NSRect(x: above.minX, y: above.maxY, width: above.width, height: area.bounds.maxY - above.maxY)
@@ -187,7 +182,7 @@ struct BarsPixelTests {
                                              ("long", .log, "", long)] {
                 (project.panel.tab, project.panel.logFilter) = (tab, filter)
                 if !log.isEmpty { project.store.apply(.buildLog(log)) }
-                try await settle()
+                try await settlePixelLayout()
                 area.displayIfNeeded()
                 for scale in [Int(window.backingScaleFactor), 4] {
                     let rep = try #require(bitmap(panel.size, scale: scale))
@@ -204,12 +199,5 @@ struct BarsPixelTests {
     private static func pdf() throws -> PDFDocument {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
         return try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds)))
-    }
-
-    private func settle() async throws {
-        for _ in 0..<8 {
-            try await Task.sleep(for: .milliseconds(40))
-            await Task.yield()
-        }
     }
 }

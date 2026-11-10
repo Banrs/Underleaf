@@ -3,10 +3,8 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes every search and filter field the app shows, in each state their drawing tells apart, as PNGs: once before and
-/// once after a change to how they're drawn, then compare the two folders pixel for pixel.
-/// `TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/FieldPixelTests`, which renders at
-/// each screen's scale (attach a 2x display for 2x) and at 4x.
+/// Renders search and filter fields at screen scale and 4x. Attach a 2x display for 2x renders.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/FieldPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct FieldPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -45,7 +43,7 @@ struct FieldPixelTests {
             box.addSubview(view)
             window.contentView = box
             window.setContentSize(box.frame.size)
-            try await settle()
+            try await settlePixelLayout(passes: 5, interval: .milliseconds(30))
             let fields = view.descendants(of: NSSearchField.self)
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = true } }
             for field in fields { field.needsDisplay = true }
@@ -97,13 +95,6 @@ struct FieldPixelTests {
             }
         }
         return written
-    }
-
-    private func settle() async throws {
-        for _ in 0..<5 {
-            try await Task.sleep(for: .milliseconds(30))
-            await Task.yield()
-        }
     }
 }
 
