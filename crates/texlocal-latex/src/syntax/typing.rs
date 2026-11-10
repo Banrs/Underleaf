@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use super::scan::{End, Group, Scanner, Visit, arguments, blank_line};
 use super::snippet::Snippet;
+use super::sync::LISTS;
 use super::{
     INDENT, SourceDocument, TextEdit, TextRange, clamp, escaped, indentation, is, range, span,
     splice,
@@ -231,7 +232,7 @@ impl SourceDocument {
         let from = line.start + indent;
         let content = String::from_utf16_lossy(units.get(from..start).unwrap_or_default());
         let item = content.strip_prefix("\\item");
-        if matches!(list, Some("itemize" | "enumerate" | "description"))
+        if list.is_some_and(|list| LISTS.contains(&list))
             && blank_line(rest)
             && let Some(after) =
                 item.filter(|after| after.starts_with(|c: char| !c.is_ascii_alphabetic()))

@@ -126,12 +126,7 @@ use HighlightKind::*;
 fn named(name: &[u16]) -> bool {
     let mut buf = [0; NAME];
     let name = ascii(name, &mut buf);
-    let named = [
-        &CATALOG.name_commands,
-        &CATALOG.ref_commands,
-        &CATALOG.cite_commands,
-    ];
-    named.iter().any(|names| names.contains(name)) || matches!(name, "Bibitem" | "RBibitem")
+    CATALOG.takes_names(name) || matches!(name, "Bibitem" | "RBibitem")
 }
 
 fn tokenize(line: &[u16], state: &mut State, mut run: impl FnMut(usize, usize, HighlightKind)) {

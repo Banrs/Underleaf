@@ -59,7 +59,7 @@ pub fn sync_lines(text: &str, line: u32) -> SyncLines {
 
 /// Environments that only place what they hold, so a label in one names what's around it.
 const LAYOUT: [&str; 4] = ["document", "center", "flushleft", "flushright"];
-const LISTS: [&str; 3] = ["itemize", "enumerate", "description"];
+pub(super) const LISTS: [&str; 3] = ["itemize", "enumerate", "description"];
 
 /// The lines that typeset what a `\label` on `line` names: its innermost environment, an item in a list, or a heading
 /// or paragraph on its own line, with the line before when the label starts its line.

@@ -23,6 +23,15 @@ pub struct Catalog {
     pub(crate) symbol_groups: Vec<SymbolGroup>,
 }
 
+impl Catalog {
+    /// Whether a command's arguments are names, such as a label, a citation key or a file, rather than prose.
+    pub(crate) fn takes_names(&self, command: &str) -> bool {
+        [&self.name_commands, &self.cite_commands, &self.ref_commands]
+            .iter()
+            .any(|commands| commands.contains(command))
+    }
+}
+
 #[derive(Deserialize, Serialize, JsonSchema)]
 pub(crate) struct Templates {
     pub(crate) math: Vec<Template>,

@@ -70,13 +70,7 @@ impl Names {
         end: usize,
         found: impl FnMut(TextRange),
     ) {
-        let catalog = &*CATALOG;
-        let lists = [
-            &catalog.name_commands,
-            &catalog.cite_commands,
-            &catalog.ref_commands,
-        ];
-        if command_start >= self.parsed_until && lists.iter().any(|l| l.contains(name)) {
+        if command_start >= self.parsed_until && CATALOG.takes_names(name) {
             self.from = Some(name_end);
             self.resume(text, end, found);
         }
