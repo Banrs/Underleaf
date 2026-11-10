@@ -215,7 +215,6 @@ fn store(out: &mut String, sections: &str, ir: &Ir, generic: &BTreeSet<&str>) {
         let ty = ty.as_ref().expect("a store's sections are checked");
         let (ty, initial) = match ty {
             Ty::List(_) => (swift(ty, generic), " = []"),
-            Ty::Map(_) => (swift(ty, generic), " = [:]"),
             Ty::Optional(_) => (swift(ty, generic), ""),
             _ => (format!("{}?", swift(ty, generic)), ""),
         };

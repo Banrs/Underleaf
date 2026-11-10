@@ -80,7 +80,7 @@ pub(crate) fn import_files(
                 &|rel| !rel.split('/').any(is_litter) && !abs.join(rel).is_symlink(),
                 true,
                 &mut |entry| {
-                    if !entry.dir && !entry.link {
+                    if !entry.dir {
                         files.push((in_folder(name, &entry.rel), entry.path.clone()));
                     }
                     Ok(true)
