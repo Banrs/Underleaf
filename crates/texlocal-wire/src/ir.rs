@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 pub const PAYLOAD: &str = "Payload";
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Ty {
     Bool,
     Int,
@@ -19,13 +19,13 @@ pub enum Ty {
     Named(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Field {
     pub name: String,
     pub ty: Ty,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Shape {
     Struct(Vec<Field>),
     Units(Vec<(String, Option<String>)>),
@@ -67,15 +67,20 @@ impl Ir {
                 continue;
             }
             let shape = shape(name, schema, way);
-            let def = self.defs.entry(name.clone()).or_insert(Def {
-                shape: shape.clone(),
-                decoded: false,
-                encoded: false,
-            });
-            assert!(
-                def.shape == shape,
-                "{name} differs between what Swift sends and what it reads"
-            );
+            let def = self
+                .defs
+                .entry(name.clone())
+                .and_modify(|def| {
+                    assert!(
+                        def.shape == shape,
+                        "{name} differs between what Swift sends and what it reads"
+                    );
+                })
+                .or_insert(Def {
+                    shape,
+                    decoded: false,
+                    encoded: false,
+                });
             match way {
                 Way::In => def.encoded = true,
                 Way::Out => def.decoded = true,
