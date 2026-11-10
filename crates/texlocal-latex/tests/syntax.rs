@@ -298,6 +298,16 @@ fn an_argument_completes_what_the_command_takes() {
     let mut doc = SourceDocument::new("a\\\\cite{lam");
     doc.set_symbols(symbols.clone());
     assert_eq!(complete(&mut doc, 11), Value::Null);
+    // A run of backslashes that the window read before the caret would cut is still counted whole.
+    let far = |slashes: usize, typed: &str| {
+        let (run, keys) = ("\\".repeat(slashes), "x,".repeat(120));
+        let text = format!("a{run}cite{{{keys}{typed}");
+        let mut doc = SourceDocument::new(&text);
+        doc.set_symbols(symbols.clone());
+        complete(&mut doc, utf16::len(&text))
+    };
+    assert_eq!(far(3, "lam")["items"][0]["label"], "lamport");
+    assert_eq!(far(2, " lam"), Value::Null);
     let packages = json!(["file", ["amsmath", "amsthm"]]);
     assert_eq!(offered("\\usepackage{ams"), packages);
     assert_eq!(offered("\\input{"), json!(["file", ["main", "ch/intro"]]));

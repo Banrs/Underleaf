@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::scan::{self, Group, Scanner};
-use super::{INDENT, SourceDocument, Text, TextRange, catalog, indentation, range};
+use super::{INDENT, SourceDocument, Text, TextRange, catalog, indentation, is, range};
 use crate::facts::{Defined, Definitions, Facts, FilePlace, Input, Named, Place};
 use crate::utf16;
 use crate::{FileKind, file_kind, same_folded, segments};
@@ -154,7 +154,11 @@ impl SourceDocument {
     pub(crate) fn complete(&mut self, caret: u32, explicit: bool) -> Option<Completions> {
         let (text, caret) = (&self.text, caret.min(self.text.len()));
         let line = text.line_index(caret);
-        let from = text.lines[line].max(caret.saturating_sub(250));
+        let (start, from) = (text.lines[line], caret.saturating_sub(250));
+        // A run of backslashes is read whole, as where it starts decides which of them begins a command.
+        let cut = &text.units[start.min(from) as usize..from as usize];
+        let run = cut.iter().rev().take_while(|&&u| is(u, '\\')).count();
+        let from = start.max(from - run as u32);
         let before = String::from_utf16_lossy(&text.units[from as usize..caret as usize]);
         let catalog = &*catalog::CATALOG;
         let offer = |start: usize, kind: SymbolKind, items: Vec<Completion>| {
