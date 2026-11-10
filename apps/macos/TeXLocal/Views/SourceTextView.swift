@@ -457,7 +457,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     }
 
     private func setsCursor(with event: NSEvent) -> Bool {
-        let overGutter = inGutter(event)
+        let overGutter = inGutter(event, before: sourceTextStart)
         gutterHover(overGutter)
         if updateDividerCursor(with: event) { return true }
         guard overGutter || issue(at: event) != nil else { return false }
@@ -465,9 +465,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return true
     }
 
-    private func inGutter(_ event: NSEvent) -> Bool {
+    private func inGutter(_ event: NSEvent, before edge: CGFloat) -> Bool {
         let point = convert(event.locationInWindow, from: nil)
-        return visibleRect.contains(point) && point.x < sourceTextStart
+        return visibleRect.contains(point) && point.x < edge
     }
 
     private func issue(at event: NSEvent) -> IssueOverlay.Row? { issues.message(at: convert(event.locationInWindow, from: nil)) }
@@ -489,7 +489,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown, foldClick(at: convert(event.locationInWindow, from: nil)) { return }
-        if event.type == .leftMouseDown, inGutter(event) { return selectLines(with: event) }
+        if event.type == .leftMouseDown, inGutter(event, before: textContainerOrigin.x) { return selectLines(with: event) }
         let held = event.modifierFlags.intersection([.shift, .control, .option, .command])
         if event.type == .leftMouseDown, held.isEmpty, let row = issue(at: event), let up = release(of: event) {
             if row.message?.rect.contains(convert(up.locationInWindow, from: nil)) == true { issues.clicked(row.line) }
