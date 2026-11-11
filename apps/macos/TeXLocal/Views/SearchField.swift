@@ -21,7 +21,7 @@ struct FilterField<Toggles: View>: View {
                     // A plain menu button draws no indicator of its own.
                     HStack(spacing: -1) {
                         symbol
-                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .heavy))
+                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
                     }
                     .padding(.trailing, -1)
                     .foregroundStyle(.filterSymbol)
