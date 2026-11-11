@@ -4,16 +4,19 @@ import SwiftUI
 /// before its toggles.
 struct FilterField<Toggles: View>: View {
     @Environment(\.controlSize) private var controlSize
+    @Environment(\.font) private var font
     @Binding var text: String
     var help = ""
     var options: [(title: String, isOn: Binding<Bool>)] = []
     var height: CGFloat?
+    var symbolFont: Font?
     var hasActiveOptions = false
     @ViewBuilder var toggles: Toggles
 
     var body: some View {
         let active = !text.isEmpty || hasActiveOptions
         let symbol = Image(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            .font(symbolFont ?? font)
             .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
         HStack(spacing: 4) {
             if options.isEmpty {

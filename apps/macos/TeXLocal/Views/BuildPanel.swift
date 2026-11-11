@@ -75,7 +75,7 @@ struct BuildPanelBar: View {
             .disabled(text.isEmpty)
             FilterField(text: $panel.logFilter, help: String(localized: "Show lines with matching text"),
                         options: LogKind.allCases.map { ($0.title, $panel.hiddenLogKinds[lacks: $0]) },
-                        height: FilterBarMetrics.controlHeight,
+                        height: FilterBarMetrics.controlHeight, symbolFont: .subheadline,
                         hasActiveOptions: !panel.hiddenLogKinds.isEmpty) {}
                 .frame(maxWidth: 182)
         }
