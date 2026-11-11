@@ -48,7 +48,8 @@ final class OpenQuickly: FloatingPanel {
     }
 
     private func search(_ query: String) {
-        restart(&searching) { [project] in
+        searching?.cancel()
+        searching = Task { [project] in
             guard let items = try? await project.session.call(QuickOpen(query: query)), !Task.isCancelled else { return }
             rows.items = items
             guard let parent else { return }
