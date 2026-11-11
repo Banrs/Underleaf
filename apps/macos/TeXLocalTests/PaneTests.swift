@@ -84,16 +84,58 @@ struct PaneTests {
         #expect(!workspace.project.panel.shown && window.firstResponder === workspace.pdf.view)
     }
 
-    @Test func onlyTheStatusBarsTopEdgeDragsTheBuildPanelLeavingItsButtonsAndTheEditorTheirClicks() throws {
+    @Test func theBuildLogScrollsUnderItsControlsAndTheLastLineClearsThem() async throws {
+        let (window, workspace) = workspaceWindow(TestDefaults().window())
+        defer { workspace.close(); window.close() }
+        window.alphaValue = 0.01
+        window.ignoresMouseEvents = true
+        window.orderFrontRegardless()
+        let area = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController)
+        let panel = try #require(area.splitViewItems.last)
+        let log = (1...80).map { "Build log line \($0)" }.joined(separator: "\n")
+        workspace.project.store.apply(.buildLog(log))
+        panel.isCollapsed = false
+        window.layoutIfNeeded()
+
+        let pane = panel.viewController.view
+        let field = try #require(pane.descendants(of: NSTextField.self).first { $0.isEditable })
+        let scroll = try #require(pane.descendants(of: NSScrollView.self).first { $0.documentView is NSTextView })
+        let text = try #require(scroll.documentView as? NSTextView)
+        try await waitUntil(timeout: .seconds(2)) { text.string == log && scroll.contentView.contentInsets.bottom > 0 }
+        let viewport = scroll.convert(scroll.bounds, to: nil), filter = field.convert(field.bounds, to: nil)
+        #expect(viewport.contains(NSPoint(x: filter.midX, y: filter.midY)))
+        #expect(scroll.scrollerInsets.bottom == scroll.contentView.contentInsets.bottom)
+
+        let last = (log as NSString).range(of: "Build log line 80")
+        try await waitUntil(timeout: .seconds(2)) {
+            let line = window.convertFromScreen(text.firstRect(forCharacterRange: last, actualRange: nil))
+            return line.height > 0 && line.minY >= filter.maxY && line.maxY <= viewport.maxY
+        }
+    }
+
+    @Test func closingLogsLaysOutTheRevealedSourceDuringTheResize() async throws {
         let defaults = TestDefaults()
         let (window, workspace) = workspaceWindow(defaults.window())
         defer { workspace.close(); window.close() }
-        let split = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController).splitView
-        let content = try #require(window.contentView)
-        let edge = split.arrangedSubviews[0].frame.maxY - BarMetrics.height
-        func hit(_ y: CGFloat) -> NSView? { content.hitTest(content.superview!.convert(split.convert(NSPoint(x: 300, y: y), to: nil), from: nil)) }
-        #expect(hit(edge) === split)
-        #expect(hit(edge + BarMetrics.height / 2) !== split && hit(edge - 20) !== split)
+        window.alphaValue = 0.01
+        window.ignoresMouseEvents = true
+        window.orderFrontRegardless()
+        let area = try #require(workspace.splitViewItems[1].viewController as? NSSplitViewController)
+        let panel = try #require(area.splitViewItems.last)
+        let editor = workspace.views.editor, text = editor.textView
+        workspace.project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
+        editor.open(path: "main.tex", source: SourceDocument(text: (1...200).map { "Line \($0)" }.joined(separator: "\n")))
+        panel.isCollapsed = false
+        try await waitUntil(timeout: .seconds(3)) { !text.isHidden && text.fragments.count > 5 }
+        let bottom = text.visibleRect.maxY
+        var finished = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.8
+            panel.animator().isCollapsed = true
+        } completionHandler: { finished = true }
+        try await waitUntil(timeout: .seconds(2)) { text.visibleRect.maxY > bottom + 10 }
+        #expect(!finished && text.preparedContentRect.contains(text.visibleRect))
+        try await waitUntil(timeout: .seconds(2)) { finished }
     }
 
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {

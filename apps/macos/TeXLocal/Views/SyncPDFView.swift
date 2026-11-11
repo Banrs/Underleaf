@@ -5,7 +5,7 @@ import os
 
 final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     var onInverse: (_ page: Int, _ point: CGPoint, _ click: PageClick?, _ quietly: Bool) -> Void = { _, _, _, _ in }
-    var onResize: () -> Void = {}
+    var onResize: () -> Bool = { false }
 
     var pageScrollView: NSScrollView? { documentView?.enclosingScrollView }
     var paper = PDFPaper.white { didSet { matchPaper() } }
@@ -180,10 +180,24 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize != frame.size else { return }
         let place = hasShownArea ? shownPlace : nil
+        let viewport = newSize.width == frame.width ? pageScrollView?.contentView.bounds : nil
+        let scale = scaleFactor
         super.setFrameSize(newSize)
-        onResize()
+        let refitsPage = onResize()
         if let place {
-            go(to: place)
+            // Keep the clip's top edge pinned when the log only changes the available height.
+            if let viewport, !refitsPage, scale == scaleFactor, hasShownArea, let scroll = pageScrollView {
+                let clip = scroll.contentView
+                var kept = CGRect(origin: viewport.origin, size: clip.bounds.size)
+                if !clip.isFlipped { kept.origin.y += viewport.height - kept.height }
+                let origin = clip.constrainBoundsRect(kept).origin
+                if clip.bounds.origin != origin {
+                    clip.scroll(to: origin)
+                    scroll.reflectScrolledClipView(clip)
+                }
+            } else {
+                go(to: place)
+            }
             lastPlace = place
         }
     }

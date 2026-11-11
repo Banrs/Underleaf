@@ -1,22 +1,73 @@
 import AppKit
 
 extension SourceTextView {
+    private static let structure: Set<String> = [
+        "\\documentclass", "\\usepackage", "\\RequirePackage", "\\input", "\\include", "\\subfile", "\\import", "\\subimport",
+        "\\part", "\\chapter", "\\section", "\\subsection", "\\subsubsection", "\\paragraph", "\\subparagraph",
+        "\\begin", "\\end", "\\item", "\\def", "\\newcommand", "\\renewcommand", "\\providecommand",
+        "\\newenvironment", "\\renewenvironment", "\\DeclareMathOperator",
+    ]
+
+    func structuralCommands(in range: NSRange, of paragraph: NSString,
+                            among highlights: [(range: NSRange, kind: HighlightKind)]? = nil) -> [NSRange] {
+        guard paragraph.range(of: "\\").location != NSNotFound else { return [] }
+        return (highlights ?? document.highlights(in: range)).compactMap { run in
+            guard run.kind == .command, run.range.location >= range.location, NSMaxRange(run.range) <= NSMaxRange(range) else { return nil }
+            let command = NSRange(location: run.range.location - range.location, length: run.range.length)
+            return Self.structure.contains(paragraph.substring(with: command)) ? command : nil
+        }
+    }
+
     func installColouring() {
         textLayoutManager?.renderingAttributesValidator = { [weak self] manager, fragment in
             guard let self else { return }
             let range = fragment.rangeInElement
             let start = offset(range.location), end = offset(range.endLocation)
+            let span = NSRange(location: start, length: end - start)
+            let highlights = document.highlights(in: span)
             manager.setRenderingAttributes([.foregroundColor: NSColor.textColor], for: range)
             var runs: [Any] = []
-            for run in document.highlights(in: NSRange(location: start, length: end - start)) {
-                let clipped = NSIntersectionRange(run.range, NSRange(location: start, length: end - start))
+            for run in highlights {
+                let clipped = NSIntersectionRange(run.range, span)
                 if clipped.length > 0, let range = textRange(clipped) {
                     manager.setRenderingAttributes([.foregroundColor: run.kind.color], for: range)
                     runs += [clipped.location - start, clipped.length, run.kind.rawValue]
                 }
             }
             fragmentColours.setObject(runs as NSArray, forKey: fragment)
+            checkStructuralWeight(of: fragment, in: span, among: highlights)
         }
+    }
+
+    private func checkStructuralWeight(of fragment: NSTextLayoutFragment, in span: NSRange,
+                                       among highlights: [(range: NSRange, kind: HighlightKind)]) {
+        guard let structuralFont, structuralFont != font, let paragraph = fragment.textElement as? NSTextParagraph else { return }
+        let text = paragraph.attributedString
+        let string = text.string as NSString
+        guard text.length == span.length, string.range(of: "\\").location != NSNotFound else { return }
+        var wanted = IndexSet(), shown = IndexSet()
+        for command in structuralCommands(in: span, of: string, among: highlights) {
+            wanted.insert(integersIn: command.location..<NSMaxRange(command))
+        }
+        text.enumerateAttribute(.font, in: NSRange(location: 0, length: text.length)) { weight, range, _ in
+            if weight as? NSFont == structuralFont { shown.insert(integersIn: range.location..<NSMaxRange(range)) }
+        }
+        guard wanted != shown else { return }
+        let pending = staleStructuralRange
+        staleStructuralRange = pending?.union(span) ?? span
+        guard pending == nil else { return }
+        // Changing a multiline mode can restyle untouched paragraphs. Rebuild those elements outside the layout pass.
+        Task { [weak self] in self?.restyleStructuralParagraphs() }
+    }
+
+    private func restyleStructuralParagraphs() {
+        guard let pending = staleStructuralRange else { return }
+        staleStructuralRange = nil
+        guard let storage = textStorage else { return }
+        let clipped = NSIntersectionRange(pending, NSRange(location: 0, length: storage.length))
+        guard clipped.length > 0 else { return }
+        storage.edited(.editedAttributes, range: storage.mutableString.lineRange(for: clipped), changeInLength: 0)
+        textLayoutManager?.textViewportLayoutController.layoutViewport()
     }
 
     /// TextKit doesn't redraw a fragment whose rendering attributes change. Redrawing only those whose runs differ cut

@@ -7,13 +7,17 @@ struct FilterField<Toggles: View>: View {
     @Binding var text: String
     var help = ""
     var options: [(title: String, isOn: Binding<Bool>)] = []
+    var height: CGFloat?
+    var hasActiveOptions = false
     @ViewBuilder var toggles: Toggles
 
     var body: some View {
+        let active = !text.isEmpty || hasActiveOptions
+        let symbol = Image(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
         HStack(spacing: 4) {
-            let symbol = Image(systemName: "line.3.horizontal.decrease.circle")
             if options.isEmpty {
-                symbol.foregroundStyle(.filterSymbol).accessibilityHidden(true)
+                symbol.accessibilityHidden(true)
             } else {
                 Menu {
                     Section("Show") { ForEach(options.indices, id: \.self) { Toggle(options[$0].title, isOn: options[$0].isOn) } }
@@ -27,6 +31,7 @@ struct FilterField<Toggles: View>: View {
                     .foregroundStyle(.filterSymbol)
                     .accessibilityLabel("Filter Options")
                 }
+                .accessibilityValue("Active", isEnabled: hasActiveOptions)
                 .fixedSize()
             }
             TextField("Filter", text: $text).textFieldStyle(.plain).help(help)
@@ -34,7 +39,7 @@ struct FilterField<Toggles: View>: View {
             toggles
         }
         .padding(.horizontal, 7)
-        .frame(height: controlSize == .large ? 28 : 22)
+        .frame(height: height ?? (controlSize == .large ? 28 : 22))
         .glassEffect(.regular.interactive(), in: .capsule)
         .buttonStyle(.plain)
         .toggleStyle(.button)

@@ -260,11 +260,13 @@ private struct ProjectLabel<Name: View>: View {
             }
             .frame(width: thumbnail.width, height: thumbnail.height)
             .accessibilityHidden(true)
-            .task(id: pdf.map { "\($0.built) \($0.path)" }) {
+            .task(id: pdf.map { "\($0.built) \(scale) \($0.path)" }) { [scale] in
+                guard !Task.isCancelled else { return }
                 guard let pdf else { return page = nil }
                 let request = QLThumbnailGenerator.Request(fileAt: URL(filePath: pdf.path), size: thumbnail, scale: scale,
                                                            representationTypes: .thumbnail)
-                page = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
+                let image = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
+                if !Task.isCancelled { page = image }
             }
             VStack(alignment: .leading, spacing: 2) {
                 name.foregroundStyle(dimmed ? HierarchicalShapeStyle.tertiary : .primary)

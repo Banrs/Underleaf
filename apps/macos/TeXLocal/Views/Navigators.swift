@@ -68,7 +68,10 @@ struct NavigatorFilterBar: View {
                 .glassEffect(.regular.interactive(), in: .circle)
             }
             let kinds = IssueKind.allCases.map { (title: $0.title, isOn: $model.hiddenIssueKinds[lacks: $0]) }
-            FilterField(text: $model[dynamicMember: shown.filter], help: shown.filterHelp, options: shown == .issues ? kinds : []) {
+            // The Only errors toggle already shows when warnings are hidden.
+            let hiddenKinds = model.hiddenIssueKinds.subtracting(model.showsOnlyErrors ? IssueKind.warnings : [])
+            FilterField(text: $model[dynamicMember: shown.filter], help: shown.filterHelp,
+                        options: shown == .issues ? kinds : [], hasActiveOptions: shown == .issues && !hiddenKinds.isEmpty) {
                 switch shown {
                 case .files:
                     FilterToggle(symbol: "clock", label: "Recent files", help: "Show only recent files", isOn: $model.showsOnlyRecentFiles)

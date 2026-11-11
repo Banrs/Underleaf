@@ -10,6 +10,34 @@ struct EditorTests {
         #expect([0, 1, 3, 7, 10].map { kinds[$0] } == [.invalid, .argument, .command, .maths, .comment])
     }
 
+    @Test func structureUsesTheXcodeKeywordWeightAndRestylesWhenTheSyntaxContextChanges() async throws {
+        let (editor, window) = Self.editor("Start\n\\section{Intro} and \\emph{normal}\n% \\section{Comment}\n")
+        defer { window.close() }
+        let view = editor.textView
+        view.appearance = NSAppearance(named: .aqua)
+        view.fontSize = 13
+        let manager = try #require(view.textLayoutManager)
+        let base = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let keyword = NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
+        func shownFont(on line: Int, at index: Int = 0) -> NSFont? {
+            manager.textViewportLayoutController.layoutViewport()
+            guard let location = view.textRange(.caret(view.document.lineStart(line)))?.location,
+                  let paragraph = manager.textLayoutFragment(for: location)?.textElement as? NSTextParagraph else { return nil }
+            return paragraph.attributedString.attribute(.font, at: index, effectiveRange: nil) as? NSFont
+        }
+        #expect(shownFont(on: 2) == keyword)
+        #expect(shownFont(on: 2, at: 8) == base)
+        #expect(shownFont(on: 2, at: 20) == base)
+        #expect(shownFont(on: 3, at: 2) == base)
+        #expect(view.textStorage?.attribute(.font, at: 6, effectiveRange: nil) as? NSFont == base)
+        let command = "\\section" as NSString
+        #expect(command.size(withAttributes: [.font: base]).width == command.size(withAttributes: [.font: keyword]).width)
+        #expect(view.apply([TextEdit(NSRange(location: 0, length: 5), "\\begin{verbatim}")], named: "Edit"))
+        try await waitUntil(timeout: .seconds(2)) { shownFont(on: 2) == base }
+        view.undo.undo()
+        try await waitUntil(timeout: .seconds(2)) { shownFont(on: 2) == keyword }
+    }
+
     @Test func theCoresAnswersDecode() throws {
         let document = SourceDocument(text: "\\section{Intro}\nSome $x^2$ text\n\\sec")
         let completions = try #require(document.complete(caret: 36, explicit: false))
@@ -278,29 +306,49 @@ struct EditorTests {
     }
 
     @Test func theChevronTogglesFoldingInThePaddingBeforeTheSourceText() throws {
-        let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\end{itemize}")
+        let header = "\\begin{itemize} " + String(repeating: "word ", count: 30)
+        let (editor, window) = Self.editor("first\n\(header)\n\\item a\n\\end{itemize}")
         defer { window.close() }
-        window.displayIfNeeded()
         let text = editor.textView
-        let first = try #require(text.fragments.first?.fragment)
+        text.fontSize = 13
+        window.displayIfNeeded()
+        let fragment = try #require(text.fragments.first { $0.offset == text.document.lineStart(2) }?.fragment)
+        let rows = fragment.textLineFragments
+        try #require(rows.count > 1 && rows[0].typographicBounds.minY > 0)
         let origin = text.textContainerOrigin
-        let y = origin.y + first.layoutFragmentFrame.midY
-        let chevron = NSPoint(x: origin.x + text.linePadding / 2, y: y)
-        #expect(!text.foldClick(at: NSPoint(x: text.sourceTextStart, y: y)))
+        let top = origin.y + fragment.layoutFragmentFrame.minY
+        let x = origin.x + text.linePadding / 2
+        let chevron = NSPoint(x: x, y: top + rows[0].typographicBounds.midY)
+        #expect(!text.foldClick(at: NSPoint(x: text.sourceTextStart, y: chevron.y)))
+        #expect(!text.foldClick(at: NSPoint(x: x, y: top + rows[0].typographicBounds.minY / 2)))
+        #expect(!text.foldClick(at: NSPoint(x: x, y: top + rows[1].typographicBounds.midY)))
         #expect(text.foldClick(at: chevron) && !text.folds.isEmpty)
         #expect(text.foldClick(at: chevron) && text.folds.isEmpty)
     }
 
-    @Test func theCurrentLineAlignsWithTheTextKitRow() throws {
-        let (editor, window) = Self.editor("first\ncurrent\nlast")
+    @Test(arguments: ["current", ""])
+    func theCurrentLineAlignsWithTheTextKitRow(_ line: String) throws {
+        let (editor, window) = Self.editor("first\n\(line)\nlast")
         defer { window.close() }
         let text = editor.textView
-        text.selection = .caret(9)
+        text.fontSize = 13
+        text.selection = .caret(text.document.lineStart(2))
         window.displayIfNeeded()
         let caret = text.firstRect(forCharacterRange: text.selection, actualRange: nil)
+        let first = text.firstRect(forCharacterRange: .caret(0), actualRange: nil)
+        let last = text.firstRect(forCharacterRange: .caret(text.document.lineStart(3)), actualRange: nil)
+        #expect(abs(first.minY - caret.minY - 18) < 0.5 && abs(caret.minY - last.minY - 18) < 0.5)
         let row = text.convert(window.convertFromScreen(caret), from: nil)
         let band = try #require(text.currentLine?.rect)
         #expect(band.minY == text.onPixels(row.minY) && band.maxY == text.onPixels(row.maxY))
+
+        let native = NSTextView(usingTextLayoutManager: true)
+        native.string = text.string
+        native.font = text.font
+        window.contentView = native
+        window.displayIfNeeded()
+        let nativeRow = native.firstRect(forCharacterRange: text.selection, actualRange: nil)
+        #expect(nativeRow.height > 0 && abs(row.height - nativeRow.height) < 0.5)
     }
 
     @Test(arguments: [true, false])
@@ -415,10 +463,12 @@ struct EditorTests {
     @Test func aWrappedLineContinuesUnderItsIndentation() throws {
         let (editor, window) = Self.editor("    " + Array(repeating: "word", count: 80).joined(separator: " "))
         defer { window.close() }
+        editor.textView.fontSize = 13
         window.displayIfNeeded()
         let lines = try #require(editor.textView.fragments.first?.fragment.textLineFragments)
         try #require(lines.count > 1)
         #expect(abs(lines[1].typographicBounds.minX - lines[0].locationForCharacter(at: 4).x) < 0.5)
+        #expect(abs(lines[1].typographicBounds.minY - lines[0].typographicBounds.minY - 18) < 0.5)
     }
 
     @Test func scrollingReportsTheTopLine() throws {

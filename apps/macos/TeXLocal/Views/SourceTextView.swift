@@ -35,6 +35,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         sync = EditSync()
         breakUndoCoalescing()
         fragments.removeAll(keepingCapacity: true)
+        staleStructuralRange = nil
         issues.place()
         inputContext?.discardMarkedText()
         unmarkText()
@@ -103,12 +104,18 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var fontSize = NSFont.systemFontSize { didSet { if fontSize != oldValue { applyFont() } } }
     var fontName = "" { didSet { if fontName != oldValue { applyFont() } } }
     private var applied: NSFont?
+    private(set) var structuralFont: NSFont?
 
     private func applyFont() {
-        let font = Self.font(named: fontName, size: fontSize, dark: inDarkAppearance)
-        guard font != applied else { return }
+        let dark = inDarkAppearance
+        let font = Self.font(named: fontName, size: fontSize, dark: dark)
+        let system = Self.font(named: "", size: fontSize, dark: dark)
+        let emphasis = font == system ? NSFont.monospacedSystemFont(ofSize: fontSize, weight: dark ? .bold : .semibold)
+            : NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        guard font != applied || emphasis != structuralFont else { return }
         let resized = applied?.pointSize != font.pointSize || applied?.familyName != font.familyName
         applied = font
+        structuralFont = emphasis
         let top = shownTop
         defer {
             top.map(scroll(toShownTop:))
@@ -120,9 +127,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         completions.close()
         typingAttributes[.font] = font
         guard resized else { return }
-        let natural = font.ascender.rounded(.up) - font.descender.rounded(.down) + font.leading
+        let rowHeight = NSLayoutManager().defaultLineHeight(for: font)
         let style = NSMutableParagraphStyle()
-        style.minimumLineHeight = (natural * 1.1).rounded()
+        // Xcode's default themes use 1.1× leading. Space the rows while keeping the native caret height.
+        style.lineSpacing = (rowHeight * 1.1).rounded() - rowHeight
         defaultParagraphStyle = style
         textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
@@ -133,19 +141,34 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     func textContentStorage(_ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange) -> NSTextParagraph? {
         guard let text = textContentStorage.textStorage?.attributedSubstring(from: range), text.length > 0,
-              let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
-              let shown = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+              let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         else { return nil }
-        let indent = text.string.prefix { $0 == " " || $0 == "\t" }
-        guard !indent.isEmpty else { return nil }
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: shown]
-        let width = { (text: String) in (text as NSString).size(withAttributes: attributes).width }
-        // Measuring puts the style in attributed text, and a paragraph style mustn't change once it's there (changing the
-        // measured one doubled the time to indent 2,000 lines), so the indent goes on a copy made afterwards.
-        let style = shown.mutableCopy() as! NSMutableParagraphStyle
-        style.headIndent = min(width(String(indent)), 20 * width(" "))
+        let string = text.string
+        let indent = string.prefix { $0 == " " || $0 == "\t" }
+        let trailing = issues.trailingInset(on: document.line(at: range.location))
+        let commands = structuralFont == font ? [] : structuralCommands(in: range, of: string as NSString)
+        let blank = string.first?.isNewline == true && string.dropFirst().isEmpty
+        let styled = blank || !indent.isEmpty || trailing > 0
+        guard styled || !commands.isEmpty else { return nil }
         let paragraph = NSMutableAttributedString(attributedString: text)
-        paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))
+        if styled {
+            let shown = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle ?? defaultParagraphStyle ?? .default
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: shown]
+            let width = { (text: String) in (text as NSString).size(withAttributes: attributes).width }
+            // Measuring puts the style in attributed text. Copy it before changing the indents.
+            let style = shown.mutableCopy() as! NSMutableParagraphStyle
+            style.headIndent = min(width(String(indent)), 20 * width(" "))
+            if trailing > 0 { style.tailIndent = -trailing }
+            // TextKit includes line spacing in a blank row's caret. Put that space above the row instead.
+            if blank {
+                style.paragraphSpacingBefore = style.lineSpacing
+                style.lineSpacing = 0
+            }
+            paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))
+        }
+        if let structuralFont {
+            for command in commands { paragraph.addAttribute(.font, value: structuralFont, range: command) }
+        }
         return NSTextParagraph(attributedString: paragraph)
     }
 
@@ -165,6 +188,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var showsLineNumbers = true { didSet { if showsLineNumbers != oldValue { updateGutterWidth() } } }
     private(set) lazy var issues = IssueOverlay(in: self)
     var staleColours: Int?
+    var staleStructuralRange: NSRange?
     let fragmentColours = NSMapTable<NSTextLayoutFragment, NSArray>.weakToStrongObjects()
     var partnerMark: NSRange?
     var partnerDrawn: NSRect?

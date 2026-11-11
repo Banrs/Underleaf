@@ -13,7 +13,7 @@ struct LogPane: View {
         let shown = filtering ? filtered ?? text : text
         Group {
             if shown.isEmpty, filtering {
-                NoFilterResults()
+                ContentUnavailableView.search
             } else {
                 GeometryReader { geometry in
                     LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)

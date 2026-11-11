@@ -35,6 +35,17 @@ final class PDFFind: NSObject, NSMenuItemValidation {
 
     func close() { finder.performAction(.hideFindInterface) }
 
+    func clear() {
+        close()
+        reading?.cancel()
+        reading = nil
+        finder.noteClientStringWillChange()
+        finder.findBarContainer = nil
+        text.pageStrings = []
+        lit = [:]
+        view.highlightedSelections = nil
+    }
+
     private var shown: NSTextFinder? {
         guard view.document != nil, let scrollView = view.pageScrollView else { return nil }
         finder.findBarContainer = scrollView
