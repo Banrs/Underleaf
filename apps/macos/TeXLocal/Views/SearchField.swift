@@ -19,10 +19,11 @@ struct FilterField<Toggles: View>: View {
                     Section("Show") { ForEach(options.indices, id: \.self) { Toggle(options[$0].title, isOn: options[$0].isOn) } }
                 } label: {
                     // A plain menu button draws no indicator of its own.
-                    HStack(spacing: -1.5) {
+                    HStack(spacing: -1) {
                         symbol
-                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .heavy))
                     }
+                    .padding(.trailing, -1)
                     .foregroundStyle(.filterSymbol)
                     .accessibilityLabel("Filter Options")
                 }
