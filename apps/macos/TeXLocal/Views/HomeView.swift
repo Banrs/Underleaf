@@ -260,8 +260,7 @@ private struct ProjectLabel<Name: View>: View {
             }
             .frame(width: thumbnail.width, height: thumbnail.height)
             .accessibilityHidden(true)
-            .task(id: pdf.map { "\($0.built) \(scale) \($0.path)" }) { [scale] in
-                guard !Task.isCancelled else { return }
+            .task(id: pdf.map { "\($0.built) \(scale) \($0.path)" }) {
                 guard let pdf else { return page = nil }
                 let request = QLThumbnailGenerator.Request(fileAt: URL(filePath: pdf.path), size: thumbnail, scale: scale,
                                                            representationTypes: .thumbnail)

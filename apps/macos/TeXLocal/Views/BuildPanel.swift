@@ -71,7 +71,6 @@ struct LogTextView: NSViewRepresentable {
         let scroll = NSTextView.scrollableTextView()
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentView.automaticallyAdjustsContentInsets = false
         let view = scroll.documentView as! NSTextView
         view.isEditable = false
         view.textContainerInset = NSSize(width: 10, height: 8)
@@ -89,10 +88,9 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
-        if scroll.contentInsets.bottom != bottomInset || scroll.contentView.contentInsets.bottom != bottomInset {
+        if scroll.contentInsets.bottom != bottomInset {
             let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
             scroll.contentInsets.bottom = bottomInset
-            scroll.contentView.contentInsets.bottom = bottomInset
             scroll.scrollerInsets.bottom = bottomInset
             if atEnd { scrollToEnd(scroll, view) }
         }
