@@ -14,7 +14,6 @@ struct FilterField<Toggles: View>: View {
         let large = controlSize == .large
         let active = !text.isEmpty || hasActiveOptions
         let symbol = Image(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-            .font(large ? nil : .subheadline)
             .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
         HStack(spacing: 4) {
             if options.isEmpty {

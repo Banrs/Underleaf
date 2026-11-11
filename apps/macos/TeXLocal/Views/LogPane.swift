@@ -5,6 +5,8 @@ struct LogPane: View {
     let filter: String
     let hiddenKinds: Set<LogKind>
     let title: String
+    @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var colorScheme
     @State private var filtered: String?
 
     var body: some View {
@@ -16,7 +18,8 @@ struct LogPane: View {
                 ContentUnavailableView.search
             } else {
                 GeometryReader { geometry in
-                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom)
+                    LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom,
+                                font: SourceTextView.font(named: app.fontName, size: CGFloat(app.fontSize), dark: colorScheme == .dark))
                         .ignoresSafeArea(.container, edges: .bottom)
                 }
             }

@@ -41,6 +41,7 @@ struct BuildPanelBar: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .buttonStyle(.borderless)
+            .controlSize(.small)
             .padding(.horizontal, 10)
             .frame(height: 24)
             .glassEffect(.regular.interactive(), in: .capsule)
@@ -58,6 +59,7 @@ struct BuildPanelBar: View {
                         hasActiveOptions: !panel.hiddenLogKinds.isEmpty) {}
                 .frame(maxWidth: 182)
         }
+        .font(.subheadline)
         .padding(7)
     }
 }
@@ -66,18 +68,22 @@ struct LogTextView: NSViewRepresentable {
     let text: String
     let title: String
     let bottomInset: CGFloat
+    /// The editor's font, as Xcode's console takes its editor's size.
+    let font: NSFont
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
         let view = scroll.documentView as! NSTextView
+        // TextKit 2 estimates the height of rows it hasn't laid out without their line spacing, which leaves the end of
+        // the log short of its last line. Asking for the layout manager moves the view to TextKit 1, whose heights are exact.
+        _ = view.layoutManager
         view.isEditable = false
-        view.textContainerInset = NSSize(width: 10, height: 8)
+        // With the container's own padding, text starts 16 pt in, as in Xcode's console.
+        view.textContainerInset = NSSize(width: 11, height: 8)
         view.usesFindBar = true
         view.isIncrementalSearchingEnabled = true
-        view.font = .monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize,
-                                          weight: .regular)
         return scroll
     }
 
@@ -88,6 +94,12 @@ struct LogTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
+        if view.font != font {
+            let style = SourceTextView.rowStyle(for: font)
+            view.font = font
+            view.defaultParagraphStyle = style
+            view.textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: view.textStorage?.length ?? 0))
+        }
         if scroll.contentInsets.bottom != bottomInset {
             let atEnd = scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1
             scroll.contentInsets.bottom = bottomInset
@@ -108,11 +120,11 @@ struct LogTextView: NSViewRepresentable {
         let followsTail = !scroll.isFindBarVisible && selections.allSatisfy { $0.length == 0 }
             && (shown.isEmpty || scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1)
         let previousLength = (shown as NSString).length, new = text as NSString
-        if previousLength > 0, text.utf16.starts(with: shown.utf16) {
-            view.textStorage?.replaceCharacters(in: .caret(previousLength), with: new.substring(from: previousLength))
-        } else {
-            view.string = text
-        }
+        let added = previousLength > 0 && text.utf16.starts(with: shown.utf16)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: view.defaultParagraphStyle ?? .default,
+                                                         .foregroundColor: NSColor.textColor]
+        view.textStorage?.replaceCharacters(in: added ? .caret(previousLength) : NSRange(location: 0, length: previousLength),
+                                            with: NSAttributedString(string: added ? new.substring(from: previousLength) : text, attributes: attributes))
         view.didChangeText()
         let length = new.length
         view.selectedRanges = selections.map { range in
@@ -130,8 +142,8 @@ struct LogTextView: NSViewRepresentable {
     private func scrollToEnd(_ scroll: NSScrollView, _ view: NSTextView) {
         view.scrollToEndOfDocument(nil)
         // SwiftUI may finish sizing the viewport after this update. Follow its final bottom inset too.
-        Task { [weak scroll, weak view] in
-            guard let scroll, let view, scroll.documentVisibleRect.maxY >= view.bounds.maxY - 1 else { return }
+        Task { [weak scroll] in
+            guard let scroll else { return }
             let clip = scroll.contentView
             var bottom = clip.bounds
             bottom.origin.y = clip.documentRect.maxY

@@ -95,9 +95,10 @@ struct ListsPixelTests {
         try await hosted("symbol-library", height: SymbolLibraryView.height, SymbolLibraryView(app: windowModel.app, insert: { _ in }, close: {}))
 
         let log = "This is pdfTeX, Version 3.141592653\n! Undefined control sequence.\nl.12 \\foo\nOutput written on main.pdf (3 pages)."
-        try await hosted("log", width: 420, height: 120, LogPane(text: log, filter: "", hiddenKinds: [], title: "Build Log"))
-        try await hosted("log-filtered", width: 420, height: 120, LogPane(text: log, filter: "Output", hiddenKinds: [], title: "Build Log"))
-        try await hosted("log-no-match", width: 420, height: 120, LogPane(text: log, filter: "zzz", hiddenKinds: [], title: "Build Log"))
+        for (name, filter) in [("log", ""), ("log-filtered", "Output"), ("log-no-match", "zzz")] {
+            try await hosted(name, width: 420, height: 120,
+                             LogPane(text: log, filter: filter, hiddenKinds: [], title: "Build Log").environment(windowModel.app))
+        }
 
         // One navigator through each state, so a header that isn't measured again as it changes shows.
         let project = ProjectModel(id: "Pixels", window: windowModel)
