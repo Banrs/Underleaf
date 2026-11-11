@@ -48,12 +48,15 @@ struct BuildPanelBar: View {
             .fixedSize()
             Spacer(minLength: 0)
             let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
-            Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .labelStyle(.iconOnly)
-                .help("Copy the whole log")
-                .disabled(text.isEmpty)
+            Button { NSPasteboard.general.replaceContents(with: text) } label: {
+                // A glass button sets its label at the control's 13 pt, which fills the circle beside the bar's 11 pt symbols.
+                Label("Copy Log", systemImage: "document.on.document").font(.subheadline)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .labelStyle(.iconOnly)
+            .help("Copy the whole log")
+            .disabled(text.isEmpty)
             FilterField(text: $panel.logFilter, help: String(localized: "Show lines with matching text"),
                         options: LogKind.allCases.map { ($0.title, $panel.hiddenLogKinds[lacks: $0]) },
                         hasActiveOptions: !panel.hiddenLogKinds.isEmpty) {}
@@ -68,7 +71,6 @@ struct LogTextView: NSViewRepresentable {
     let text: String
     let title: String
     let bottomInset: CGFloat
-    /// The editor's font, as Xcode's console takes its editor's size.
     let font: NSFont
 
     func makeNSView(context: Context) -> NSScrollView {
