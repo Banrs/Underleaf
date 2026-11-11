@@ -1,12 +1,5 @@
 import SwiftUI
 
-private enum FilterBarMetrics {
-    static let controlHeight = NSSearchField().intrinsicContentSize.height
-    static let font = Font.system(size: NSFont.systemFontSize(for: .regular))
-    static let spacing: CGFloat = 6
-    static let inset: CGFloat = 7
-}
-
 struct BuildPanel: View {
     let project: ProjectModel
 
@@ -31,13 +24,15 @@ struct BuildPanel: View {
     }
 }
 
-/// The log's controls along its bottom edge.
+/// The log's controls, which float over its bottom edge on glass so the log scrolls beneath them.
 struct BuildPanelBar: View {
     let project: ProjectModel
 
     var body: some View {
         @Bindable var panel = project.panel
-        HStack(spacing: FilterBarMetrics.spacing) {
+        HStack(spacing: 6) {
+            // Neither a menu nor a menu picker takes the glass button style, so the capsule is drawn here at a regular
+            // control's height.
             Picker("Show", selection: $panel.tab) {
                 ForEach(PanelTab.allCases, id: \.self) { tab in
                     Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
@@ -47,29 +42,23 @@ struct BuildPanelBar: View {
             .labelsHidden()
             .buttonStyle(.borderless)
             .padding(.horizontal, 10)
-            .frame(height: FilterBarMetrics.controlHeight)
+            .frame(height: 24)
             .glassEffect(.regular.interactive(), in: .capsule)
             .fixedSize()
             Spacer(minLength: 0)
             let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
-            Button { NSPasteboard.general.replaceContents(with: text) } label: {
-                Label("Copy Log", systemImage: "document.on.document").labelStyle(.iconOnly)
-                    .frame(width: FilterBarMetrics.controlHeight, height: FilterBarMetrics.controlHeight)
-                    .contentShape(.circle)
-            }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .help("Copy the whole log")
-            .disabled(text.isEmpty)
+            Button("Copy Log", systemImage: "document.on.document") { NSPasteboard.general.replaceContents(with: text) }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .labelStyle(.iconOnly)
+                .help("Copy the whole log")
+                .disabled(text.isEmpty)
             FilterField(text: $panel.logFilter, help: String(localized: "Show lines with matching text"),
                         options: LogKind.allCases.map { ($0.title, $panel.hiddenLogKinds[lacks: $0]) },
-                        height: FilterBarMetrics.controlHeight, symbolFont: .subheadline,
                         hasActiveOptions: !panel.hiddenLogKinds.isEmpty) {}
                 .frame(maxWidth: 182)
         }
-        .controlSize(.regular)
-        .font(FilterBarMetrics.font)
-        .padding(FilterBarMetrics.inset)
+        .padding(7)
     }
 }
 

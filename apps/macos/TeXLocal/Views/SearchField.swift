@@ -4,19 +4,17 @@ import SwiftUI
 /// before its toggles.
 struct FilterField<Toggles: View>: View {
     @Environment(\.controlSize) private var controlSize
-    @Environment(\.font) private var font
     @Binding var text: String
     var help = ""
     var options: [(title: String, isOn: Binding<Bool>)] = []
-    var height: CGFloat?
-    var symbolFont: Font?
     var hasActiveOptions = false
     @ViewBuilder var toggles: Toggles
 
     var body: some View {
+        let large = controlSize == .large
         let active = !text.isEmpty || hasActiveOptions
         let symbol = Image(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-            .font(symbolFont ?? font)
+            .font(large ? nil : .subheadline)
             .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
         HStack(spacing: 4) {
             if options.isEmpty {
@@ -42,7 +40,8 @@ struct FilterField<Toggles: View>: View {
             toggles
         }
         .padding(.horizontal, 7)
-        .frame(height: height ?? (controlSize == .large ? 28 : 22))
+        // AppKit's heights for a large and a regular field.
+        .frame(height: large ? 28 : 24)
         .glassEffect(.regular.interactive(), in: .capsule)
         .buttonStyle(.plain)
         .toggleStyle(.button)
