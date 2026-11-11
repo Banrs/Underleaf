@@ -91,11 +91,9 @@ struct ChromePixelTests {
         try await bar("compiling")
 
         let sidebar = workspace.splitViewItems[0].viewController.view
-        let filterBar = try #require(workspace.splitViewItems[0].bottomAlignedAccessoryViewControllers.first?.view)
         func navigator(_ name: String) async throws {
             try await settlePixelLayout()
             try write("navigator-\(name)-\(suffix)", sidebar, sidebar.bounds)
-            try write("filterbar-\(name)-\(suffix)", filterBar, filterBar.bounds)
             try await capture("navigator-\(name)")
         }
         project.navigator.shown = .files

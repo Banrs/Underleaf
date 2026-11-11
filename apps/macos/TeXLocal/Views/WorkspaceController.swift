@@ -83,7 +83,6 @@ final class WorkspaceController: ThinSplitViewController {
     private func buildSidebar() {
         sidebarItem = NSSplitViewItem(sidebarWithViewController: NavigatorArea(host(NavigatorPane(project: project, field: searchField), width: Self.sidebarWidth)))
         sidebarItem.minimumThickness = 222
-        sidebarItem.addBottomAlignedAccessoryViewController(accessory(NSHostingView(rootView: NavigatorFilterBar(project: project, window: window)), edge: .soft))
         addSplitViewItem(sidebarItem)
     }
 
@@ -113,9 +112,12 @@ final class WorkspaceController: ThinSplitViewController {
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
         for item in [sourceItem!, pdfItem!] {
-            let space = NSView()
-            space.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
-            item.addBottomAlignedAccessoryViewController(accessory(space, edge: .hard))
+            let space = NSSplitViewItemAccessoryViewController()
+            space.view = NSView()
+            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
+            space.automaticallyAppliesContentInsets = false
+            space.preferredScrollEdgeEffectStyle = .hard
+            item.addBottomAlignedAccessoryViewController(space)
         }
         let bar = NSHostingView(rootView: Pane(project: project, content: StatusBar(project: project))
             .environment(app).environment(window).environment(views))
@@ -182,14 +184,6 @@ final class WorkspaceController: ThinSplitViewController {
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
         return host
-    }
-
-    private func accessory(_ view: NSView, edge: NSScrollEdgeEffectStyle) -> NSSplitViewItemAccessoryViewController {
-        let accessory = NSSplitViewItemAccessoryViewController()
-        accessory.view = view
-        accessory.automaticallyAppliesContentInsets = false
-        accessory.preferredScrollEdgeEffectStyle = edge
-        return accessory
     }
 
     private func watch() {

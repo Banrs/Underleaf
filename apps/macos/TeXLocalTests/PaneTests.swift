@@ -78,7 +78,7 @@ struct PaneTests {
         panel.isCollapsed = false
         #expect(workspace.project.panel.shown)
         window.layoutIfNeeded()
-        let field = try #require(panel.viewController.view.descendants(of: NSSearchField.self).first)
+        let field = try #require(panel.viewController.view.descendants(of: NSTextField.self).first { $0.isEditable })
         #expect(window.makeFirstResponder(field))
         panel.isCollapsed = true
         #expect(!workspace.project.panel.shown && window.firstResponder === workspace.pdf.view)

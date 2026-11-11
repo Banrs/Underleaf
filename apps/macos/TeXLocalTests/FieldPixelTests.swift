@@ -46,7 +46,7 @@ struct FieldPixelTests {
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = false } }
         }
 
-        let bar = NSHostingView(rootView: NavigatorFilterBar(project: project, window: windowModel))
+        let bar = NSHostingView(rootView: NavigatorFilterBar(project: project).environment(windowModel))
         for navigator in Navigator.allCases {
             project.navigator.shown = navigator
             for text in ["", "intro"] {

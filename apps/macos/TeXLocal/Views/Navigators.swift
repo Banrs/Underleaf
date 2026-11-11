@@ -49,8 +49,8 @@ extension Navigator {
 
 /// The bar under the navigators: the shown one's filter in a glass capsule, after a + while it's Files.
 struct NavigatorFilterBar: View {
+    @Environment(WindowModel.self) private var window
     let project: ProjectModel
-    let window: WindowModel
 
     var body: some View {
         @Bindable var model = project.navigator
@@ -149,10 +149,11 @@ struct NavigatorPane: View {
                 list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: []).accessibilityHidden(!shown)
             }
         }
-        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
         .safeAreaBar(edge: .top, spacing: 0) {
             Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, 8)
         }
+        .safeAreaBar(edge: .bottom, spacing: 0) { NavigatorFilterBar(project: project) }
     }
 
     @ViewBuilder private func list(_ navigator: Navigator) -> some View {
