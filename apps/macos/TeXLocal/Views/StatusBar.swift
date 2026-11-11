@@ -5,6 +5,13 @@ enum BarMetrics {
     static let height: CGFloat = 36
 }
 
+/// Xcode's spacing between the bar's texts: 14 pt to the first, 16 between items and 9 before the divider.
+private enum Spacing {
+    static let lead: CGFloat = 14
+    static let items: CGFloat = 16
+    static let divider: CGFloat = 9
+}
+
 private struct BarLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -34,7 +41,7 @@ private struct BarButtonStyle: ButtonStyle {
 
         var body: some View {
             label.foregroundStyle(color)
-                .padding(.horizontal, 6)
+                .padding(.horizontal, Spacing.items / 2)
                 .frame(minHeight: 20)
                 .contentShape(.rect)
                 .onHover { hovered = $0 }
@@ -64,7 +71,8 @@ struct StatusBar: View {
         .lineLimit(1)
         .monospacedDigit()
         .buttonStyle(BarButtonStyle())
-        .padding(.horizontal, 8)
+        .padding(.leading, Spacing.lead - Spacing.items / 2)
+        .padding(.trailing, 8)
         .frame(maxWidth: .infinity)
         .frame(height: BarMetrics.height)
         .pointerStyle(.default)
@@ -84,7 +92,7 @@ struct StatusBar: View {
             WordCount(project: project, detail: detail)
             Spacer(minLength: 0)
             PagePlace(project: project, detail: detail)
-            if PagePlace.shows(project, window) { Divider().frame(height: 12).padding(.leading, 3) }
+            if PagePlace.shows(project, window) { Divider().frame(height: 12).padding(.leading, Spacing.divider - Spacing.items / 2) }
             PanelToggle(project: project)
         }
     }
@@ -282,7 +290,6 @@ private struct PanelToggle: View {
             Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
-                .frame(minWidth: 18)
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
@@ -298,5 +305,5 @@ private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short
 
 private extension View {
     /// Text between the bar's buttons, given the room their labels take.
-    func barText() -> some View { padding(.horizontal, 10) }
+    func barText() -> some View { padding(.horizontal, Spacing.items / 2) }
 }
