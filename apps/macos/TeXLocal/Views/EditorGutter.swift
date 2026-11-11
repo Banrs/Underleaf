@@ -1,14 +1,6 @@
 import AppKit
 
 struct EditorGutter {
-    private static let xcodeDigits: CGFont? = {
-        let xcode = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode")
-            ?? URL(filePath: "/Applications/Xcode.app", directoryHint: .isDirectory)
-        let url = xcode.appending(path: "Contents/SharedFrameworks/DVTUserInterfaceKit.framework/Resources/Fonts/XcodeDigits-regular.ttf")
-        guard let data = CGDataProvider(url: url as CFURL) else { return nil }
-        return CGFont(data)
-    }()
-
     static let numberColor: NSColor = {
         let raised: [NSAppearance.Name] = [.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]
         return .adapting(Dictionary(uniqueKeysWithValues: raised.map { ($0, NSColor.tertiaryLabelColor.legibleAsText(in: $0)) }),
@@ -20,12 +12,10 @@ struct EditorGutter {
     private(set) var numbersEnd: CGFloat = 0
     var font = NSFont.systemFont(ofSize: NSFont.systemFontSize) {
         didSet {
-            numberFont = Self.xcodeDigits.map { CTFontCreateWithGraphicsFont($0, font.pointSize, nil, nil) as NSFont }
             numbers.removeAll()
             width = 0
         }
     }
-    private var numberFont: NSFont?
     private var numbers: [Int: (line: CTLine, width: CGFloat)] = [:]
     var drawnLine: CGRect?
 
@@ -33,8 +23,7 @@ struct EditorGutter {
 
     mutating func fit(lineCount: Int, numbered: Bool, padding: CGFloat) -> Bool {
         digits = Self.digits(lineCount)
-        // Keep the gutter and fold controls sized by the system font even when XcodeDigits is available.
-        let digit = typeset("0", in: font).width
+        let digit = number(0).width
         let numbers = numbered ? CGFloat(digits) * digit : 0
         // At 13 pt, Xcode's numbers end at 39.7 pt and its source text starts at 51 pt.
         numbersEnd = padding + numbers + (numbered ? padding / 2 : 0)
@@ -47,7 +36,7 @@ struct EditorGutter {
     mutating func number(_ number: Int) -> (line: CTLine, width: CGFloat) {
         if let cached = numbers[number] { return cached }
         if numbers.count > 4096 { numbers.removeAll(keepingCapacity: true) }
-        let line = typeset(String(number), in: numberFont ?? font)
+        let line = typeset(String(number), in: font)
         numbers[number] = line
         return line
     }

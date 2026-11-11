@@ -120,19 +120,16 @@ final class WorkspaceController: ThinSplitViewController {
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
         // The status bar moves with the columns and lets their content scroll beneath it.
-        columnsItem.addBottomAlignedAccessoryViewController(bar(StatusBar(project: project)))
+        let bar = NSSplitViewItemAccessoryViewController()
+        bar.view = NSHostingView(rootView: Pane(project: project, content: StatusBar(project: project))
+            .environment(app).environment(window).environment(views))
+        bar.automaticallyAppliesContentInsets = false
+        bar.preferredScrollEdgeEffectStyle = .hard
+        columnsItem.addBottomAlignedAccessoryViewController(bar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
         addSplitViewItem(areaItem)
-    }
-
-    private func bar(_ content: some View) -> NSSplitViewItemAccessoryViewController {
-        let bar = NSSplitViewItemAccessoryViewController()
-        bar.view = NSHostingView(rootView: Pane(project: project, content: content).environment(app).environment(window).environment(views))
-        bar.automaticallyAppliesContentInsets = false
-        bar.preferredScrollEdgeEffectStyle = .hard
-        return bar
     }
 
     override func toggleInspector(_ sender: Any?) {

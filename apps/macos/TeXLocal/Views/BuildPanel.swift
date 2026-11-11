@@ -38,29 +38,17 @@ struct BuildPanelBar: View {
     var body: some View {
         @Bindable var panel = project.panel
         HStack(spacing: FilterBarMetrics.spacing) {
-            Menu {
-                Picker("Show", selection: $panel.tab) {
-                    ForEach(PanelTab.allCases, id: \.self) { tab in
-                        Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
-                    }
+            Picker("Show", selection: $panel.tab) {
+                ForEach(PanelTab.allCases, id: \.self) { tab in
+                    Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } label: {
-                HStack(spacing: 5) {
-                    Text(panel.tab.title)
-                    Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary).accessibilityHidden(true)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: FilterBarMetrics.controlHeight)
-                .contentShape(.capsule)
             }
-            .menuIndicator(.hidden)
-            .buttonStyle(.plain)
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 10)
+            .frame(height: FilterBarMetrics.controlHeight)
             .glassEffect(.regular.interactive(), in: .capsule)
-            .accessibilityLabel("Show")
-            .accessibilityValue(panel.tab.title)
             .fixedSize()
             Spacer(minLength: 0)
             let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
