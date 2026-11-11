@@ -285,23 +285,6 @@ final class NavigatorField: NSSearchField {
         get { Cell.self }
         set {}
     }
-
-    func keepRecents(as name: String) {
-        recentsAutosaveName = name
-        let menu = NSMenu()
-        for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
-                             (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
-                             (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
-            menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
-        }
-        searchMenuTemplate = menu
-    }
-
-    /// Adds the field's text to its recents, which a field sending each keystroke never does itself.
-    func remember() {
-        guard !stringValue.isEmpty else { return }
-        recentSearches = Array(([stringValue] + recentSearches.filter { $0 != stringValue }).prefix(10))
-    }
 }
 
 private extension Navigator {
@@ -358,7 +341,7 @@ struct NavigatorPane: View {
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .safeAreaBar(edge: .top, spacing: 0) {
-            Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, project.navigator.shown == .search ? 2 : 8)
+            Chooser(project: project).controlSize(.large).padding(.horizontal, 7).padding(.bottom, 8)
         }
     }
 

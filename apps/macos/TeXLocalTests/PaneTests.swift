@@ -6,52 +6,6 @@ struct PaneTests {
     private static let toggleSidebar = #selector(NSSplitViewController.toggleSidebar(_:))
     private static let toggleInspector = #selector(NSSplitViewController.toggleInspector(_:))
 
-    @Test func theFindBreadcrumbTraversesItsComponentsAndThenLeavesInEitherDirection() throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 100),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        let before = NSTextField(frame: NSRect(x: 0, y: 60, width: 100, height: 24))
-        let after = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 24))
-        let crumb = Breadcrumb { _, _ in }
-        crumb.items = [.init(choices: ["Find", "Replace"], chosen: 0), .init(choices: ["Text", "Whole Words"], chosen: 0)]
-        crumb.frame = NSRect(x: 0, y: 30, width: 200, height: 19)
-        for view in [before, crumb, after] { window.contentView?.addSubview(view) }
-        before.nextKeyView = crumb
-        crumb.nextKeyView = after
-        window.layoutIfNeeded()
-        #expect(!crumb.acceptsFirstResponder)
-        window.selectKeyView(following: before)
-        #expect(window.firstResponder === crumb && crumb.acceptsFirstResponder)
-        let first = crumb.focusRingMaskBounds
-        #expect(first.width > 0)
-        func key(_ text: String, code: UInt16) throws {
-            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-                                                     windowNumber: window.windowNumber, context: nil, characters: text,
-                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
-            crumb.keyDown(with: event)
-        }
-        try key("\u{f703}", code: 124)
-        let second = crumb.focusRingMaskBounds
-        #expect(second.minX == first.maxX)
-        try key("\u{f703}", code: 124)
-        #expect(crumb.focusRingMaskBounds == second)
-        try key("\u{f702}", code: 123)
-        #expect(crumb.focusRingMaskBounds == first)
-        try key("\t", code: 48)
-        #expect(window.firstResponder === crumb && crumb.focusRingMaskBounds == second)
-        crumb.selectNextKeyView(nil)
-        #expect(window.firstResponder === after.currentEditor())
-        window.selectKeyView(preceding: after)
-        #expect(window.firstResponder === crumb && crumb.focusRingMaskBounds == second)
-        crumb.insertBacktab(nil)
-        #expect(crumb.focusRingMaskBounds == first)
-        crumb.selectPreviousKeyView(nil)
-        #expect(window.firstResponder === before.currentEditor())
-        let parts = try #require(crumb.accessibilityChildren() as? [NSAccessibilityElement])
-        #expect(parts.count == 2 && parts.allSatisfy { $0.accessibilityRole() == .popUpButton })
-    }
-
     @Test func tabbingOutOfFilesSkipsTheHiddenNavigatorsAndFindGivesUpTheKeyboardAsItHides() throws {
         let defaults = TestDefaults()
         let (window, workspace) = workspaceWindow(defaults.window())
@@ -61,8 +15,8 @@ struct PaneTests {
         (project.search.replacing, project.navigator.shown) = (true, .files)
         let sidebar = workspace.splitViewItems[0].viewController.view
         sidebar.layoutSubtreeIfNeeded()
-        let fields = sidebar.descendants(of: NSSearchField.self), lists = sidebar.descendants(of: NSOutlineView.self)
-        #expect(fields.count == 2 && lists.count == Navigator.allCases.count)
+        let fields = sidebar.descendants(of: NSTextField.self).filter(\.isEditable), lists = sidebar.descendants(of: NSOutlineView.self)
+        #expect(fields.count == 2 && fields[0] is NSSearchField && lists.count == Navigator.allCases.count)
         func inFind() -> Bool { fields.contains { $0.currentEditor() != nil } }
         for step in [NSWindow.selectNextKeyView(_:), NSWindow.selectPreviousKeyView(_:)] {
             #expect(window.makeFirstResponder(lists[0]))

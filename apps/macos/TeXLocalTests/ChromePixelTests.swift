@@ -114,13 +114,6 @@ struct ChromePixelTests {
         project.navigator.shown = .search
         project.search.replacing = true
         try await navigator("search")
-        if screen != nil, let header = sidebar.descendants(of: FindHeader.self).first {
-            try await hover(header, NSPoint(x: 20, y: 10))
-            try await capture("navigator-search-hover-mode")
-            try await hover(header, NSPoint(x: 90, y: 10))
-            try await capture("navigator-search-hover-criteria")
-            try await hover(columns, NSPoint(x: columns.bounds.width / 2, y: 300))
-        }
 
         project.panel.shown = true
         try await settlePixelLayout()

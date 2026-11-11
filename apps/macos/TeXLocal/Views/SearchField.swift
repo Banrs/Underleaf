@@ -83,6 +83,14 @@ final class FilterSearchField: NSSearchField {
     }
 }
 
+extension NSSearchField {
+    /// Adds the field's text to its recents, which a field sending each keystroke never does itself.
+    func remember() {
+        guard !stringValue.isEmpty else { return }
+        recentSearches = Array(([stringValue] + recentSearches.filter { $0 != stringValue }).prefix(10))
+    }
+}
+
 final class FieldHandle {
     weak var field: NSTextField?
 
@@ -101,6 +109,8 @@ struct SearchField: NSViewRepresentable {
     /// The text's size, when it isn't the field's.
     var textSize: NSControl.ControlSize?
     var handle: FieldHandle?
+    /// The name its recent searches are kept under and listed in its menu by.
+    var recents: String?
     var step: (@MainActor (Int) -> Void)?
     var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
@@ -123,6 +133,7 @@ struct SearchField: NSViewRepresentable {
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
                 guard let step = field.step else { return false }
+                if field.recents != nil { (control as? NSSearchField)?.remember() }
                 step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
                 return true
             case #selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveDown(_:)):
@@ -149,6 +160,7 @@ struct SearchField: NSViewRepresentable {
         view.delegate = context.coordinator
         view.target = context.coordinator
         view.action = #selector(Coordinator.changed(_:))
+        view.recentsAutosaveName = recents
         if large, let cell = view.cell as? NSSearchFieldCell {
             view.font = .systemFont(ofSize: 20)
             (view.isBezeled, view.drawsBackground, view.focusRingType) = (false, false, .none)
@@ -160,12 +172,22 @@ struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ view: NSSearchField, context: Context) {
         context.coordinator.field = self
-        if !options.isEmpty, let cell = view.cell as? NSSearchFieldCell {
+        // A field that leaves the screen while it has the keyboard would keep taking what's typed.
+        if !context.environment.isEnabled, view.currentEditor() != nil { view.window?.makeFirstResponder(nil) }
+        if !options.isEmpty || recents != nil, let cell = view.cell as? NSSearchFieldCell {
             let menu = NSMenu()
             if let optionsTitle { menu.addItem(.sectionHeader(title: optionsTitle)) }
             for (tag, option) in options.enumerated() {
                 let item = menu.addItem(withTitle: option.title, action: #selector(Coordinator.toggle(_:)), keyEquivalent: "")
                 (item.target, item.tag, item.state) = (context.coordinator, tag, option.isOn.wrappedValue ? .on : .off)
+            }
+            if recents != nil {
+                if !options.isEmpty { menu.addItem(.separator()) }
+                for (title, tag) in [(String(localized: "Recent Searches"), NSSearchField.recentsTitleMenuItemTag), ("", NSSearchField.recentsMenuItemTag),
+                                     (String(localized: "Clear Recents"), NSSearchField.clearRecentsMenuItemTag),
+                                     (String(localized: "No Recent Searches"), NSSearchField.noRecentsMenuItemTag)] {
+                    menu.addItem(withTitle: title, action: nil, keyEquivalent: "").tag = tag
+                }
             }
             cell.searchMenuTemplate = menu
         }

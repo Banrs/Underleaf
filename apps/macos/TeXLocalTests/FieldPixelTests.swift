@@ -68,10 +68,6 @@ struct FieldPixelTests {
         try await shot("bar-files-toggle-on", bar, height: bar.intrinsicContentSize.height)
         project.navigator.showsOnlyRecentFiles = false
 
-        let find = FindHeader(project: project, field: FieldHandle())
-        try await shot("find-header", find, height: max(find.fittingSize.height, 60))
-        try await shot("find-header-pressed", find, height: max(find.fittingSize.height, 60), pressing: true)
-
         for (name, symbol, options) in [("logs-filter", true, true), ("symbol-filter", true, false), ("plain-search", false, false)] {
             for text in ["", "intro"] {
                 let field = SearchField(text: .constant(text), prompt: "Filter", symbol: symbol ? SearchField.filterSymbol : nil, textSize: .small,
