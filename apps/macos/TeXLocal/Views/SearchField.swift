@@ -11,7 +11,7 @@ struct FilterField<Toggles: View>: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            let symbol = Image(systemName: "line.3.horizontal.decrease.circle").fontWeight(.medium)
+            let symbol = Image(systemName: "line.3.horizontal.decrease.circle")
             if options.isEmpty {
                 symbol.foregroundStyle(.filterSymbol).accessibilityHidden(true)
             } else {
@@ -50,7 +50,6 @@ struct FilterToggle: View {
     var body: some View {
         Toggle(label, systemImage: symbol, isOn: $isOn)
             .symbolVariant(isOn ? .fill : .none)
-            .fontWeight(.medium)
             .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
             .help(help)
     }
