@@ -15,8 +15,8 @@ struct PaneTests {
         (project.search.replacing, project.navigator.shown) = (true, .files)
         let sidebar = workspace.splitViewItems[0].viewController.view
         sidebar.layoutSubtreeIfNeeded()
-        let fields = sidebar.descendants(of: NSTextField.self).filter(\.isEditable), lists = sidebar.descendants(of: NSOutlineView.self)
-        #expect(fields.count == 2 && fields[0] is NSSearchField && lists.count == Navigator.allCases.count)
+        let fields = sidebar.descendants(of: NSSearchField.self), lists = sidebar.descendants(of: NSOutlineView.self)
+        #expect(fields.count == 2 && lists.count == Navigator.allCases.count)
         func inFind() -> Bool { fields.contains { $0.currentEditor() != nil } }
         for step in [NSWindow.selectNextKeyView(_:), NSWindow.selectPreviousKeyView(_:)] {
             #expect(window.makeFirstResponder(lists[0]))
