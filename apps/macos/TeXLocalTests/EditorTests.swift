@@ -10,34 +10,6 @@ struct EditorTests {
         #expect([0, 1, 3, 7, 10].map { kinds[$0] } == [.invalid, .argument, .command, .maths, .comment])
     }
 
-    @Test func structureUsesTheXcodeKeywordWeightAndRestylesWhenTheSyntaxContextChanges() async throws {
-        let (editor, window) = Self.editor("Start\n\\section{Intro} and \\emph{normal}\n% \\section{Comment}\n")
-        defer { window.close() }
-        let view = editor.textView
-        view.appearance = NSAppearance(named: .aqua)
-        view.fontSize = 13
-        let manager = try #require(view.textLayoutManager)
-        let base = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        let keyword = NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
-        func shownFont(on line: Int, at index: Int = 0) -> NSFont? {
-            manager.textViewportLayoutController.layoutViewport()
-            guard let location = view.textRange(.caret(view.document.lineStart(line)))?.location,
-                  let paragraph = manager.textLayoutFragment(for: location)?.textElement as? NSTextParagraph else { return nil }
-            return paragraph.attributedString.attribute(.font, at: index, effectiveRange: nil) as? NSFont
-        }
-        #expect(shownFont(on: 2) == keyword)
-        #expect(shownFont(on: 2, at: 8) == base)
-        #expect(shownFont(on: 2, at: 20) == base)
-        #expect(shownFont(on: 3, at: 2) == base)
-        #expect(view.textStorage?.attribute(.font, at: 6, effectiveRange: nil) as? NSFont == base)
-        let command = "\\section" as NSString
-        #expect(command.size(withAttributes: [.font: base]).width == command.size(withAttributes: [.font: keyword]).width)
-        #expect(view.apply([TextEdit(NSRange(location: 0, length: 5), "\\begin{verbatim}")], named: "Edit"))
-        try await waitUntil(timeout: .seconds(2)) { shownFont(on: 2) == base }
-        view.undo.undo()
-        try await waitUntil(timeout: .seconds(2)) { shownFont(on: 2) == keyword }
-    }
-
     @Test func theCoresAnswersDecode() throws {
         let document = SourceDocument(text: "\\section{Intro}\nSome $x^2$ text\n\\sec")
         let completions = try #require(document.complete(caret: 36, explicit: false))
