@@ -24,7 +24,7 @@ private struct FindHeader: View {
                 if search.usages == nil { Toggle("Replace", isOn: $search.replacing).controlSize(.regular) }
             }
             if search.showsReplace {
-                TextField("Replace With", text: $search.replacement).textFieldStyle(.roundedBorder)
+                SearchField(text: $search.replacement, prompt: String(localized: "Replace With"), symbol: "pencil")
                 HStack {
                     Spacer()
                     Button("Replace") { Task { await project.replaceChosen() } }
