@@ -192,22 +192,22 @@ struct SectionTests {
 
     @Test func liveStateIsTheStoresAndAFailureNeedsAttentionWhileTheSessionSaysSo() {
         let project = ProjectModel(id: "P", window: defaults.window())
-        let live = project.texpresso
         let state = { (phase: LivePhase, failures: [Message], attention: Bool, log: String?) in
             let state = LiveState(phase: phase, engine: .xelatex, halted: false, attention: attention, failures: failures, lines: [:])
             project.handle(.section(.live(state)))
             project.handle(.section(.liveLog(log ?? "")))
         }
         state(.stopped, [], false, nil)
-        #expect(live.phase == .stopped && !live.used && live.log.isEmpty && !live.needsAttention)
+        #expect(project.livePhase == .stopped && !project.livePreviewUsed && project.liveLog.isEmpty && !project.liveNeedsAttention)
         state(.running, [], false, "Output written.")
-        #expect(live.active && live.used && live.log == "Output written." && String(localized: live.title) == "Live Preview On")
+        #expect(project.liveActive && project.livePreviewUsed && project.liveLog == "Output written."
+                && String(localized: project.liveTitle) == "Live Preview On")
         let failed = Message(id: .texpressoExited, args: [:], text: "TeXpresso stopped.")
         state(.stopped, [failed], true, nil)
         project.handle(.liveAlert)
-        #expect(live.needsAttention && live.log == "TeXpresso stopped." && project.panel.showsLiveLog)
+        #expect(project.liveNeedsAttention && project.liveLog == "TeXpresso stopped." && project.panel.showsLiveLog)
         state(.stopped, [failed], false, nil)
-        #expect(!live.needsAttention && String(localized: live.title) == "Live Preview Stopped")
+        #expect(!project.liveNeedsAttention && String(localized: project.liveTitle) == "Live Preview Stopped")
     }
 
     @Test func eachDiskConflictTheSessionAsksAboutIsAskedUntilItIsAnswered() {

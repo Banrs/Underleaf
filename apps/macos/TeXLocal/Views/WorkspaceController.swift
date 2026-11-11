@@ -45,10 +45,9 @@ final class WorkspaceController: ThinSplitViewController {
         }
         watch()
         collapses = splitItems.map { item in
-            let id = ObjectIdentifier(item)
-            return item.observe(\.isCollapsed, options: .prior) { [weak self] _, change in
+            item.observe(\.isCollapsed, options: .prior) { [weak self] item, change in
                 let before = change.isPrior
-                MainActor.assumeIsolated { self?.collapse(id, before: before) }
+                MainActor.assumeIsolated { self?.collapse(item, before: before) }
             }
         }
         NotificationCenter.default.addObserver(toolbar, selector: #selector(WorkspaceToolbar.fit), name: NSView.frameDidChangeNotification, object: area.view)
@@ -149,8 +148,7 @@ final class WorkspaceController: ThinSplitViewController {
         searchField.focus()
     }
 
-    private func collapse(_ id: ObjectIdentifier, before: Bool) {
-        guard let item = splitItems.first(where: { ObjectIdentifier($0) == id }) else { return }
+    private func collapse(_ item: NSSplitViewItem, before: Bool) {
         guard before else {
             if item === panelItem, project.panel.shown == item.isCollapsed { project.panel.shown.toggle() }
             if item === inspectorItem { views.inspectorShown = !item.isCollapsed }

@@ -80,7 +80,7 @@ final class ProjectModel {
     var buildPDF: URL? { store.shownPdf?.path.map { URL(filePath: $0) } }
     let panel = BuildPanelModel()
     let navigator: NavigatorModel
-    let texpresso: TeXpressoSession
+    private(set) var livePreviewUsed = false
 
     var openURL: URL? { openPath.flatMap(url) }
     /// What the session asks about, less the answers sent and not yet heard back, so an answered alert isn't shown again.
@@ -115,7 +115,7 @@ final class ProjectModel {
     init(id: String, window: WindowModel) {
         self.id = id
         let store = SessionStore()
-        (self.store, tree, texpresso) = (store, FileTree(store: store), TeXpressoSession(store: store))
+        (self.store, tree) = (store, FileTree(store: store))
         session = SessionClient(core: window.app.core)
         listedName = window.app.projects.first { $0.id == id }?.name ?? id
         navigator = NavigatorModel(project: id, defaults: window.app.defaults)
@@ -245,7 +245,7 @@ final class ProjectModel {
         case .shownPdf(let shown):
             if shown.live, !live, window?.showPDF == false { window?.showPDF = true }
         case .live(let state):
-            texpresso.heard(state)
+            if state.phase != .stopped { livePreviewUsed = true }
         }
     }
 

@@ -11,18 +11,18 @@ struct BuildPanel: View {
     let project: ProjectModel
 
     var body: some View {
+        let live = project.panel.tab == .texpresso
+        let text = live ? project.liveLog : project.buildLog
         Group {
-            if project.panel.tab == .texpresso, project.texpresso.log.isEmpty {
-                ContentUnavailableView(project.texpresso.title, systemImage: "bolt", description: Text(
-                    project.texpresso.active ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
-            } else if project.panel.tab == .texpresso {
-                LogPane(text: project.texpresso.log, filter: project.panel.logFilter, hiddenKinds: project.panel.hiddenLogKinds,
-                        title: PanelTab.texpresso.title)
-            } else if project.buildLog.isEmpty {
-                ContentUnavailableView("No Build Log", systemImage: "text.page", description: Text("Compile to see the log here."))
+            if !text.isEmpty {
+                LogPane(text: text, filter: project.panel.logFilter, hiddenKinds: project.panel.hiddenLogKinds,
+                        title: project.panel.tab.title)
+                    .id(project.panel.tab)
+            } else if live {
+                ContentUnavailableView(project.liveTitle, systemImage: "bolt", description: Text(
+                    project.liveActive ? "The PDF pane shows Live Preview." : "Its log shows here while it runs."))
             } else {
-                LogPane(text: project.buildLog, filter: project.panel.logFilter, hiddenKinds: project.panel.hiddenLogKinds,
-                        title: PanelTab.log.title)
+                ContentUnavailableView("No Build Log", systemImage: "text.page", description: Text("Compile to see the log here."))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -40,7 +40,7 @@ struct BuildPanelBar: View {
         HStack(spacing: FilterBarMetrics.spacing) {
             Picker("Show", selection: $panel.tab) {
                 ForEach(PanelTab.allCases, id: \.self) { tab in
-                    Text(tab.title).selectionDisabled(tab == .texpresso && !project.texpresso.used)
+                    Text(tab.title).selectionDisabled(tab == .texpresso && !project.livePreviewUsed)
                 }
             }
             .pickerStyle(.menu)
@@ -51,7 +51,7 @@ struct BuildPanelBar: View {
             .glassEffect(.regular.interactive(), in: .capsule)
             .fixedSize()
             Spacer(minLength: 0)
-            let text = panel.tab == .texpresso ? project.texpresso.log : project.buildLog
+            let text = panel.tab == .texpresso ? project.liveLog : project.buildLog
             Button { NSPasteboard.general.replaceContents(with: text) } label: {
                 Label("Copy Log", systemImage: "document.on.document").labelStyle(.iconOnly)
                     .frame(width: FilterBarMetrics.controlHeight, height: FilterBarMetrics.controlHeight)
@@ -93,10 +93,6 @@ struct LogTextView: NSViewRepresentable {
         return scroll
     }
 
-    final class Coordinator { var shown: String? }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let view = scroll.documentView as! NSTextView
         view.setAccessibilityLabel(title)
@@ -107,13 +103,6 @@ struct LogTextView: NSViewRepresentable {
             scroll.scrollerInsets.bottom = bottomInset
             if atEnd { scrollToEnd(scroll, view) }
         }
-        guard context.coordinator.shown != text else { return }
-        updateText(in: scroll)
-        context.coordinator.shown = text
-    }
-
-    private func updateText(in scroll: NSScrollView) {
-        let view = scroll.documentView as! NSTextView
         let shown = view.string
         guard shown != text else { return }
         let selections = view.selectedRanges.map(\.rangeValue)

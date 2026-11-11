@@ -1,7 +1,6 @@
 use std::ops::Range;
 
 use crate::facts::Place;
-use crate::utf16;
 
 const WORD_START: i64 = 8;
 const RUN: i64 = 4;
@@ -69,13 +68,18 @@ impl Query {
             if found.is_empty() {
                 continue;
             }
-            let starts: Vec<usize> = line.char_indices().map(|(at, _)| at).collect();
-            let byte = |chars: usize| starts.get(chars).copied().unwrap_or(line.len());
-            let units = |at: Range<usize>| utf16::len(&line[byte(at.start)..byte(at.end)]) as u32;
+            // Folding maps each source character to exactly one character.
+            let mut units = 0;
+            let offsets: Vec<usize> = std::iter::once(0)
+                .chain(line.chars().map(|c| {
+                    units += c.len_utf16();
+                    units
+                }))
+                .collect();
             places.extend(found.into_iter().map(|at| Place {
                 line: i as u32 + 1,
-                column: units(0..at.start),
-                length: units(at),
+                column: offsets[at.start] as u32,
+                length: (offsets[at.end] - offsets[at.start]) as u32,
             }));
         }
         places

@@ -69,7 +69,7 @@ impl Tree {
     pub fn quick_open(&self, query: String, reply: Pending<Vec<QuickOpenItem>>) {
         let scan = Arc::clone(&self.scan.read().unwrap_or_else(PoisonError::into_inner));
         let (files, main) = (self.files.clone(), self.main.clone());
-        tokio::task::spawn_blocking(move || {
+        reply.spawn(move || {
             let mut items: Vec<QuickOpenItem> = files
                 .into_iter()
                 .map(|path| {
@@ -86,7 +86,7 @@ impl Tree {
             if query.is_empty() {
                 items.sort_unstable_by(|a, b| a.path.cmp(&b.path));
                 items.truncate(LISTED);
-                return reply.send(Ok(items));
+                return Ok(items);
             }
             if let Some(main) = main {
                 let analysis = project::analyze(&scan, Some(&main), None);
@@ -130,7 +130,7 @@ impl Tree {
                 a.cmp(&(b, b_length, &b_item.path, b_item.line))
             });
             let items = scored.into_iter().take(LISTED).map(|(.., item)| item);
-            reply.send(Ok(items.collect()));
+            Ok(items.collect())
         });
     }
 }
@@ -145,7 +145,7 @@ impl Actor {
         let aux = settings.output(&project.build, "aux");
         let live = self.live.pdf(&self.core);
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().clone());
-        tokio::task::spawn_blocking(move || {
+        reply.spawn(move || {
             let root = &project.root;
             let found = doc.with(|source| {
                 let (kind, name, _) = source.symbol_at(offset)?;
@@ -153,7 +153,7 @@ impl Actor {
                 Some((kind, name, defined))
             });
             let Some((kind, name, defined)) = found else {
-                return reply.send(Ok(None));
+                return Ok(None);
             };
             let text = |file: &str| current_text(&docs, root, file);
             let detail = match (kind, &defined) {
@@ -197,13 +197,13 @@ impl Actor {
                 _ => None,
             };
             let place = defined.map(|(file, at)| at.in_file(file));
-            reply.send(Ok(detail.map(|detail| QuickHelp {
+            Ok(detail.map(|detail| QuickHelp {
                 kind,
                 title: name,
                 detail,
                 place,
                 shown,
-            })));
+            }))
         });
     }
 
@@ -214,21 +214,20 @@ impl Actor {
         let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().get(&file).cloned());
-        tokio::task::spawn_blocking(move || {
-            reply.send(live.and_then(|live| {
-                let typeset = typeset.flatten();
-                let lines = match doc {
-                    Some(doc) => document_lines(&doc, typeset.as_deref(), line),
-                    None => {
-                        let text = lossy_string(fs::read(paths::safe_path(&project.root, &file)?)?);
-                        match typeset {
-                            Some(typeset) => typeset_lines(&typeset, &text, line),
-                            None => sync_lines(&text, line),
-                        }
+        reply.spawn(move || {
+            let live = live?;
+            let typeset = typeset.flatten();
+            let lines = match doc {
+                Some(doc) => document_lines(&doc, typeset.as_deref(), line),
+                None => {
+                    let text = lossy_string(fs::read(paths::safe_path(&project.root, &file)?)?);
+                    match typeset {
+                        Some(typeset) => typeset_lines(&typeset, &text, line),
+                        None => sync_lines(&text, line),
                     }
-                };
-                synctex::forward(&project, &file, &lines, live.as_deref())
-            }));
+                }
+            };
+            synctex::forward(&project, &file, &lines, live.as_deref())
         });
     }
 
@@ -243,18 +242,16 @@ impl Actor {
         let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let sources = self.live.typeset().clone();
         let docs = self.docs.handles();
-        tokio::task::spawn_blocking(move || {
-            reply.send(live.and_then(|live| {
-                let typeset = |rel: &str| live.as_ref().and_then(|_| sources.get(rel));
-                let text = |rel: &str| typeset(rel).map(ToString::to_string);
-                let mut loc =
-                    synctex::inverse(&project, page, x, y, click, live.as_deref(), &text)?;
-                // SyncTeX answers in the typeset text's lines, which edits since may have moved.
-                if let (Some(typeset), Some(doc)) = (typeset(&loc.file), docs.get(&loc.file)) {
-                    loc.line = map_line(&doc.snapshot().0, typeset, loc.line);
-                }
-                Ok(loc)
-            }));
+        reply.spawn(move || {
+            let live = live?;
+            let typeset = |rel: &str| live.as_ref().and_then(|_| sources.get(rel));
+            let text = |rel: &str| typeset(rel).map(ToString::to_string);
+            let mut loc = synctex::inverse(&project, page, x, y, click, live.as_deref(), &text)?;
+            // SyncTeX answers in the typeset text's lines, which edits since may have moved.
+            if let (Some(typeset), Some(doc)) = (typeset(&loc.file), docs.get(&loc.file)) {
+                loc.line = map_line(&doc.snapshot().0, typeset, loc.line);
+            }
+            Ok(loc)
         });
     }
 
@@ -266,9 +263,9 @@ impl Actor {
             return reply.send(Ok(Vec::new()));
         }
         let (boxes, project) = (self.builds.bad_boxes().to_vec(), self.core.project.clone());
-        tokio::task::spawn_blocking(move || {
+        reply.spawn(move || {
             let Ok(areas) = synctex::areas(&project, None) else {
-                return reply.send(Ok(Vec::new()));
+                return Ok(Vec::new());
             };
             let mut found = Vec::new();
             for item in boxes {
@@ -292,7 +289,7 @@ impl Actor {
                     overrun,
                 }));
             }
-            reply.send(Ok(found));
+            Ok(found)
         });
     }
 
@@ -306,7 +303,7 @@ impl Actor {
     ) {
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         let root = self.core.project.root.clone();
-        tokio::task::spawn_blocking(move || {
+        reply.spawn(move || {
             let text = match doc {
                 Some(doc) => Ok(doc.with(|source| source.line(line))),
                 None => paths::safe_path(&root, &file).and_then(|path| {
@@ -315,7 +312,7 @@ impl Actor {
                     Ok(index.and_then(|n| text.lines().nth(n as usize).map(str::to_owned)))
                 }),
             };
-            reply.send(text.map(|line| line.and_then(|line| find_in_pdf(&line, column, &pages))));
+            text.map(|line| line.and_then(|line| find_in_pdf(&line, column, &pages)))
         });
     }
 }

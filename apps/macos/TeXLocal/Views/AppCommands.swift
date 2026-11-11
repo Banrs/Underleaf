@@ -95,11 +95,7 @@ struct AppCommands: Commands {
             items(.compileRun, .compileStop, .compileClean)
             Divider()
             Toggle("Compile Automatically", isOn: Bindable(app).autoCompile)
-            LivePreviewItem(app: app)
-            Divider()
-            Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
-            BuildOptionItems(app: app)
-            SetMainFileItem(app: app)
+            CompileOptions(app: app)
         }
         CommandGroup(replacing: .singleWindowList) {
             Button("Projects") { app.showHome() }
@@ -111,6 +107,30 @@ struct AppCommands: Commands {
             Link("Visit TeXLocal on GitHub", destination: Links.repository)
             Link("Report Issue", destination: Links.issues)
         }
+    }
+}
+
+private struct CompileOptions: View {
+    let app: AppModel
+
+    var body: some View {
+        let project = app.main?.shownProject
+        Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
+            .disabled(project?.canSwitchLivePreview != true)
+        Divider()
+        Menu("Engine") { EnginePicker(project: project).pickerStyle(.inline).labelsHidden() }
+        option("Shell Escape", project, \.shellEscape)
+        option("Stop on First Error", project, \.stopOnFirstError)
+        Button("Set as Main File") {
+            if let project, let path = project.openPath { project.mainFile = path }
+        }
+        .disabled(project?.isLaTeX != true || project?.openPath == project?.mainFile)
+    }
+
+    private func option(_ title: LocalizedStringKey, _ project: ProjectModel?,
+                        _ setting: ReferenceWritableKeyPath<ProjectModel, Bool>) -> some View {
+        Toggle(title, isOn: project.map { Bindable($0)[dynamicMember: setting] } ?? .constant(false))
+            .disabled(project?.settings == nil)
     }
 }
 
@@ -127,43 +147,5 @@ private struct CommandItem: View {
         .labelStyle(.titleAndIcon)
         .keyboardShortcut(app.shortcut(command, on: window?.project))
         .disabled(!app.isEnabledInMenuBar(command, on: project))
-    }
-}
-
-private struct LivePreviewItem: View {
-    let app: AppModel
-
-    var body: some View {
-        let project = app.main?.shownProject
-        Toggle("Live Preview", isOn: project.map { Bindable($0).livePreview } ?? .constant(false))
-            .disabled(project?.canSwitchLivePreview != true)
-    }
-}
-
-private struct BuildOptionItems: View {
-    let app: AppModel
-
-    var body: some View {
-        let project = app.main?.shownProject
-        option("Shell Escape", project, \.shellEscape)
-        option("Stop on First Error", project, \.stopOnFirstError)
-    }
-
-    private func option(_ title: LocalizedStringKey, _ project: ProjectModel?,
-                        _ setting: ReferenceWritableKeyPath<ProjectModel, Bool>) -> some View {
-        Toggle(title, isOn: project.map { Bindable($0)[dynamicMember: setting] } ?? .constant(false))
-            .disabled(project?.settings == nil)
-    }
-}
-
-private struct SetMainFileItem: View {
-    let app: AppModel
-
-    var body: some View {
-        let project = app.main?.shownProject
-        Button("Set as Main File") {
-            if let project, let path = project.openPath { project.mainFile = path }
-        }
-        .disabled(project?.isLaTeX != true || project?.openPath == project?.mainFile)
     }
 }

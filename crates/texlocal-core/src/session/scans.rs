@@ -23,12 +23,10 @@ pub(crate) struct Usages {
 impl Actor {
     pub fn search(&self, query: Query, reply: Pending<Vec<SearchGroup>>) {
         let (project, docs) = (self.core.project.clone(), self.docs.handles());
-        tokio::task::spawn_blocking(move || {
+        reply.spawn(move || {
             let found = |_: &str, text: &str| query.places(text);
             let open = texts(&docs);
-            let hits =
-                projects::search_project(&project, &open, &texlocal_latex::is_text, &found, 100);
-            reply.send(hits.map(projects::search_groups));
+            projects::search_project(&project, &open, &texlocal_latex::is_text, &found, 100)
         });
     }
 
@@ -37,20 +35,20 @@ impl Actor {
             return reply.send(Ok(None));
         };
         let (project, docs) = (self.core.project.clone(), self.docs.handles());
-        tokio::task::spawn_blocking(move || {
+        reply.spawn(move || {
             let symbol = doc.with(|source| source.symbol_at(offset));
             let named = symbol.and_then(|(kind, name, file)| match kind {
                 SymbolKind::File => Some((kind, file?)),
                 kind => Some((kind, name)),
             });
             let Some((kind, name)) = named else {
-                return reply.send(Ok(None));
+                return Ok(None);
             };
             let symbols = doc.symbols();
             let found = |rel: &str, text: &str| {
                 usages_in(rel, text, kind, &name, |file| symbols.spelt(file))
             };
-            let hits =
+            let groups =
                 projects::search_project(&project, &texts(&docs), &is_source, &found, usize::MAX);
             let name = match kind {
                 SymbolKind::Label => format!("\\label{{{name}}}"),
@@ -58,8 +56,7 @@ impl Actor {
                 SymbolKind::Environment => format!("\\begin{{{name}}}"),
                 _ => name,
             };
-            let groups = hits.map(projects::search_groups);
-            reply.send(groups.map(|groups| Some(Usages { name, groups })));
+            groups.map(|groups| Some(Usages { name, groups }))
         });
     }
 }

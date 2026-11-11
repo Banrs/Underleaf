@@ -85,6 +85,14 @@ fn search_finds_places_in_utf16_columns() {
     assert_eq!(places(false, true), [(1, 8, 4), (2, 3, 4)]);
     assert_eq!(places(true, false), [(1, 8, 4), (2, 8, 4)]);
     assert!(Query::new("", false, false).places(text).is_empty());
+    let emoji = Query::new("😀a", false, false).places("😀A x 😀a😀A");
+    assert_eq!(
+        emoji
+            .iter()
+            .map(|p| (p.column, p.length))
+            .collect::<Vec<_>>(),
+        [(0, 3), (6, 3), (9, 3)]
+    );
 }
 
 #[test]
