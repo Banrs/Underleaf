@@ -4,10 +4,10 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the window chrome (status bar, navigators and their filter bar, Find header, Logs bar) as PNGs at 2x and 4x,
-/// light and dark. Headless renders draw no Liquid Glass, list rows or scroll edge effects. With `TEST_RUNNER_TEXLOCAL_SCREEN=<folder>` the window
-/// also goes on a 2x screen, and the harness asks a watcher to capture it (`shot name window`) and to move the pointer
-/// (`move x y`, `click x y`) by writing numbered `.req` files there and waiting for each to become `.done`.
+/// Renders window chrome at 2x and 4x in light and dark. Headless renders omit Liquid Glass, list rows and scroll edges.
+/// With TEST_RUNNER_TEXLOCAL_SCREEN set, a watcher captures the window and moves the pointer on a 2x display.
+/// The harness writes numbered .req files (shot name window, move x y, click x y) and waits for .done.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ChromePixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct ChromePixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -61,7 +61,6 @@ struct ChromePixelTests {
 
         func capture(_ name: String) async throws {
             guard let screen else { return }
-            // Every capture shows the active window, so before and after compare like for like.
             try #require(NSApp.isActive && window.isKeyWindow, "\(name) would show an inactive window")
             try await screen.ask("shot screen-\(name)-\(suffix) \(window.windowNumber)")
         }

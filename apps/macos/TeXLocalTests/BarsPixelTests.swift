@@ -3,11 +3,9 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
-/// Writes the bars ChromePixelTests leaves out as PNGs: the Find navigator's breadcrumb in each state its drawing tells
-/// apart (first and other choices; at rest, with the pointer over each item, with the keyboard on each item), and the
-/// status bar's other items (Not Saved, Live Preview, PDF Out of Date, Last Successful Build, word count) and the whole
-/// Logs panel at the widths that give their full, symbol and short forms; light and dark, key and inactive, at each
-/// screen's scale and 4x. Attach a 2x display for native 2x captures.
+/// Renders the breadcrumb, status bar and Logs at screen scale and 4x, in light and dark with key and inactive windows.
+/// Attach a 2x display for 2x renders.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/BarsPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct BarsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -156,7 +154,6 @@ struct BarsPixelTests {
                                                   issues: [], lines: [:])))
             try await shot("stopped")
 
-            // The whole Logs panel with its bar: a short log, one long enough to follow its end, a filter, the Live Preview tab.
             let long = (1...80).map { "Line \($0) of a log long enough to scroll" }.joined(separator: "\n")
             project.store.apply(.buildLog("This is pdfTeX\nOutput written on main.pdf (1 page)."))
             project.panel.shown = true

@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::catalog::CATALOG;
-use super::scan::{blank_line, inline_code_end};
+use super::scan::{blank_line, find, inline_code_end};
 use super::stack::Stack;
 use super::{NAME, Text, ascii, is, letter};
 
@@ -364,9 +364,9 @@ fn opening(s: &mut Stream, state: &mut State, environment: Environment) -> Optio
 
 fn verbatim(s: &mut Stream, state: &mut State, name: &'static str) -> Option<HighlightKind> {
     let end: Vec<u16> = format!("\\end{{{name}}}").encode_utf16().collect();
-    match s.text[s.pos..].windows(end.len()).position(|w| w == end) {
+    match find(s.text, s.pos, &end) {
         Some(at) => {
-            s.pos += at;
+            s.pos = at;
             state.mode = Mode::Normal;
         }
         None => s.pos = s.text.len(),

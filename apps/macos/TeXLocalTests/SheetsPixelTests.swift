@@ -3,12 +3,10 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the windows and sheets (Projects, the dialog sheets, Version History, Settings, the inspector, Quick Help and
-/// Open Quickly) as PNGs, light and dark, key and inactive, at native scale and 4x. Attach a 2x screen for 2x layout.
-/// Sheets are presented through the window's own modals and draw inactive,
-/// as the test host never becomes active; the dialogs are also hosted alone in a key window, and `focus.txt` names what
-/// each one focused. Version History and Open Quickly also show a project the core has open, so the versions' times
-/// differ from run to run. Hover and pressed states need the pointer and aren't drawn, nor is Liquid Glass or what it holds.
+/// Renders windows and sheets in light and dark at 2x and 4x. Attach a 2x display.
+/// Attached sheets draw inactive. Standalone dialogs also draw as key, and focus.txt records their focused controls.
+/// Version History dates vary by run. Headless renders omit hover, pressed states and Liquid Glass.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/SheetsPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct SheetsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)

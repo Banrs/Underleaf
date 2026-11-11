@@ -3,7 +3,8 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the search and filter fields in every drawing state at native scale and 4x. Attach a 2x display for native 2x.
+/// Renders search and filter fields at screen scale and 4x. Attach a 2x display for 2x renders.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/FieldPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct FieldPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)

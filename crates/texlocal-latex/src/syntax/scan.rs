@@ -34,8 +34,14 @@ fn paragraph_end(src: &[u16], at: usize) -> bool {
     src.get(spaces_end(src, at + 1)) == Some(&NEWLINE)
 }
 
-fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
-    (from..=src.len().checked_sub(needle.len())?).find(|&i| src[i..].starts_with(needle))
+pub(super) fn find(src: &[u16], from: usize, needle: &[u16]) -> Option<usize> {
+    let tail = src.get(from..)?;
+    if needle.is_empty() {
+        return Some(from);
+    }
+    tail.windows(needle.len())
+        .position(|window| window == needle)
+        .map(|at| from + at)
 }
 
 pub(crate) fn arguments(

@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import Testing
 @testable import TeXLocal
 
@@ -54,8 +55,6 @@ func bitmap(_ size: NSSize, scale: Int) -> NSBitmapImageRep? {
     return rep
 }
 
-/// Capture a suite with TEST_RUNNER_TEXLOCAL_PIXELS=<folder> tools/xctest.sh <repo> <derived-data>
-/// -only-testing:TeXLocalTests/<suite>. Use the same display setup before and after, then compare the PNGs.
 func settlePixelLayout(passes: Int = 8, interval: Duration = .milliseconds(40)) async throws {
     for _ in 0..<passes {
         try await Task.sleep(for: interval)
@@ -104,6 +103,19 @@ func writeNativePixels(_ name: String, of view: NSView, scale: Int, to folder: U
     }
     return written
 }
+
+func textPDF(_ pages: [String]) throws -> PDFDocument {
+    let document = PDFDocument()
+    for text in pages {
+        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+        view.string = text
+        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
+        document.insert(page, at: document.pageCount)
+    }
+    return document
+}
+
+func textPDF(count: Int) throws -> PDFDocument { try textPDF((1...count).map { "Page \($0)" }) }
 
 /// Draws as the key window would, which a test host can't become on its own.
 final class KeyWindow: NSWindow {

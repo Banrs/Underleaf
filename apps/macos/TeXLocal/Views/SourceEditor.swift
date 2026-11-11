@@ -42,7 +42,8 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.usesFontPanel = false
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        text.textContainerInset.height = 7
+        // Xcode 27.2’s first text row starts 8 pt below the editor’s top edge on Retina.
+        text.textContainerInset.height = 8
         text.allowsUndo = true
         text.isGrammarCheckingEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false

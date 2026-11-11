@@ -4,8 +4,15 @@ root=${1:-$PWD}
 PLAT=$(xcrun --sdk macosx --show-sdk-platform-path)
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 out=$(mktemp -d)
-common=(-Onone -DDEBUG -swift-version 6 -I $root/crates/texlocal-ffi/include -parse-as-library -default-isolation=MainActor -enable-upcoming-feature InferIsolatedConformances -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature MemberImportVisibility -enable-upcoming-feature ExistentialAny)
-flags=($common -sdk $SDK -target arm64-apple-macos27.0)
+flags=(
+  -Onone -DDEBUG -swift-version 6 -I $root/crates/texlocal-ffi/include
+  -parse-as-library -default-isolation=MainActor
+  -enable-upcoming-feature InferIsolatedConformances
+  -enable-upcoming-feature NonisolatedNonsendingByDefault
+  -enable-upcoming-feature MemberImportVisibility
+  -enable-upcoming-feature ExistentialAny
+  -sdk $SDK -target arm64-apple-macos27.0
+)
 show() { grep -E "(error|warning):" | sed "s#$root/##" | sort -u }
 xcrun swiftc -emit-module -emit-module-path $out/TeXLocal.swiftmodule -module-name TeXLocal -enable-testing \
   $flags $root/apps/macos/TeXLocal/**/*.swift 2>&1 | show

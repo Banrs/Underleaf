@@ -3,10 +3,8 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the lists and popovers (completions and the Open Quickly list, Quick Help with a reference picture, the math
-/// preview, issue boxes, the Symbol Library, the log pane, and the search navigator's header and empty states) as PNGs, in
-/// each drawing state at native scale and 4x. Attach a 2x display for native 2x. Headless renders draw no Liquid Glass or
-/// list rows, so the popovers show without their glass and the search results without their rows.
+/// Renders lists and popovers at screen scale and 4x. Headless renders omit Liquid Glass and list rows.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/ListsPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct ListsPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)

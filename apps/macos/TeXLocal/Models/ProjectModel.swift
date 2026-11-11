@@ -350,7 +350,6 @@ final class ProjectModel {
         await search.run { try await session.call($0) }
     }
 
-    /// What the search navigator lists: the found groups the navigator's filter lets through.
     var shownGroups: [SearchGroup] { navigator.filtered(search.groups ?? []) }
 
     func replaceChosen() async {
@@ -404,7 +403,6 @@ final class ProjectModel {
         try await editProject(RenameSymbol(kind: symbol.kind, from: symbol.name, to: name), named: String(localized: "Rename"))
     }
 
-    /// Fetches BibTeX for a DOI or arXiv identifier, which is the only time TeXLocal goes online, and cites it.
     func addCitation(_ source: CitationSource) async throws {
         guard let url = URL(string: source.url) else {
             throw AppFailure.wentWrong

@@ -4,10 +4,9 @@ import SwiftUI
 import Testing
 @testable import TeXLocal
 
-/// Writes the source editor's gutter (line numbers, the current line, fold chevrons and a folded line's mark), the PDF's
-/// bad-box marks, sync mark and find bar, the source column with no file open, and the workspace's columns with the
-/// divider and status bar between and beneath them as PNGs at 2x and 4x, light and dark,
-/// key and inactive. Attach a 2x screen for the 2x renders to lay out at 2x.
+/// Renders the editor gutter, PDF marks, Find bar and columns at 2x and 4x in light and dark with key and inactive windows.
+/// Attach a 2x display to lay out at 2x.
+/// TEST_RUNNER_TEXLOCAL_PIXELS=<folder> zsh tools/xctest.sh … -only-testing:TeXLocalTests/EditorPDFPixelTests
 @MainActor @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] != nil))
 struct EditorPDFPixelTests {
     private let folder = URL(filePath: ProcessInfo.processInfo.environment["TEXLOCAL_PIXELS"] ?? "", directoryHint: .isDirectory)
@@ -52,6 +51,8 @@ struct EditorPDFPixelTests {
         text.showsLineNumbers = true
         text.fontSize = 18
         try await write("folded-hover-large-\(suffix)", view)
+        let badge = try #require(text.foldMarks.first?.rect)
+        #expect(text.foldClick(at: CGPoint(x: badge.midX, y: badge.midY)) && text.folds.isEmpty)
     }
 
     private func pdf(dark: Bool, key: Bool, suffix: String) async throws {
@@ -62,7 +63,7 @@ struct EditorPDFPixelTests {
         view.frame = content.bounds
         view.autoresizingMask = [.width, .height]
         content.addSubview(view)
-        controller.show(try Self.textPDF())
+        controller.show(try Self.examplePDF())
         try await settlePixelLayout(passes: 6)
         let page = try #require(view.document?.page(at: 0))
         view.mark([0: Self.badBoxes], press: { _ in })
@@ -105,7 +106,7 @@ struct EditorPDFPixelTests {
         workspace.view.setFrameSize(size)
         window.contentViewController = workspace
         views.project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
-        views.pdf.show(try Self.textPDF())
+        views.pdf.show(try Self.examplePDF())
         try await settlePixelLayout(passes: 6)
         views.editor.open(path: "main.tex", source: SourceDocument(text: Self.source))
         try await write("workspace-\(suffix)", workspace.columns.view)
@@ -148,14 +149,10 @@ struct EditorPDFPixelTests {
                    area: ForwardLoc(page: 1, h: 20, v: 100, width: 300, height: 40, matches: []), overrun: 50),
     ]
 
-    private static func textPDF() throws -> PDFDocument {
-        let document = PDFDocument()
-        for number in 1...2 {
-            let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-            view.string = (1...40).map { "Page \(number), line \($0): words that run on across the page to its edge." }.joined(separator: "\n")
-            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-            document.insert(page, at: document.pageCount)
+    private static func examplePDF() throws -> PDFDocument {
+        let pages = (1...2).map { page in
+            (1...40).map { "Page \(page), line \($0): words that run on across the page to its edge." }.joined(separator: "\n")
         }
-        return document
+        return try textPDF(pages)
     }
 }

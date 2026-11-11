@@ -1,4 +1,24 @@
+import AppKit
 import SwiftUI
+
+extension NSMenu {
+    func tidy(_ list: [NSMenuItem]) { items = Self.grouped(list) }
+
+    func hideExtraSeparators() {
+        let shown = Self.grouped(items.filter { !$0.isHidden || $0.isSeparatorItem })
+        for item in items where item.isSeparatorItem {
+            let hidden = !shown.contains(item)
+            if item.isHidden != hidden { item.isHidden = hidden }
+        }
+    }
+
+    private static func grouped(_ list: [NSMenuItem]) -> [NSMenuItem] {
+        var shown: [NSMenuItem] = []
+        for item in list where !item.isSeparatorItem || shown.last?.isSeparatorItem == false { shown.append(item) }
+        if shown.last?.isSeparatorItem == true { shown.removeLast() }
+        return shown
+    }
+}
 
 struct SectionLevelItems: View {
     let project: ProjectModel?
