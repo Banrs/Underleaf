@@ -270,6 +270,8 @@ private struct HeadingRow: View {
             .foregroundStyle(heading.untitled ? .secondary : .primary)
             .lineLimit(1)
             .accessibilityValue(heading.level)
+            // A row with no icon would otherwise start its title against the disclosure chevron.
+            .padding(.leading, 6)
             .id(node.id)
     }
 }
