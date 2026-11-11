@@ -160,20 +160,14 @@ struct SheetsPixelTests {
         let scale = Int(view.window?.backingScaleFactor ?? 1)
         for (label, rep) in [("\(scale)x", view.bitmapImageRepForCachingDisplay(in: view.bounds)), ("4x", bitmap(view.bounds.size, scale: 4))] {
             let rep = try #require(rep)
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(label).png"))
+            try writePixels(view, in: view.bounds, using: rep, to: folder.appending(path: "\(name)@\(label).png"))
         }
     }
 
     /// A nearly transparent window on the 2x screen, drawn as key or inactive.
     private static func window(on screen: NSScreen, dark: Bool, key: Bool) -> NSWindow {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-                                                                 styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        let window = pixelWindow(NSSize(width: 400, height: 300), dark: dark, key: key)
+        showPixelWindow(window, on: screen)
         return window
     }
 

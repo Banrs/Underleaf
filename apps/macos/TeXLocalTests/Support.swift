@@ -62,6 +62,48 @@ func settlePixelLayout(passes: Int = 8, interval: Duration = .milliseconds(40)) 
     }
 }
 
+func pixelWindow(_ size: NSSize, dark: Bool, key: Bool, style: NSWindow.StyleMask = [.titled]) -> NSWindow {
+    let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
+                                                             styleMask: style, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    return window
+}
+
+func showPixelWindow(_ window: NSWindow, on screen: NSScreen?) {
+    let frame = screen?.visibleFrame ?? .zero
+    window.setFrameOrigin(NSPoint(x: frame.minX + 40, y: frame.minY + 40))
+    window.alphaValue = 0.01
+    window.orderFrontRegardless()
+}
+
+func writePixels(_ view: NSView, in rect: NSRect, using rep: NSBitmapImageRep, to file: URL,
+                 overlay: ((NSBitmapImageRep) -> Void)? = nil) throws {
+    view.cacheDisplay(in: rect, to: rep)
+    overlay?(rep)
+    try rep.representation(using: .png, properties: [:])?.write(to: file)
+}
+
+func writeScaledPixels(_ name: String, of view: NSView, in rect: NSRect, to folder: URL, scales: [Int] = [2, 4]) throws {
+    for scale in scales {
+        let rep = try #require(bitmap(rect.size, scale: scale))
+        try writePixels(view, in: rect, using: rep, to: folder.appending(path: "\(name)@\(scale)x.png"))
+    }
+}
+
+/// Native AppKit bitmap and an explicitly scaled 4x copy. Counts every bitmap that was available.
+func writeNativePixels(_ name: String, of view: NSView, scale: Int, to folder: URL,
+                       overlay: ((NSBitmapImageRep) -> Void)? = nil) throws -> Int {
+    view.displayIfNeeded()
+    var written = 0
+    for (label, rep) in [("\(scale)x", view.bitmapImageRepForCachingDisplay(in: view.bounds)), ("4x", bitmap(view.bounds.size, scale: 4))] {
+        guard let rep else { continue }
+        try writePixels(view, in: view.bounds, using: rep, to: folder.appending(path: "\(name)@\(scale)x-\(label).png"), overlay: overlay)
+        written += 1
+    }
+    return written
+}
+
 func textPDF(_ pages: [String]) throws -> PDFDocument {
     let document = PDFDocument()
     for text in pages {

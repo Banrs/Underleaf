@@ -35,14 +35,9 @@ struct BarsPixelTests {
     }
 
     private func window(_ size: NSSize, on screen: NSScreen?, dark: Bool, key: Bool, style: NSWindow.StyleMask = [.titled]) -> NSWindow {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size), styleMask: style,
-                                                                 backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let window = pixelWindow(size, dark: dark, key: key, style: style)
         let place = screen ?? NSScreen.screens.first { $0.backingScaleFactor == 2 } ?? NSScreen.screens.first
-        window.setFrameOrigin(NSPoint(x: (place?.visibleFrame.minX ?? 0) + 40, y: (place?.visibleFrame.minY ?? 0) + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        showPixelWindow(window, on: place)
         return window
     }
 
@@ -60,14 +55,7 @@ struct BarsPixelTests {
         var written = 0
         func shot(_ name: String) async throws {
             try await settlePixelLayout()
-            box.displayIfNeeded()
-            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
-                guard let rep else { continue }
-                box.cacheDisplay(in: box.bounds, to: rep)
-                ring(into: rep)
-                try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "crumb-\(name)-\(suffix)@\(scale)x-\(label).png"))
-                written += 1
-            }
+            written += try writeNativePixels("crumb-\(name)-\(suffix)", of: box, scale: scale, to: folder, overlay: ring)
         }
         /// The focus ring, which AppKit draws apart from the view and so leaves out of a cached render, drawn from the
         /// focused view's mask.
@@ -144,13 +132,9 @@ struct BarsPixelTests {
                 try await settlePixelLayout()
                 columns.displayIfNeeded()
                 let rect = NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48)
-                for scale in [Int(window.backingScaleFactor), 4] {
-                    let rep = try #require(bitmap(rect.size, scale: scale))
-                    columns.cacheDisplay(in: rect, to: rep)
-                    try rep.representation(using: .png, properties: [:])?
-                        .write(to: folder.appending(path: "status-\(name)-\(Int(width))-\(suffix)@\(scale)x.png"))
-                    written += 1
-                }
+                let scales = [Int(window.backingScaleFactor), 4]
+                try writeScaledPixels("status-\(name)-\(Int(width))-\(suffix)", of: columns, in: rect, to: folder, scales: scales)
+                written += scales.count
             }
 
             project.store.apply(.build(BuildState(compiling: false, auto: false, outdated: true,
@@ -184,13 +168,9 @@ struct BarsPixelTests {
                 if !log.isEmpty { project.store.apply(.buildLog(log)) }
                 try await settlePixelLayout()
                 area.displayIfNeeded()
-                for scale in [Int(window.backingScaleFactor), 4] {
-                    let rep = try #require(bitmap(panel.size, scale: scale))
-                    area.cacheDisplay(in: panel, to: rep)
-                    try rep.representation(using: .png, properties: [:])?
-                        .write(to: folder.appending(path: "panel-\(name)-\(Int(width))-\(suffix)@\(scale)x.png"))
-                    written += 1
-                }
+                let scales = [Int(window.backingScaleFactor), 4]
+                try writeScaledPixels("panel-\(name)-\(Int(width))-\(suffix)", of: area, in: panel, to: folder, scales: scales)
+                written += scales.count
             }
         }
         return written

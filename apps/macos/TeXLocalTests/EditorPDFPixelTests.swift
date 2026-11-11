@@ -115,23 +115,14 @@ struct EditorPDFPixelTests {
     private func write(_ name: String, _ view: NSView) async throws {
         try await settlePixelLayout(passes: 6)
         view.displayIfNeeded()
-        for scale in [2, 4] {
-            let rep = try #require(bitmap(view.bounds.size, scale: scale))
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
-        }
+        try writeScaledPixels(name, of: view, in: view.bounds, to: folder)
     }
 
     /// On a 2x screen when there is one, so the 2x renders are laid out at 2x.
     private static func window(_ size: NSSize, dark: Bool, key: Bool) -> NSWindow {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled],
-                                                                 backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let window = pixelWindow(size, dark: dark, key: key)
         let screen = NSScreen.screens.first { $0.backingScaleFactor == 2 } ?? NSScreen.screens[0]
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        showPixelWindow(window, on: screen)
         return window
     }
 

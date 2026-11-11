@@ -26,13 +26,8 @@ struct FieldPixelTests {
     }
 
     private func shoot(_ project: ProjectModel, _ windowModel: WindowModel, on screen: NSScreen, dark: Bool, key: Bool) async throws -> Int {
-        let window = (key ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
-                                                                 styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.minY + 40))
-        window.alphaValue = 0.01
-        window.orderFrontRegardless()
+        let window = pixelWindow(NSSize(width: 360, height: 120), dark: dark, key: key)
+        showPixelWindow(window, on: screen)
         defer { window.close() }
         let scale = Int(window.backingScaleFactor)
         let suffix = "\(dark ? "dark" : "light")-\(key ? "key" : "inactive")"
@@ -47,13 +42,7 @@ struct FieldPixelTests {
             let fields = view.descendants(of: NSSearchField.self)
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = true } }
             for field in fields { field.needsDisplay = true }
-            box.displayIfNeeded()
-            for (label, rep) in [("\(scale)x", box.bitmapImageRepForCachingDisplay(in: box.bounds)), ("4x", bitmap(box.bounds.size, scale: 4))] {
-                guard let rep else { continue }
-                box.cacheDisplay(in: box.bounds, to: rep)
-                try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)-\(suffix)@\(scale)x-\(label).png"))
-                written += 1
-            }
+            written += try writeNativePixels("\(name)-\(suffix)", of: box, scale: scale, to: folder)
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = false } }
         }
 

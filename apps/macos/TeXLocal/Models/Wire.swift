@@ -382,6 +382,13 @@ nonisolated struct FilePlace: Decodable, Hashable, Sendable {
     var length: Int
 }
 
+nonisolated struct FindRestorationProject: LibraryRequest {
+    typealias Reply = RestorationProject?
+    static let command = "FindRestorationProject"
+
+    var id: String
+}
+
 nonisolated struct FindUsages: SessionRequest {
     typealias Reply = Usages?
     static let command = "FindUsages"
@@ -922,6 +929,7 @@ nonisolated struct OpenPath: LibraryRequest {
     static let command = "OpenPath"
 
     var path: String
+    var deferRelist: Bool?
 }
 
 nonisolated struct OpenProject: SessionRequest {
@@ -1166,6 +1174,11 @@ nonisolated struct Resolve: SessionRequest {
 
     var path: String
     var answer: Resolution
+}
+
+nonisolated struct RestorationProject: Decodable, Hashable, Sendable {
+    var name: String
+    var missing: Bool
 }
 
 nonisolated struct RestoreVersion: SessionRequest {

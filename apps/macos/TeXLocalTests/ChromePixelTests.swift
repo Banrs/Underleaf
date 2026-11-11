@@ -27,11 +27,7 @@ struct ChromePixelTests {
         let project = views.project
         let size = NSSize(width: 1300, height: 700)
         let workspace = WorkspaceController(window: model, views: views, size: size)
-        let window = (screen == nil ? KeyWindow.self : NSWindow.self).init(contentRect: NSRect(origin: .zero, size: size),
-                                                                          styleMask: [.titled, .resizable, .fullSizeContentView],
-                                                                          backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        let window = pixelWindow(size, dark: dark, key: screen == nil, style: [.titled, .resizable, .fullSizeContentView])
         workspace.view.setFrameSize(size)
         window.contentViewController = workspace
         window.toolbar = workspace.toolbar.toolbar
@@ -175,11 +171,7 @@ struct ChromePixelTests {
 
     private func write(_ name: String, _ view: NSView, _ rect: NSRect) throws {
         view.displayIfNeeded()
-        for scale in [2, 4] {
-            let rep = try #require(bitmap(rect.size, scale: scale))
-            view.cacheDisplay(in: rect, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: folder.appending(path: "\(name)@\(scale)x.png"))
-        }
+        try writeScaledPixels(name, of: view, in: rect, to: folder)
     }
 }
 

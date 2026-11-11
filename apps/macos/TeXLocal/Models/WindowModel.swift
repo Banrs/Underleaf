@@ -160,7 +160,7 @@ final class WindowModel {
         app.home?.controller?.close()
     }
 
-    func load() async -> Bool {
+    func load(name: String? = nil) async -> Bool {
         guard let project else { return false }
         let loading = self.loading ?? Task { [self] in
             app.visited(project.id)
@@ -169,7 +169,7 @@ final class WindowModel {
                 return true
             } catch {
                 controller?.close()
-                app.front.report("Couldn’t Open “\(project.name)”", error)
+                app.front.report("Couldn’t Open “\(name ?? project.name)”", error)
                 return false
             }
         }
@@ -179,7 +179,12 @@ final class WindowModel {
 
     func reopen() async {
         guard let project else { return }
-        if app.projects.contains(where: { $0.id == project.id }) { _ = await load() } else { await close() }
+        guard let target = try? await app.core.call(FindRestorationProject(id: project.id)) else {
+            await close()
+            return
+        }
+        let moved = target.missing ? await app.follow(project.id, deferRelist: true) : nil
+        _ = await load(name: moved?.name ?? target.name)
     }
 
     @discardableResult
