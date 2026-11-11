@@ -73,10 +73,6 @@ struct NavigatorFilterBar: View {
                 case .files:
                     FilterToggle(symbol: "clock", label: "Recent files", help: "Show only recent files", isOn: $model.showsOnlyRecentFiles)
                 case .issues:
-                    // Xcode's recent-issues toggle means issues from open documents and the last build, which here is every
-                    // issue, so this one keeps to recently opened files.
-                    FilterToggle(symbol: "clock", label: "Issues in recent files", help: "Show only issues in recent files",
-                                 isOn: $model.showsOnlyRecentIssues)
                     FilterToggle(symbol: "exclamationmark.octagon", label: "Only errors", help: "Show only errors", isOn: $model.showsOnlyErrors)
                 case .outline, .search: EmptyView()
                 }
@@ -211,7 +207,7 @@ private struct IssueList: View {
                             Image(systemName: file.map { project.tree.node(at: $0)?.symbol ?? "text.document" } ?? "folder.fill")
                                 .overlay(alignment: .bottomLeading) {
                                     if errors {
-                                        Image(systemName: "xmark.circle.fill")
+                                        Image(systemName: "exclamationmark.octagon.fill")
                                             .symbolRenderingMode(.multicolor)
                                             .imageScale(.small)
                                             .offset(x: -3, y: 3)
@@ -277,7 +273,7 @@ private struct IssueRow: View {
         Label {
             Text(item.message.text).lineLimit(place == project.chosenIssue ? nil : 3)
         } icon: {
-            Image(systemName: item.isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+            Image(systemName: item.isError ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
         }
         .help([item.message.text, item.explain?.text].compactMap(\.self).joined(separator: "\n\n"))
         .accessibilityElement(children: .ignore)

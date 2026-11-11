@@ -40,7 +40,6 @@ final class NavigatorModel {
     var searchFilter = ""
     var issueFilter = ""
     var showsOnlyRecentFiles = false
-    var showsOnlyRecentIssues = false
     var hiddenIssueKinds: Set<IssueKind> = []
     /// The Only errors toggle, on while the filter's menu hides every kind but errors.
     var showsOnlyErrors: Bool {
@@ -93,8 +92,6 @@ final class NavigatorModel {
         listed.enumerated().filter { shows($0.element) && matches($0.element) }
     }
 
-    /// Whether the toggles and the filter's menu leave an issue in the list.
-    func shows(_ item: LogItem) -> Bool {
-        !hiddenIssueKinds.contains(item.issueKind) && (!showsOnlyRecentIssues || item.file.map(recentFiles.contains) == true)
-    }
+    /// Whether the filter's menu leaves an issue in the list.
+    func shows(_ item: LogItem) -> Bool { !hiddenIssueKinds.contains(item.issueKind) }
 }

@@ -43,7 +43,7 @@ struct PDFEmptyState: View {
             }
         } else if project.result?.failed == true {
             ContentUnavailableView {
-                Label("Build Failed", systemImage: "xmark.octagon")
+                Label("Build Failed", systemImage: "exclamationmark.octagon")
             } description: {
                 Text("The build made no PDF. The Issues navigator shows what went wrong.")
             } actions: {

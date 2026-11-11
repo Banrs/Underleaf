@@ -60,9 +60,9 @@ struct FieldPixelTests {
         project.navigator.hiddenIssueKinds = [.badBox]
         try await shot("bar-issues-some-hidden", bar, height: bar.intrinsicContentSize.height)
         project.navigator.hiddenIssueKinds = []
-        (project.navigator.showsOnlyRecentIssues, project.navigator.showsOnlyErrors) = (true, true)
+        project.navigator.showsOnlyErrors = true
         try await shot("bar-issues-toggles-on", bar, height: bar.intrinsicContentSize.height)
-        (project.navigator.showsOnlyRecentIssues, project.navigator.showsOnlyErrors) = (false, false)
+        project.navigator.showsOnlyErrors = false
         project.navigator.shown = .files
         project.navigator.showsOnlyRecentFiles = true
         try await shot("bar-files-toggle-on", bar, height: bar.intrinsicContentSize.height)
