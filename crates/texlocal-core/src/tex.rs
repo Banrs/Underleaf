@@ -66,7 +66,7 @@ fn absolute_dirs(path: &OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path).filter(|dir| dir.is_absolute())
 }
 
-fn executable(dir: &Path, name: &str) -> Option<PathBuf> {
+pub(crate) fn executable(dir: &Path, name: &str) -> Option<PathBuf> {
     let runs = |path: &PathBuf| {
         std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && sys::is_executable(&meta))
     };
