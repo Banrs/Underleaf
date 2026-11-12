@@ -1134,6 +1134,8 @@ nonisolated struct RenameProject: LibraryRequest {
 nonisolated struct RenameResult: Decodable, Hashable, Sendable {
     var from: String
     var to: String
+    var expandedFolders: [String]
+    var foldedHeadings: [String]
 }
 
 nonisolated struct RenameSymbol: SessionRequest {
