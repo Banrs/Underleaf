@@ -294,6 +294,19 @@ fn a_section_folds_to_the_next_heading() {
 }
 
 #[test]
+fn a_heading_folds_when_its_argument_starts_on_the_next_line() {
+    let text = "\\section\n{Title}\nbody";
+    let found = scan(&[("main.tex", text)], Installed::default());
+    let outline = texlocal_latex::project::analyze(&found, Some("main.tex"), None).outline;
+    assert_eq!((outline[0].title.as_str(), outline[0].line), ("Title", 1));
+    let mut doc = SourceDocument::new(text);
+    assert_eq!(
+        run(&mut doc, "Folds", json!({})),
+        json!([{ "line": 1, "end": 3, "hidden": { "start": 9, "length": 12 } }])
+    );
+}
+
+#[test]
 fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
     let text = "\\label{a} \\ref{a}";
     let mut doc = SourceDocument::named(text, "main.tex");

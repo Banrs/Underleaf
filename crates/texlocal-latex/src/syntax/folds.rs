@@ -3,7 +3,7 @@ use std::ops::Range;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use super::scan::{Group, Scanner, Visit, blank_line, tex_space};
+use super::scan::{Group, Scanner, Visit, arguments, blank_line, tex_space};
 use super::{SourceDocument, TextRange, headings, is, span};
 
 #[derive(Serialize, JsonSchema)]
@@ -75,6 +75,7 @@ impl SourceDocument {
             .filter(|&&(_, name_end, _)| {
                 let next = units[name_end..].iter().find(|&&u| !tex_space(u));
                 next.is_some_and(|&u| is(u, '{') || is(u, '[') || is(u, '*'))
+                    || arguments(units, name_end, |_, _| {}).1
             })
             .collect();
         let last = found
