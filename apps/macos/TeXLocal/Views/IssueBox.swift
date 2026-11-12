@@ -15,7 +15,8 @@ struct IssueBox: View, Equatable {
 
     static func line(error: Bool, live: Bool) -> NSColor { live ? .quaternarySystemFill : tint(error: error).withAlphaComponent(0.1) }
 
-    static let underlines = [false: tint(error: false).legible(ratio: 3), true: tint(error: true).legible(ratio: 3)]
+    // As legible as text, as Xcode 27.2's are: its live error's #F55B4F stands 4.5:1 from its dark editor.
+    static let underlines = [false: tint(error: false).legible(), true: tint(error: true).legible()]
 
     var body: some View {
         // The corners of the row's highlight beneath it.

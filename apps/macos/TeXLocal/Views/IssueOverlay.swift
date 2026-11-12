@@ -9,7 +9,6 @@ final class IssueOverlay {
         let band: CGRect
         var message: (view: IssueMessageView, rect: CGRect, cut: Bool)?
         var tip: String?
-        var tokens: [CGRect] = []
     }
 
     private unowned let view: SourceTextView
@@ -106,20 +105,6 @@ final class IssueOverlay {
             issue.message = (message, rect, fit.cut)
         }
         if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
-        if !reported.tokens.isEmpty, let textFont = view.font {
-            let thickness = max(1, view.onPixels(textFont.underlineThickness))
-            for token in reported.tokens {
-                for line in lines {
-                    let part = NSIntersectionRange(token.range, line.characterRange)
-                    guard part.length > 0 else { continue }
-                    let lineLeft = left + line.typographicBounds.minX
-                    let start = view.onPixels(lineLeft + line.locationForCharacter(at: part.location).x)
-                    let end = view.onPixels(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
-                    let under = top + line.typographicBounds.minY + line.glyphOrigin.y - textFont.underlinePosition
-                    issue.tokens.append(CGRect(x: start, y: view.onPixels(under), width: end - start, height: thickness))
-                }
-            }
-        }
         return issue
     }
 
@@ -168,12 +153,9 @@ final class IssueOverlay {
 
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
-            if issue.line != currentLine {
-                IssueBox.line(error: issue.error, live: issue.live).setFill()
-                NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
-            }
-            IssueBox.underlines[issue.error]?.setFill()
-            issue.tokens.forEach { $0.fill() }
+            guard issue.line != currentLine else { continue }
+            IssueBox.line(error: issue.error, live: issue.live).setFill()
+            NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
         }
     }
 }

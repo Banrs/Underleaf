@@ -36,7 +36,8 @@ struct IssueOverlayTests {
             if width == 1200 { #expect(badge.rect.minY == row.band.minY && badge.rect.maxY == row.band.maxY) }
             let textEnd = text.textContainerOrigin.x + fragment.layoutFragmentFrame.minX + first.typographicBounds.maxX
             #expect(textEnd < badge.rect.minX)
-            #expect(!row.tokens.isEmpty)
+            let shown = try #require((fragment.textElement as? NSTextParagraph)?.attributedString)
+            #expect(shown.attribute(.underlineStyle, at: prefix.utf16.count, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue)
             #expect(text.issues.message(at: NSPoint(x: badge.rect.midX, y: badge.rect.midY))?.line == 1)
             if width == 260 {
                 #expect(fragment.textLineFragments.count > 1 && NSMaxRange(first.characterRange) <= prefix.utf16.count)

@@ -146,7 +146,8 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         else { return nil }
         let string = text.string
         let indent = string.prefix { $0 == " " || $0 == "\t" }
-        let trailing = issues.trailingInset(on: document.line(at: range.location))
+        let number = document.line(at: range.location)
+        let trailing = issues.trailingInset(on: number)
         let blank = string.first?.isNewline == true && string.dropFirst().isEmpty
         guard blank || !indent.isEmpty || trailing > 0 else { return nil }
         let shown = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle ?? defaultParagraphStyle ?? .default
@@ -163,7 +164,17 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
             style.lineSpacing = 0
         }
         let paragraph = NSMutableAttributedString(attributedString: text)
-        paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))
+        let whole = NSRange(location: 0, length: paragraph.length)
+        paragraph.addAttribute(.paragraphStyle, value: style, range: whole)
+        // An issue's tokens underlined by TextKit, which breaks the line around descenders, as Xcode 27.2's does.
+        if let (issue, _) = issues.issue(on: number), let colour = IssueBox.underlines[issue.error] {
+            for token in issue.tokens {
+                let part = NSIntersectionRange(NSRange(location: token.start, length: token.length), whole)
+                if part.length > 0 {
+                    paragraph.addAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: colour], range: part)
+                }
+            }
+        }
         return NSTextParagraph(attributedString: paragraph)
     }
 

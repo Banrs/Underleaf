@@ -54,8 +54,10 @@ struct ColorTests {
     @Test func issueUnderlinesStandOutFromTheText() throws {
         for name in NSColor.textAppearances {
             for error in [false, true] {
+                // As legible as text. NSAppearance(named:) gives the plain appearance for a high-contrast name, so each
+                // resolves to its 4.5:1 colour here; the 7:1 one shows only with Increase Contrast on.
                 let shown = ratio(try #require(IssueBox.underlines[error]), in: name)
-                #expect(shown >= 2.95, "\(error) in \(name.rawValue): \(shown)")
+                #expect(shown >= 4.45, "\(error) in \(name.rawValue): \(shown)")
             }
         }
     }
