@@ -44,8 +44,8 @@ struct PDFTests {
         controller.show(rebuilt, covers: SyncPDFView.covers(view.coverPages, of: rebuilt))
         #expect(view.document === rebuilt && view.scaleFactor == scale && controller.zoom == zoom && view.autoScales == (zoom == .fitWidth))
         #expect(try shown(view) == place)
-        #expect(overlays(in: view).contains { $0.covered })
-        try await waitUntil { !overlays(in: view).contains { $0.covered } }
+        #expect(view.descendants(of: PageOverlay.self).contains { $0.covered })
+        try await waitUntil { !view.descendants(of: PageOverlay.self).contains { $0.covered } }
         if zoom != .fitPage {
             for height in [480, 680] as [CGFloat] {
                 window.setContentSize(NSSize(width: view.frame.width, height: height))
@@ -223,12 +223,12 @@ struct PDFTests {
         let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["one", "two"], in: controller)
-        try await waitUntil { !overlays(in: view).contains { $0.covered } }
+        try await waitUntil { !view.descendants(of: PageOverlay.self).contains { $0.covered } }
         let live = try #require(await PDFController.loadPages([0: try typedPage()], covering: view.coverPages))
         #expect(live.covers[0] != nil)
         controller.replace(live)
         try await Task.sleep(for: .milliseconds(100))
-        #expect(overlays(in: view).contains { $0.covered })
+        #expect(view.descendants(of: PageOverlay.self).contains { $0.covered })
     }
 
     @Test func findReadsEachPageAsAStringEndingInASearchBoundary() async throws {
@@ -416,10 +416,6 @@ struct PDFTests {
     private func atStart(_ view: SyncPDFView) throws -> Bool {
         let place = try shown(view), top = try #require(view.document?.page(at: 0)).bounds(for: view.displayBox).maxY
         return place.page == 0 && abs(place.y - top) < 1
-    }
-
-    private func overlays(in view: NSView) -> [PageOverlay] {
-        view.subviews.flatMap { ($0 as? PageOverlay).map { [$0] } ?? overlays(in: $0) }
     }
 
     private struct Place: Equatable {
