@@ -13,13 +13,17 @@ struct EditorPDFPixelTests {
 
     @Test func theGutterThePDFsMarksAndAnEmptyColumnAreWrittenOut() async throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let pages = (1...2).map { page in
+            (1...40).map { "Page \(page), line \($0): words that run on across the page to its edge." }.joined(separator: "\n")
+        }
+        let examplePDF = try #require(textPDF(pages).dataRepresentation())
         for dark in [false, true] {
             for key in [false, true] {
                 let suffix = "\(dark ? "dark" : "light")-\(key ? "key" : "inactive")"
                 try await editor(dark: dark, key: key, suffix: suffix)
-                try await pdf(dark: dark, key: key, suffix: suffix)
+                try await pdf(dark: dark, key: key, suffix: suffix, data: examplePDF)
                 try await emptyColumn(dark: dark, key: key, suffix: suffix)
-                try await workspace(dark: dark, key: key, suffix: suffix)
+                try await workspace(dark: dark, key: key, suffix: suffix, data: examplePDF)
             }
         }
     }
@@ -55,7 +59,7 @@ struct EditorPDFPixelTests {
         #expect(text.foldClick(at: CGPoint(x: badge.midX, y: badge.midY)) && text.folds.isEmpty)
     }
 
-    private func pdf(dark: Bool, key: Bool, suffix: String) async throws {
+    private func pdf(dark: Bool, key: Bool, suffix: String, data: Data) async throws {
         let controller = PDFController(), view = controller.view
         let window = Self.window(NSSize(width: 500, height: 600), dark: dark, key: key)
         defer { window.close() }
@@ -63,7 +67,7 @@ struct EditorPDFPixelTests {
         view.frame = content.bounds
         view.autoresizingMask = [.width, .height]
         content.addSubview(view)
-        controller.show(try Self.examplePDF())
+        controller.show(try #require(PDFDocument(data: data)))
         try await settlePixelLayout(passes: 6)
         let page = try #require(view.document?.page(at: 0))
         view.mark([0: Self.badBoxes], press: { _ in })
@@ -92,7 +96,7 @@ struct EditorPDFPixelTests {
 
     /// The workspace's columns as a window lays them out: the editor and the PDF either side of the divider, over the
     /// status bar across both.
-    private func workspace(dark: Bool, key: Bool, suffix: String) async throws {
+    private func workspace(dark: Bool, key: Bool, suffix: String, data: Data) async throws {
         let defaults = TestDefaults()
         let model = defaults.window()
         let views = WorkspaceViews(project: ProjectModel(id: "Pixels", window: model))
@@ -103,7 +107,7 @@ struct EditorPDFPixelTests {
         workspace.view.setFrameSize(size)
         window.contentViewController = workspace
         views.project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
-        views.pdf.show(try Self.examplePDF())
+        views.pdf.show(try #require(PDFDocument(data: data)))
         try await settlePixelLayout(passes: 6)
         views.editor.open(path: "main.tex", source: SourceDocument(text: Self.source))
         try await write("workspace-\(suffix)", workspace.view, croppingTo: workspace.columns.view)
@@ -146,11 +150,4 @@ struct EditorPDFPixelTests {
         BadBoxArea(file: "main.tex", line: 6, tooWide: 12.5, message: "Overfull \\hbox (12.5pt too wide) in paragraph",
                    area: ForwardLoc(page: 1, h: 20, v: 100, width: 300, height: 40, matches: []), overrun: 50),
     ]
-
-    private static func examplePDF() throws -> PDFDocument {
-        let pages = (1...2).map { page in
-            (1...40).map { "Page \(page), line \($0): words that run on across the page to its edge." }.joined(separator: "\n")
-        }
-        return try textPDF(pages)
-    }
 }

@@ -15,12 +15,13 @@ struct ChromePixelTests {
 
     @Test func theChromeIsWrittenOut() async throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let pdf = try blankPDF(count: 3)
         let screen = Screen(requests: requests)
-        for dark in [false, true] { try await shoot(dark: dark, screen: screen) }
+        for dark in [false, true] { try await shoot(dark: dark, screen: screen, data: pdf) }
         try await screen?.ask("quit")
     }
 
-    private func shoot(dark: Bool, screen: Screen?) async throws {
+    private func shoot(dark: Bool, screen: Screen?, data: Data) async throws {
         let defaults = TestDefaults()
         let model = defaults.window()
         let views = WorkspaceViews(project: ProjectModel(id: "Pixels", window: model))
@@ -56,7 +57,7 @@ struct ChromePixelTests {
         project.tree.arrived()
         project.expandedFolders = ["chapters", "figures"]
         project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
-        views.pdf.show(try Self.pdf(pages: 3))
+        views.pdf.show(try #require(PDFDocument(data: data)))
         try await settlePixelLayout()
 
         func capture(_ name: String) async throws {
@@ -152,16 +153,6 @@ struct ChromePixelTests {
         }
         let result = ok.map { CompileResult(ok: $0, stopped: false, durationMs: 2340, pdf: $0 ? "/tmp/main.pdf" : nil, badBoxes: []) }
         return BuildState(compiling: ok == nil, auto: false, outdated: false, result: result, issues: items, lines: [:])
-    }
-
-    private static func pdf(pages: Int) throws -> PDFDocument {
-        let document = PDFDocument()
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-        for index in 0..<pages {
-            let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
-            document.insert(page, at: index)
-        }
-        return document
     }
 
     private func write(_ name: String, _ view: NSView, _ rect: NSRect) throws {
