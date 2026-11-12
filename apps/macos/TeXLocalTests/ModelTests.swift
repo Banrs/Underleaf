@@ -127,10 +127,9 @@ struct SectionTests {
         let window = defaults.window()
         let project = ProjectModel(id: "P", window: window)
         let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
-        let file = { (name: String) in TreeNode(name: name, path: name, kind: .tex, children: nil, main: name == "main.tex") }
         let sections: [SessionSection] = [
             .project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil)),
-            .tree([file("main.tex"), TreeNode(name: "figs", path: "figs", kind: nil, children: [], main: false), file("b.tex")]),
+            .tree([treeFile("main.tex", main: true), treeFolder("figs", []), treeFile("b.tex")]),
             .documents([DocumentState(path: "b.tex", error: nil, conflict: .changed, asking: false)]),
         ]
         for section in sections { project.handle(.section(section)) }
@@ -138,7 +137,7 @@ struct SectionTests {
         #expect(project.settings?.mainFile == "main.tex")
         #expect(project.url("b.tex")?.path(percentEncoded: false) == "/tmp/Paper/b.tex")
         #expect(project.tree.nodes.map(\.name) == ["figs", "b.tex", "main.tex"])
-        project.handle(.section(.tree([file("main.tex"), file("a.tex")])))
+        project.handle(.section(.tree([treeFile("main.tex", main: true), treeFile("a.tex")])))
         #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
         project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."),
@@ -149,11 +148,8 @@ struct SectionTests {
 
     @Test func theTrailGoesBackOnlyToFilesTheTreeStillHolds() {
         let project = ProjectModel(id: "P", window: defaults.window())
-        let file = { (path: String) in TreeNode(name: path.fileName, path: path, kind: .tex, children: nil, main: false) }
-        let tree = { (files: [TreeNode]) in
-            project.handle(.section(.tree([TreeNode(name: "ch", path: "ch", kind: nil, children: files, main: false), file("main.tex")])))
-        }
-        tree([file("ch/one.tex")])
+        let tree = { (files: [TreeNode]) in project.handle(.section(.tree([treeFolder("ch", files), treeFile("main.tex")]))) }
+        tree([treeFile("ch/one.tex")])
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         project.trail.jumped(from: Place(path: "ch/one.tex", line: 3))
         #expect(project.canRetrace(back: true) && !project.canRetrace(back: false))
@@ -166,8 +162,9 @@ struct SectionTests {
         let window = defaults.window()
         window.layout = .source
         let project = ProjectModel(id: "P", window: window)
-        let item = { (kind: Severity, line: Int) in LogItem(kind: kind, file: "main.tex", line: line, message: Message(id: .tex, args: ["text": "Line \(line)"], text: "Line \(line)"), explain: nil, fix: nil) }
-        let (error, warning, box) = (item(.error, 3), item(.warning, 5), item(.warning, 9))
+        let (error, warning, box) = (logItem(.error, "Line 3", line: 3, args: ["text": "Line 3"]),
+                                     logItem(.warning, "Line 5", line: 5, args: ["text": "Line 5"]),
+                                     logItem(.warning, "Line 9", line: 9, args: ["text": "Line 9"]))
         let result = CompileResult(ok: false, stopped: false, durationMs: 1200, pdf: nil, badBoxes: [box])
         let build = { (issues: [LogItem]) in
             project.handle(.section(.build(BuildState(compiling: false, auto: false, outdated: true, result: result,
@@ -658,9 +655,8 @@ struct ViewsTests {
     @Test func aDroppedFigureIsIncludedOrCopiedInAndAProjectFileOpens() {
         let project = ProjectModel(id: "P", window: defaults.window())
         let settings = ProjectSettings(mainFile: "main.tex", engine: .pdflatex, stopOnFirstError: false, shellEscape: false)
-        let file = { (name: String, kind: FileKind) in TreeNode(name: name, path: name, kind: kind, children: nil, main: false) }
         project.handle(.section(.project(ProjectState(name: "Paper", root: "/tmp/Paper", settings: settings, problem: nil))))
-        project.handle(.section(.tree([file("main.tex", .tex), file("plot.png", .image), file("refs.bib", .bib)])))
+        project.handle(.section(.tree([treeFile("main.tex", .tex), treeFile("plot.png", .image), treeFile("refs.bib", .bib)])))
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         let drop = { (path: String) in project.dropAction(for: URL(filePath: path)) }
         #expect(drop("/tmp/Paper/plot.png") == .insert("\\includegraphics{plot.png}") && drop("/tmp/Paper/refs.bib") == .open("refs.bib"))
@@ -718,13 +714,11 @@ struct ViewsTests {
 struct FilterKindTests {
     private let defaults = TestDefaults()
 
-    private func item(_ kind: Severity, _ text: String, _ topic: Topic? = nil) -> LogItem {
-        LogItem(kind: kind, file: "main.tex", line: 1, message: Message(id: .tex, args: ["text": text], text: text), topic: topic)
-    }
-
     @Test func aKindTheMenuHidesLeavesTheIssueListAndComesBackWhenShownAgain() {
         let navigator = ProjectModel(id: "P", window: defaults.window()).navigator
-        let (error, reference) = (item(.error, "Missing $ inserted."), item(.warning, "There were undefined references.", .undefinedReference))
+        let (error, reference) = (logItem(.error, "Missing $ inserted.", args: ["text": "Missing $ inserted."]),
+                                  logItem(.warning, "There were undefined references.", args: ["text": "There were undefined references."],
+                                          topic: .undefinedReference))
         navigator.hiddenIssueKinds = [.undefinedReference]
         #expect(navigator.rows(of: [error, reference]).map(\.element) == [error])
         navigator.hiddenIssueKinds = []

@@ -3,6 +3,18 @@ import PDFKit
 import Testing
 @testable import TeXLocal
 
+func treeFile(_ path: String, _ kind: FileKind = .tex, main: Bool = false) -> TreeNode {
+    TreeNode(name: path.fileName, path: path, kind: kind, children: nil, main: main)
+}
+
+func treeFolder(_ path: String, _ children: [TreeNode]) -> TreeNode {
+    TreeNode(name: path.fileName, path: path, kind: nil, children: children, main: false)
+}
+
+func logItem(_ kind: Severity, _ text: String, file: String = "main.tex", line: Int = 1, args: [String: String] = [:], topic: Topic? = nil) -> LogItem {
+    LogItem(kind: kind, file: file, line: line, message: Message(id: .tex, args: args, text: text), topic: topic)
+}
+
 struct TimedOut: Error {}
 
 func waitUntil(timeout: Duration = .seconds(120), _ condition: () -> Bool) async throws {
