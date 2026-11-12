@@ -145,7 +145,8 @@ unsafe fn on_source<T: Default>(source: *mut TlSource, body: impl FnOnce(&Docume
 
 fn answered(body: impl FnOnce() -> Result<Value, CoreError>) -> *mut c_char {
     let answer = caught(body).unwrap_or_else(|| Err(CoreError::internal(messages::went_wrong())));
-    c_json(json!(Answered::from(answer)).to_string()).into_raw()
+    let answer = serde_json::to_string(&Answered::from(answer));
+    c_json(answer.expect("an answer is JSON")).into_raw()
 }
 
 unsafe fn answer_on(
