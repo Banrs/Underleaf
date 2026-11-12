@@ -1,6 +1,25 @@
 import Foundation
 
 extension ProjectModel {
+    func url(_ path: String) -> URL? { root.map { $0.appending(path: path) } }
+
+    func projectPath(_ url: URL) -> String? {
+        guard let folder = root?.resolvingSymlinksInPath().pathComponents else { return nil }
+        let inside = url.resolvingSymlinksInPath().pathComponents
+        guard inside.count > folder.count, inside.starts(with: folder) else { return nil }
+        return inside.dropFirst(folder.count).joined(separator: "/")
+    }
+
+    func copyFigure(_ url: URL) async -> String? {
+        let folder = openPath?.parentFolder ?? ""
+        let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
+        guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) }),
+              let path = made.paths.first, files.node(at: path) != nil else { return nil }
+        return includeGraphics(path)
+    }
+
+    func includeGraphics(_ path: String) -> String? { Syntax.call(IncludeGraphics(path: path, into: openPath ?? "")) ?? nil }
+
     func createEntry(in folder: String, directory: Bool) async -> String? {
         let name = directory ? "untitled-folder" : "untitled.tex"
         guard let made = await alerting("Couldn’t Create “\(name)”", {

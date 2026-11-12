@@ -196,3 +196,20 @@ nonisolated enum PDFPaper: String, CaseIterable, Identifiable {
 }
 
 enum SettingsPane: String { case general, editor, compiling, pdf, livePreview }
+
+nonisolated extension Menus {
+    static let shared = Syntax.call(ListMenus()) ?? Menus(templates: Templates(math: [], insert: [], list: [], references: []), symbolGroups: [])
+}
+
+nonisolated extension HeadingStyle {
+    static let standard = Syntax.call(HeadingStyles()) ?? []
+}
+
+nonisolated extension OutlineNode: Identifiable {
+    var id: Int { index }
+    var descendants: [OutlineNode] { (children ?? []).flatMap { [$0] + $0.descendants } }
+}
+
+nonisolated extension Analysis {
+    var outline: [Heading] { tree.flatMap { [$0] + $0.descendants }.map(\.heading) }
+}
