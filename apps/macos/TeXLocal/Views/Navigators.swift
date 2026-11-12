@@ -55,7 +55,8 @@ struct NavigatorFilterBar: View {
     var body: some View {
         @Bindable var model = project.navigator
         let shown = model.shown
-        HStack(spacing: 6) {
+        // Xcode 27.2's, measured at 2×: 8 pt between its capsules and below and after them, 7 pt before them.
+        HStack(spacing: 8) {
             if shown == .files {
                 Menu {
                     ForEach([MenuCommand.fileNew, .fileNewFolder, .fileUpload], id: \.self) { command in
@@ -82,7 +83,8 @@ struct NavigatorFilterBar: View {
             }
         }
         .controlSize(.large)
-        .padding(7)
+        .padding([.vertical, .trailing], 8)
+        .padding(.leading, 7)
     }
 }
 

@@ -15,7 +15,9 @@ struct FilterField<Toggles: View>: View {
         let active = !text.isEmpty || hasActiveOptions
         let symbol = Image(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
             .foregroundStyle(active ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
-        HStack(spacing: large ? 4 : 3) {
+        // Xcode 27.2's filter, measured at 2×: its symbol's ink 7 pt into the 28 pt capsule, its text 26 pt after that, its
+        // last toggle's ink 8 pt from the end. A regular capsule scales them by its height.
+        HStack(spacing: large ? 4.5 : 4) {
             if options.isEmpty {
                 symbol.accessibilityHidden(true)
             } else {
@@ -38,9 +40,7 @@ struct FilterField<Toggles: View>: View {
             if !text.isEmpty { Button("Clear", systemImage: "xmark.circle.fill") { text = "" }.foregroundStyle(.filterSymbol) }
             toggles
         }
-        // A quarter of the capsule's height, so a regular field's symbol and text sit as far in, for its size, as a large
-        // one's, as its spacing above scales with it.
-        .padding(.horizontal, large ? 7 : 6)
+        .padding(.horizontal, large ? 6 : 5)
         // AppKit's heights for a large and a regular field.
         .frame(height: large ? 28 : 24)
         .glassEffect(.regular.interactive(), in: .capsule)
