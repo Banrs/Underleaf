@@ -118,6 +118,9 @@ the boundary, offsets are UTF-16 code units and paths inside a project are relat
 CI builds and tests the crates on Linux as well as on a Mac, and builds texlocal-latex for a browser, so a change
 that breaks either shows at once. A port to another system starts with a module in `sys`.
 
+[docs/architecture.md](docs/architecture.md) says how the backend works: its threads, what a keystroke and a
+build go through, what is cached, and what each of those costs.
+
 ## Licence
 
 MIT; see [LICENSE](LICENSE). The TeXpresso patch in `tools/texpresso` is under TeXpresso's own MIT
