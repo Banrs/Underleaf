@@ -46,7 +46,7 @@ enum Source {
     Zip(usize),
 }
 
-const MAX_UNZIPPED: u64 = 1 << 30;
+const MAX_UNZIPPED: u128 = 1 << 30;
 
 const ENGINE_PACKAGES: [(Engine, &[&str]); 2] = [
     (
@@ -361,7 +361,7 @@ fn write_files(
         let mut unzipped = 0;
         for (_, source) in files {
             if let Source::Zip(i) = source {
-                unzipped += zip.by_index_raw(*i)?.size();
+                unzipped += u128::from(zip.by_index_raw(*i)?.size());
             }
         }
         if unzipped > MAX_UNZIPPED {

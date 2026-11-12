@@ -301,3 +301,26 @@ async fn a_zip_opens_without_its_top_folder_litter_or_escapes() {
         assert!(!escaped.exists(), "{escaped:?}");
     }
 }
+
+#[tokio::test]
+async fn a_zip_whose_sizes_overflow_is_refused() {
+    use std::io::{Cursor, Write};
+    let library = Library::new();
+    let path = library.path("Paper.zip");
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default().large_file(true);
+    for entry in ["main.tex", "more.tex"] {
+        zip.start_file(entry, options).unwrap();
+        zip.write_all(b"x").unwrap();
+    }
+    let mut bytes = zip.finish().unwrap().into_inner();
+    let header = bytes.windows(4).position(|s| s == b"PK\x01\x02").unwrap();
+    let size = header + 46 + "main.tex".len() + 4;
+    bytes[size..size + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+    fs::write(&path, bytes).unwrap();
+    let refused = library
+        .service
+        .call("OpenPath", json!({ "path": path }))
+        .await;
+    assert_eq!(refused.unwrap_err().message.id, "zip_too_large");
+}
