@@ -90,7 +90,7 @@ struct SymbolLibraryView: View {
                                 .accessibilityLabel(MathGlyphs.spokenName(symbol.glyph, symbol.command))
                             }
                         } header: {
-                            Text(section.title).font(.headline).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(section.title).font(.headline).frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
                         }
                     }
                 }

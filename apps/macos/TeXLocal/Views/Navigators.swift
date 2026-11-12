@@ -256,6 +256,7 @@ private struct IssueRow: View {
         .help([item.message.text, item.explain?.text].compactMap(\.self).joined(separator: "\n\n"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.isError ? "Error" : "Warning"): \(item.message.text)")
+        .accessibilityAddTraits(.isStaticText)
         .accessibilityValue([item.explain?.text, location].compactMap(\.self).joined(separator: " "))
     }
 
