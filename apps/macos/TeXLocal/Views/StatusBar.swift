@@ -3,33 +3,18 @@ import SwiftUI
 
 enum BarMetrics {
     static let height: CGFloat = 36
-    static let target: CGFloat = 20
-    static let inset: CGFloat = 8
-    static let symbolWidth: CGFloat = 30
-
-    /// The bar's top edge uses the thin split divider's colour and thickness, which follow Increase Contrast, so it
-    /// matches the dividers it meets.
-    static let edge: (color: NSColor, thickness: CGFloat) = {
-        let split = NSSplitView()
-        split.dividerStyle = .thin
-        return (split.dividerColor, split.dividerThickness)
-    }()
 }
 
-/// Xcode's spacing between texts: 14 pt to the first item, 16 between items and 9 before the divider; an icon 4 pt from
-/// its text, as in an AppKit button. Each item reaches `overhang` past its text either side, as far as the accessory bar
-/// style's hover capsule reaches past a small AppKit label, and the items are spaced by what's left.
+/// Xcode's spacing between the bar's texts: 14 pt to the first, 16 between items and 9 before the divider.
 private enum Spacing {
     static let lead: CGFloat = 14
     static let items: CGFloat = 16
     static let divider: CGFloat = 9
-    static let icon: CGFloat = 4
-    static let overhang: CGFloat = 5
 }
 
 private struct BarLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Spacing.icon) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             configuration.icon
             configuration.title
         }
@@ -40,6 +25,37 @@ private extension LabelStyle where Self == BarLabelStyle {
     static var bar: BarLabelStyle { BarLabelStyle() }
 }
 
+private struct BarButtonStyle: ButtonStyle {
+    var selected = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        Content(label: configuration.label, pressed: configuration.isPressed, selected: selected)
+    }
+
+    private struct Content: View {
+        let label: Configuration.Label
+        let pressed: Bool
+        let selected: Bool
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovered = false
+
+        var body: some View {
+            label.foregroundStyle(color)
+                .padding(.horizontal, Spacing.items / 2)
+                .frame(minHeight: 20)
+                .contentShape(.rect)
+                .onHover { hovered = $0 }
+        }
+
+        private var color: Color {
+            if !enabled { return Color(nsColor: .disabledControlTextColor) }
+            if selected { return .accentColor }
+            return hovered || pressed ? .primary : .secondary
+        }
+    }
+}
+
+/// The bar beneath the source and PDF, showing the build status, caret position and current page.
 struct StatusBar: View {
     @Environment(WindowModel.self) private var window
     let project: ProjectModel
@@ -50,13 +66,17 @@ struct StatusBar: View {
             content(.symbols).labelStyle(.iconOnly)
             content(.short).labelStyle(.iconOnly)
         }
-        .barRow()
-        .padding(.top, BarMetrics.edge.thickness)
-        .barEdge()
-        .contentShape(.rect)
+        .font(.subheadline)
+        .controlSize(.small)
+        .lineLimit(1)
         .monospacedDigit()
-        .buttonStyle(.accessoryBar)
-        .buttonBorderShape(.capsule)
+        .buttonStyle(BarButtonStyle())
+        .padding(.leading, Spacing.lead - Spacing.items / 2)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity)
+        .frame(height: BarMetrics.height)
+        .pointerStyle(.default)
+        .safeAreaInset(edge: .top, spacing: 0) { Divider() }
         .contextMenu { Button(window.title(.viewToggleWordCount, on: project)) { window.perform(.viewToggleWordCount, on: project) } }
     }
 
@@ -64,25 +84,17 @@ struct StatusBar: View {
 
     private func content(_ detail: Detail) -> some View {
         HStack(spacing: 0) {
-            HStack(spacing: Spacing.items - 2 * Spacing.overhang) {
-                BuildStatus(project: project, detail: detail)
-                LiveStatus(project: project)
-                SaveStatus(project: project)
-                if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary).barText() }
-            }
-            Spacer(minLength: Spacing.items - 2 * Spacing.overhang)
-            HStack(spacing: Spacing.items - 2 * Spacing.overhang) {
-                CaretPlace(project: project, detail: detail)
-                WordCount(project: project, detail: detail)
-                PagePlace(project: project, detail: detail)
-            }
-            .fixedSize()
-            if CaretPlace.shows(project, window) || PagePlace.shows(project, window) {
-                Divider().frame(height: 12).padding(.leading, Spacing.divider - Spacing.overhang)
-            }
+            BuildStatus(project: project, detail: detail)
+            LiveStatus(project: project)
+            SaveStatus(project: project)
+            if let notice = project.notices.current { Text(notice).foregroundStyle(.secondary).barText() }
+            CaretPlace(project: project, detail: detail)
+            WordCount(project: project, detail: detail)
+            Spacer(minLength: 0)
+            PagePlace(project: project, detail: detail)
+            if PagePlace.shows(project, window) { Divider().frame(height: 12).padding(.leading, Spacing.divider - Spacing.items / 2) }
             PanelToggle(project: project)
         }
-        .padding(.leading, Spacing.lead - Spacing.overhang - BarMetrics.inset)
     }
 }
 
@@ -92,10 +104,12 @@ private struct BuildStatus: View {
     let detail: StatusBar.Detail
 
     var body: some View {
-        Button { project.showNavigator(.issues) } label: {
-            label.fixedSize(horizontal: detail != .short, vertical: true).barItem()
+        if state != nil || !project.issues.isEmpty {
+            Button { project.showNavigator(.issues) } label: {
+                label.fixedSize(horizontal: detail != .short, vertical: true)
+            }
+            .help("Show issues")
         }
-        .help("Show issues")
     }
 
     private var state: (title: LocalizedStringKey, symbol: String?, color: Color?)? {
@@ -103,8 +117,8 @@ private struct BuildStatus: View {
         guard let result = project.result else { return project.hasPDF ? nil : ("No Build Yet", nil, nil) }
         if result.stopped { return ("Build Stopped", nil, nil) }
         if result.ok { return ("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green) }
-        return (project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
-                "exclamationmark.octagon.fill", nil)
+        // The count beside it already wears the error's symbol and says how many.
+        return ("Build Failed", project.errorCount == 0 ? "exclamationmark.octagon.fill" : nil, nil)
     }
 
     private var label: some View {
@@ -117,7 +131,7 @@ private struct BuildStatus: View {
                     Text(state.title)
                 }
             }
-            if project.errorCount > 0, project.result?.failed != true {
+            if project.errorCount > 0 {
                 badge("\(project.errorCount)", "exclamationmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)",
                       count: project.errorCount)
             }
@@ -163,7 +177,6 @@ private struct LiveStatus: View {
                 } icon: {
                     Image(systemName: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
                 }
-                .barItem()
             }
             .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }
                   ?? "Show the Live Preview log")
@@ -179,7 +192,6 @@ private struct SaveStatus: View {
             Button { Task { await project.save() } } label: {
                 Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
                     .symbolRenderingMode(.multicolor)
-                    .barItem()
             }
             .help("\(reason.hasSuffix(".") ? String(reason.dropLast()) : reason); save again")
         }
@@ -255,12 +267,12 @@ private struct PagePlace: View {
     @ViewBuilder private var freshness: some View {
         if project.showsLastSuccessfulBuild {
             Button { project.showNavigator(.issues) } label: {
-                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill").barItem()
+                Label("Last Successful Build", systemImage: "exclamationmark.triangle.fill")
             }
             .help("The latest build failed, so this is the last PDF that built")
         } else if project.outdated, !project.livePDF, !window.app.autoCompile {
             Button { window.perform(.compileRun, on: project) } label: {
-                Label("PDF Out of Date", systemImage: "arrow.clockwise").barItem()
+                Label("PDF Out of Date", systemImage: "arrow.clockwise")
             }
             .help("The PDF is older than the source; compile to refresh it")
             .disabled(!window.app.isEnabled(.compileRun, on: project))
@@ -278,12 +290,10 @@ private struct PanelToggle: View {
             Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
                 .font(.body)
-                .frame(minWidth: BarMetrics.symbolWidth, minHeight: BarMetrics.target)
-                .contentShape(.rect)
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
-        .buttonStyle(.borderless)
+        .buttonStyle(BarButtonStyle(selected: project.panel.shown))
         .help(window.title(.viewToggleLogs, on: project))
     }
 }
@@ -291,30 +301,9 @@ private struct PanelToggle: View {
 private func place(_ detail: StatusBar.Detail, _ full: LocalizedStringKey, short: String, spoken: LocalizedStringKey) -> some View {
     Group { if detail == .short { Text(verbatim: short) } else { Text(full) } }
     .accessibilityLabel(spoken)
-    .barItem()
 }
 
-extension View {
-    func barRow() -> some View {
-        font(.subheadline).controlSize(.small).lineLimit(1)
-            .frame(minHeight: BarMetrics.target).padding(.horizontal, BarMetrics.inset).padding(.vertical, 8)
-    }
-
-    func barEdge() -> some View { overlay(alignment: .top) { Hairline() } }
-
-    /// A button's label, which SwiftUI's accessory bar style pads 10 pt either side, where AppKit's pads a small one 5.
-    fileprivate func barItem() -> some View { padding(.horizontal, Spacing.overhang - 10) }
-
-    /// Text between the buttons, given the room their capsules take.
-    fileprivate func barText() -> some View { padding(.horizontal, Spacing.overhang) }
-}
-
-/// The divider colour is translucent, so it's drawn over the window background, as split view dividers are. Over the
-/// scroll edge's line it came out a step lighter than the dividers it meets.
-private struct Hairline: View {
-    var body: some View {
-        Rectangle().fill(Color(nsColor: BarMetrics.edge.color))
-            .background(Color(nsColor: .untintedTextBackground))
-            .frame(height: BarMetrics.edge.thickness)
-    }
+private extension View {
+    /// Text between the bar's buttons, given the room their labels take.
+    func barText() -> some View { padding(.horizontal, Spacing.items / 2) }
 }

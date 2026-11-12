@@ -120,9 +120,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         completions.close()
         typingAttributes[.font] = font
         guard resized else { return }
-        let natural = font.ascender.rounded(.up) - font.descender.rounded(.down) + font.leading
-        let style = NSMutableParagraphStyle()
-        style.minimumLineHeight = (natural * 1.1).rounded()
+        let style = Self.rowStyle(for: font)
         defaultParagraphStyle = style
         textStorage?.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: length))
         typingAttributes = [.font: font, .foregroundColor: NSColor.textColor, .paragraphStyle: style]
@@ -131,19 +129,36 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         updateGutterWidth()
     }
 
+    /// Rows spaced by the 1.1× leading of Xcode's default themes, as line spacing so the caret keeps its native height.
+    static func rowStyle(for font: NSFont) -> NSMutableParagraphStyle {
+        let rowHeight = NSLayoutManager().defaultLineHeight(for: font)
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = (rowHeight * 1.1).rounded() - rowHeight
+        return style
+    }
+
     func textContentStorage(_ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange) -> NSTextParagraph? {
         guard let text = textContentStorage.textStorage?.attributedSubstring(from: range), text.length > 0,
-              let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
-              let shown = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+              let font = text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
         else { return nil }
-        let indent = text.string.prefix { $0 == " " || $0 == "\t" }
-        guard !indent.isEmpty else { return nil }
+        let string = text.string
+        let indent = string.prefix { $0 == " " || $0 == "\t" }
+        let trailing = issues.trailingInset(on: document.line(at: range.location))
+        let blank = string.first?.isNewline == true && string.dropFirst().isEmpty
+        guard blank || !indent.isEmpty || trailing > 0 else { return nil }
+        let shown = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle ?? defaultParagraphStyle ?? .default
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: shown]
         let width = { (text: String) in (text as NSString).size(withAttributes: attributes).width }
         // Measuring puts the style in attributed text, and a paragraph style mustn't change once it's there (changing the
-        // measured one doubled the time to indent 2,000 lines), so the indent goes on a copy made afterwards.
+        // measured one doubled the time to indent 2,000 lines), so the indents go on a copy made afterwards.
         let style = shown.mutableCopy() as! NSMutableParagraphStyle
         style.headIndent = min(width(String(indent)), 20 * width(" "))
+        if trailing > 0 { style.tailIndent = -trailing }
+        // TextKit includes line spacing in a blank row's caret. Put that space above the row instead.
+        if blank {
+            style.paragraphSpacingBefore = style.lineSpacing
+            style.lineSpacing = 0
+        }
         let paragraph = NSMutableAttributedString(attributedString: text)
         paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))
         return NSTextParagraph(attributedString: paragraph)

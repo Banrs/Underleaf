@@ -29,9 +29,16 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
 
     final class ScrollView: NSScrollView {
         var scrolled: () -> Void = {}
+        private var viewportHeight: CGFloat = 0
 
         override func reflectScrolledClipView(_ clip: NSClipView) {
             super.reflectScrolledClipView(clip)
+            let grew = clip.bounds.height > viewportHeight
+            viewportHeight = clip.bounds.height
+            if grew, let text = documentView as? SourceTextView, !text.isHidden {
+                // Lay out the lines being revealed as the viewport grows, including during a split resize.
+                text.textLayoutManager?.textViewportLayoutController.layoutViewport()
+            }
             scrolled()
         }
     }
@@ -64,6 +71,7 @@ final class SourceEditor: NSObject, NSTextViewDelegate {
         text.isHidden = true
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
+        scrollView.layerContentsRedrawPolicy = .duringViewResize
         scrollView.documentView = text
         scrollView.scrolled = { [weak self] in
             self?.textView.scrolled()

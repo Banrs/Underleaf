@@ -36,10 +36,12 @@ final class PDFController: NSObject {
         view.pageBreakMargins.top = 0
         view.autoScales = true
         view.onResize = { [weak self] in
-            guard let self else { return }
-            if zoom == .fitPage { fitPage() }
+            guard let self else { return false }
+            let refitsPage = zoom == .fitPage
+            if refitsPage { fitPage() }
             restoreIfReady()
             if let pending = pendingReveal { reveal(pending.loc, from: pending.source) }
+            return refitsPage
         }
         NotificationCenter.default.addObserver(self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: view)
         NotificationCenter.default.addObserver(self, selector: #selector(visiblePagesChanged), name: .PDFViewVisiblePagesChanged, object: view)
@@ -164,10 +166,10 @@ final class PDFController: NSObject {
         }
     }
 
-    func print(title: String, file: URL?) {
+    func print(title: String, file: URL) {
         Task {
-            let document = if let file { await Self.loadDocument(file)?.document } else { view.document }
-            guard let operation = document?.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true),
+            guard let document = await Self.loadDocument(file)?.document,
+                  let operation = document.printOperation(for: .shared, scalingMode: .pageScaleDownToFit, autoRotate: true),
                   let window = view.window else { return NSSound.beep() }
             operation.jobTitle = title
             operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
@@ -205,8 +207,7 @@ final class PDFController: NSObject {
         revealing?.cancel()
         view.removeMark()
         view.clearBadBoxes()
-        view.find.close()
-        view.find.pagesChanged()
+        view.find.clear()
         view.document = nil
         (page, pageCount) = (0, 0)
     }

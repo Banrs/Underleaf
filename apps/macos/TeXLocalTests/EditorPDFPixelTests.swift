@@ -109,13 +109,14 @@ struct EditorPDFPixelTests {
         views.pdf.show(try Self.examplePDF())
         try await settlePixelLayout(passes: 6)
         views.editor.open(path: "main.tex", source: SourceDocument(text: Self.source))
-        try await write("workspace-\(suffix)", workspace.columns.view)
+        try await write("workspace-\(suffix)", workspace.view, croppingTo: workspace.columns.view)
     }
 
-    private func write(_ name: String, _ view: NSView) async throws {
+    private func write(_ name: String, _ view: NSView, croppingTo content: NSView? = nil) async throws {
         try await settlePixelLayout(passes: 6)
         view.displayIfNeeded()
-        try writeScaledPixels(name, of: view, in: view.bounds, to: folder)
+        let rect = content.map { $0.convert($0.bounds, to: view) } ?? view.bounds
+        try writeScaledPixels(name, of: view, in: rect, to: folder)
     }
 
     /// On a 2x screen when there is one, so the 2x renders are laid out at 2x.

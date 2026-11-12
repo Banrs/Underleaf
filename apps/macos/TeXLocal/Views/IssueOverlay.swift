@@ -16,8 +16,8 @@ final class IssueOverlay {
 
     init(in view: SourceTextView) { self.view = view }
 
-    var lines: [Int: IssueLine] = [:] { didSet { if lines != oldValue { changed() } } }
-    var live: [Int: IssueLine] = [:] { didSet { if live != oldValue { changed() } } }
+    var lines: [Int: IssueLine] = [:] { didSet { if lines != oldValue { changed(Set(lines.keys).union(oldValue.keys)) } } }
+    var live: [Int: IssueLine] = [:] { didSet { if live != oldValue { changed(Set(live.keys).union(oldValue.keys)) } } }
     var isEmpty: Bool { lines.isEmpty && live.isEmpty }
     var clicked: (Int) -> Void = { _ in }
 
@@ -25,8 +25,19 @@ final class IssueOverlay {
         lines[number].map { ($0, false) } ?? live[number].map { ($0, true) }
     }
 
-    private func changed() {
+    private func changed(_ numbers: Set<Int>) {
         measured.removeAll()
+        if let storage = view.textStorage {
+            // The delegate's paragraph styles depend on diagnostics, so rebuild the affected text elements without
+            // changing the source or adding an undo step.
+            storage.beginEditing()
+            for number in numbers where number > 0 && number <= view.document.lineCount {
+                let range = storage.mutableString.lineRange(for: .caret(min(view.document.lineStart(number), storage.length)))
+                storage.edited(.editedAttributes, range: range, changeInLength: 0)
+            }
+            storage.endEditing()
+        }
+        view.textLayoutManager?.textViewportLayoutController.layoutViewport()
         place()
         view.redrawLineAndGutter()
     }
@@ -41,7 +52,14 @@ final class IssueOverlay {
     func fontChanged(size: CGFloat, text: NSFont) {
         font = .systemFont(ofSize: size)
         gap = ("0" as NSString).size(withAttributes: [.font: text]).width
-        measured.removeAll()
+        if isEmpty { measured.removeAll() } else { changed(Set(lines.keys).union(live.keys)) }
+    }
+
+    /// Reserve the smallest badge, its gap from the source, and the row highlight's 8 pt trailing inset.
+    func trailingInset(on number: Int) -> CGFloat {
+        guard let (reported, live) = issue(on: number),
+              let icon = fits(number, reported, live: live, issues: reported.others.count + 1).last else { return 0 }
+        return icon.width + gap + 8
     }
 
     func place() {

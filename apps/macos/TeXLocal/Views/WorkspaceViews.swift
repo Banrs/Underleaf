@@ -122,7 +122,7 @@ final class WorkspaceViews: ProjectViews {
     func perform(_ command: MenuCommand) {
         switch command {
         case .quickHelp: quickHelp(at: editor.caret, hovering: false)
-        case .filePrint: pdf.print(title: project.name, file: project.livePDF ? project.buildPDF : nil)
+        case .filePrint: if let file = project.buildPDF { pdf.print(title: project.name, file: file) }
         case .editShiftRight: editor.textView.shiftLines(1)
         case .editShiftLeft: editor.textView.shiftLines(-1)
         case .jumpToDefinition: editor.jumpToDefinition()

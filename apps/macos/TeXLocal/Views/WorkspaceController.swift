@@ -10,7 +10,7 @@ final class WorkspaceController: ThinSplitViewController {
     let toolbar: WorkspaceToolbar
 
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
-    private let area = AreaSplitViewController(isVertical: false)
+    private let area = ThinSplitViewController(isVertical: false)
     private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
     private var pdfEmpty: NSView!
     private let searchField = FieldHandle()
@@ -111,25 +111,6 @@ final class WorkspaceController: ThinSplitViewController {
         pdfItem.minimumThickness = ColumnMetrics.paneMinimum
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
-        for item in [sourceItem!, pdfItem!] {
-            let space = NSSplitViewItemAccessoryViewController()
-            space.view = NSView()
-            space.view.heightAnchor.constraint(equalToConstant: BarMetrics.height).isActive = true
-            space.automaticallyAppliesContentInsets = false
-            space.preferredScrollEdgeEffectStyle = .hard
-            item.addBottomAlignedAccessoryViewController(space)
-        }
-        let bar = NSHostingView(rootView: Pane(project: project, content: StatusBar(project: project))
-            .environment(app).environment(window).environment(views))
-        bar.sizingOptions = []
-        bar.safeAreaRegions = []
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        columns.view.addSubview(bar)
-        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: columns.view.leadingAnchor),
-                                     bar.trailingAnchor.constraint(equalTo: columns.view.trailingAnchor),
-                                     bar.bottomAnchor.constraint(equalTo: columns.view.bottomAnchor),
-                                     // Its edge lies on the row above the panes' accessories, over their scroll edges' own line.
-                                     bar.heightAnchor.constraint(equalToConstant: BarMetrics.height + BarMetrics.edge.thickness)])
 
         panelItem = NSSplitViewItem(viewController: host(BuildPanel(project: project), height: app.buildPanelHeight))
         panelItem.minimumThickness = ColumnMetrics.panelMinimum
@@ -138,6 +119,13 @@ final class WorkspaceController: ThinSplitViewController {
         panelItem.isCollapsed = true
         let columnsItem = NSSplitViewItem(viewController: columns)
         columnsItem.minimumThickness = 200
+        // The status bar moves with the columns and lets their content scroll beneath it.
+        let bar = NSSplitViewItemAccessoryViewController()
+        bar.view = NSHostingView(rootView: Pane(project: project, content: StatusBar(project: project))
+            .environment(app).environment(window).environment(views))
+        bar.automaticallyAppliesContentInsets = false
+        bar.preferredScrollEdgeEffectStyle = .hard
+        columnsItem.addBottomAlignedAccessoryViewController(bar)
         area.addSplitViewItem(columnsItem)
         area.addSplitViewItem(panelItem)
         areaItem = NSSplitViewItem(viewController: area)
@@ -286,12 +274,4 @@ private struct Pane<Content: View>: View {
     let content: Content
 
     var body: some View { if mount?.shown ?? true { content.disabled(!project.isOpen) } }
-}
-
-private final class AreaSplitViewController: ThinSplitViewController {
-    override func splitView(_ splitView: NSSplitView, additionalEffectiveRectOfDividerAt dividerIndex: Int) -> NSRect {
-        let line = splitView.arrangedSubviews[0].frame.maxY - BarMetrics.height
-        return NSUnionRect(super.splitView(splitView, additionalEffectiveRectOfDividerAt: dividerIndex),
-                           NSRect(x: 0, y: line - 2, width: splitView.bounds.width, height: splitView.dividerThickness + 4))
-    }
 }

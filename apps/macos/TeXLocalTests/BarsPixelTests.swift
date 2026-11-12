@@ -46,12 +46,16 @@ struct BarsPixelTests {
             project.store.apply(.outline(Analysis(tree: [], words: 1234, headingStyles: [], packages: [])))
             views.pdf.show(try Self.pdf())
             let columns = workspace.columns.view
+            // The split accessory sits alongside the columns, so capture them from the workspace.
+            let captureView = workspace.view
             func shot(_ name: String) async throws {
                 try await settlePixelLayout()
-                columns.displayIfNeeded()
-                let rect = NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48)
+                captureView.displayIfNeeded()
+                let bounds = columns.convert(columns.bounds, to: captureView)
+                let bottom = captureView.isFlipped ? bounds.maxY - 48 : bounds.minY
+                let rect = NSRect(x: bounds.minX, y: bottom, width: bounds.width, height: 48)
                 let scales = [Int(window.backingScaleFactor), 4]
-                try writeScaledPixels("status-\(name)-\(Int(width))-\(suffix)", of: columns, in: rect, to: folder, scales: scales)
+                try writeScaledPixels("status-\(name)-\(Int(width))-\(suffix)", of: captureView, in: rect, to: folder, scales: scales)
                 written += scales.count
             }
 

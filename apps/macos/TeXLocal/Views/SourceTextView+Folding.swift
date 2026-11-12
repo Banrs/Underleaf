@@ -64,8 +64,13 @@ extension SourceTextView: NSTextContentStorageDelegate {
 
     func relayOutFolds() {
         guard let manager = textLayoutManager else { return }
+        let top = shownTop
         manager.invalidateLayout(for: manager.documentRange)
-        manager.textViewportLayoutController.layoutViewport()
+        if let top, !folds.hides(top.offset) {
+            scroll(toShownTop: top)
+        } else {
+            manager.textViewportLayoutController.layoutViewport()
+        }
         needsDisplay = true
     }
 
@@ -128,7 +133,12 @@ extension SourceTextView: NSTextContentStorageDelegate {
 
     func foldLine(at point: NSPoint) -> Int? {
         guard point.x >= gutter.numbersEnd, point.x < sourceTextStart else { return nil }
-        let line = document.line(at: characterIndexForInsertion(at: NSPoint(x: textContainerOrigin.x, y: point.y)))
+        let y = point.y - textContainerOrigin.y
+        guard let entry = fragments.first(where: { $0.fragment.layoutFragmentFrame.maxY > y }),
+              let first = entry.fragment.textLineFragments.first else { return nil }
+        let row = first.typographicBounds.offsetBy(dx: 0, dy: entry.fragment.layoutFragmentFrame.minY)
+        guard y >= row.minY, y < row.maxY else { return nil }
+        let line = document.line(at: entry.offset)
         return foldable[line] != nil || foldedLines[line] != nil ? line : nil
     }
 

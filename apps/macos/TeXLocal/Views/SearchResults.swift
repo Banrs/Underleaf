@@ -21,7 +21,7 @@ private struct FindHeader: View {
                             step: { if !project.search.step($0, in: groups) { NSSound.beep() } },
                             options: search.usages == nil ? [(String(localized: "Match Case"), $search.asked.matchCase),
                                                              (String(localized: "Whole Words"), $search.asked.wholeWords)] : [])
-                if search.usages == nil { Toggle("Replace", isOn: $search.replacing).controlSize(.regular) }
+                if search.usages == nil { Toggle("Replace", isOn: $search.replacing) }
             }
             if search.showsReplace {
                 SearchField(text: $search.replacement, prompt: String(localized: "Replace With"), symbol: "pencil")
@@ -36,14 +36,12 @@ private struct FindHeader: View {
                         .disabled(search.hitCount == 0 || filtered)
                         .help(filtered ? "Clear the filter to replace every match" : "Replace all search results")
                 }
-                .controlSize(.regular)
             }
             if hits > 0 {
                 Text("^[\(hits) result](inflect: true) in ^[\(groups.count) file](inflect: true)")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
-        .controlSize(.large)
         .padding(.horizontal, 7)
         .padding(.bottom, 6)
     }

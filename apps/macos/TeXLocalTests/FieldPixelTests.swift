@@ -68,6 +68,11 @@ struct FieldPixelTests {
         try await shot("bar-files-toggle-on", bar, height: bar.intrinsicContentSize.height)
         project.navigator.showsOnlyRecentFiles = false
 
+        let logBar = NSHostingView(rootView: BuildPanelBar(project: project))
+        project.panel.hiddenLogKinds = [.info]
+        try await shot("bar-log-some-hidden", logBar, height: logBar.intrinsicContentSize.height)
+        project.panel.hiddenLogKinds = []
+
         for options in [false, true] {
             for text in ["", "intro"] {
                 let field = FilterField(text: .constant(text), options: options ? [("Errors", .constant(true))] : []) {}.frame(width: 182)

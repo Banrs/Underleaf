@@ -92,10 +92,6 @@ class ThinSplitViewController: NSSplitViewController {
 }
 
 final class ColumnsSplitView: DraggedSplitView {
-    override func drawDivider(in rect: NSRect) {
-        super.drawDivider(in: NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - BarMetrics.height))
-    }
-
     var evenPosition: CGFloat { ((bounds.width - dividerThickness) * (1 - ColumnMetrics.pdfShare)).rounded() }
 }
 

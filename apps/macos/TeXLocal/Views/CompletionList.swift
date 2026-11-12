@@ -137,19 +137,19 @@ class FloatingPanel: NSPanel {
 
     func show(_ frame: NSRect, over window: NSWindow, animated: Bool) {
         let opening = parent == nil
-        if opening || frame != self.frame {
-            let animates = !opening && animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            // A zero-length group also stops a resize still running, even one from before the panel last closed, which a plain
-            // setFrame would leave to finish.
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = animates ? animationResizeTime(frame) : 0
-                animator().setFrame(frame, display: !opening)
-            }
+        guard opening || frame != self.frame else { return }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animates = !opening && animated && !reduceMotion
+        // A zero-length group also stops a resize still running, even one from before the panel last closed, which a plain
+        // setFrame would leave to finish.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = animates ? animationResizeTime(frame) : 0
+            animator().setFrame(frame, display: !opening)
         }
         guard opening else { return }
-        alphaValue = 0
+        alphaValue = reduceMotion ? 1 : 0
         window.addChildWindow(self, ordered: .above)
-        NSAnimationContext.runAnimationGroup { _ in animator().alphaValue = 1 }
+        if !reduceMotion { NSAnimationContext.runAnimationGroup { _ in animator().alphaValue = 1 } }
     }
 
     func dismiss() {

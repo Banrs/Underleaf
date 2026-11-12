@@ -46,6 +46,13 @@ struct PDFTests {
         #expect(try shown(view) == place)
         #expect(overlays(in: view).contains { $0.covered })
         try await waitUntil { !overlays(in: view).contains { $0.covered } }
+        if zoom != .fitPage {
+            for height in [480, 680] as [CGFloat] {
+                window.setContentSize(NSSize(width: view.frame.width, height: height))
+                let resized = try shown(view)
+                #expect(resized == place, "At \(height) pt: \(place) became \(resized)")
+            }
+        }
         for width in [420, 700] as [CGFloat] {
             window.setContentSize(NSSize(width: width, height: 600))
             #expect(try shown(view) == place)
@@ -331,6 +338,10 @@ struct PDFTests {
         await controller.liveReading?.value
         try await waitUntil { find.text.pageStrings[1].contains("needle") }
         #expect(view.highlightedSelections == nil && find.isOpen && bar.window === window)
+
+        await controller.load(nil).value
+        #expect(view.document == nil && !find.isOpen)
+        #expect(find.text.pageStrings.isEmpty && view.highlightedSelections == nil)
     }
 
     @Test func followingTheCaretScrollsOnlyWhenItsPlaceIsOutOfView() async throws {
