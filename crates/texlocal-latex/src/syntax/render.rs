@@ -83,9 +83,6 @@ fn svg(list: &DisplayList, size: f64) -> Option<String> {
 }
 
 pub(crate) fn math_svg(tex: &str, display: bool, size: f64) -> Option<MathSvg> {
-    if !size.is_finite() {
-        return None;
-    }
     let size = size.clamp(1.0, 512.0);
     let list = display_list(tex, display)?;
     Some(MathSvg {
