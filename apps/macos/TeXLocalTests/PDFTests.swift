@@ -31,11 +31,14 @@ struct PDFTests {
         #expect(controller.pageCount == 0 && view.document == nil)
     }
 
-    @Test(arguments: [Zoom.fitWidth, .scale(1.5), .fitPage])
-    func aRebuildOrResizeKeepsThePlaceAndARebuildCoversItsPagesUntilPDFKitDrawsThem(_ zoom: Zoom) async throws {
+    @Test(arguments: [Zoom.fitWidth, .scale(1.5), .fitPage], [false, true])
+    func aRebuildOrResizeKeepsThePlaceAndARebuildCoversItsPagesUntilPDFKitDrawsThem(_ zoom: Zoom, _ findOpen: Bool) async throws {
         let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         controller.show(try textPDF(count: 6))
+        if findOpen { view.find.perform(.showFindInterface) }
+        view.goToStart()
+        #expect(try atStart(view))
         controller.apply(zoom)
         view.go(to: PDFDestination(page: try #require(view.document?.page(at: 3)), at: CGPoint(x: 0, y: 400)))
         let (scale, place) = (view.scaleFactor, try shown(view))
@@ -46,6 +49,8 @@ struct PDFTests {
         #expect(try shown(view) == place)
         #expect(view.descendants(of: PageOverlay.self).contains { $0.covered })
         try await waitUntil { !view.descendants(of: PageOverlay.self).contains { $0.covered } }
+        for _ in 0..<(findOpen ? 3 : 0) { controller.show(try textPDF(count: 6)) }
+        #expect(try shown(view) == place)
         if zoom != .fitPage {
             for height in [480, 680] as [CGFloat] {
                 window.setContentSize(NSSize(width: view.frame.width, height: height))
@@ -289,19 +294,6 @@ struct PDFTests {
         try await waitUntil { view.highlightedSelections?.count == 2 }
         let selection = try #require(view.currentSelection)
         #expect(selection.pages.first === page && selection.range(at: 0, on: page).location == below.location)
-    }
-
-    @Test func aRebuildWithFindOpenKeepsThePlace() async throws {
-        let (controller, view, window) = try await shownPDF()
-        defer { window.close() }
-        controller.show(try textPDF(count: 6))
-        view.find.perform(.showFindInterface)
-        view.goToStart()
-        #expect(try atStart(view))
-        view.go(to: PDFDestination(page: try #require(view.document?.page(at: 3)), at: CGPoint(x: 0, y: 400)))
-        let place = try shown(view)
-        for _ in 0..<3 { controller.show(try textPDF(count: 6)) }
-        #expect(try shown(view) == place)
     }
 
     @Test func findLightsItsMatchesTakesFindNextFromItsFieldAndDropsThemWhenALiveChangeAltersTheText() async throws {
