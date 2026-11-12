@@ -17,6 +17,11 @@ struct IssueOverlayTests {
         window.setContentSize(NSSize(width: 260, height: 400))
         window.displayIfNeeded()
         let original = try #require(text.fragments.first?.fragment.textLineFragments.first?.characterRange)
+        let scale = window.backingScaleFactor
+        let font = try #require(text.font)
+        let expectedThicknessPixels = (2 * font.underlineThickness * scale).rounded()
+        let expectedDropPixels = (-font.underlinePosition * scale).rounded(.down)
+        if scale == 2 { #expect(expectedThicknessPixels == 3 && expectedDropPixels == 2) }
         let message = Message(id: .tex, args: [:], text: "Undefined control sequence.")
         let issue = IssueLine(line: 1, error: true, message: message, short: message, compact: nil,
                               tokens: [TextRange(start: prefix.utf16.count, length: command.utf16.count)], others: [], index: 0)
@@ -40,7 +45,9 @@ struct IssueOverlayTests {
             let baselines = Set(fragment.textLineFragments.map {
                 text.onPixels(text.textContainerOrigin.y + fragment.layoutFragmentFrame.minY + $0.typographicBounds.minY + $0.glyphOrigin.y)
             })
-            #expect(!row.tokens.isEmpty && row.tokens.allSatisfy { $0.height == 1.5 && baselines.contains($0.minY - 1) })
+            #expect(!row.tokens.isEmpty && row.tokens.allSatisfy {
+                $0.height * scale == expectedThicknessPixels && baselines.contains($0.minY - expectedDropPixels / scale)
+            })
             #expect(text.issues.message(at: NSPoint(x: badge.rect.midX, y: badge.rect.midY))?.line == 1)
             if width == 260 {
                 #expect(fragment.textLineFragments.count > 1 && NSMaxRange(first.characterRange) <= prefix.utf16.count)
