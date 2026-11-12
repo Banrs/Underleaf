@@ -1,7 +1,7 @@
 # Underleaf
 
 The source of TeXLocal, a macOS LaTeX editor. Rust backend in `crates/` (see `docs/architecture.md`), Swift app in
-`apps/macos/`, scripts in `tools/`. The dev app is "TeXLocal Dev" (bundle `com.texlocal.mac.devbuild`).
+`apps/macos/` (see `docs/frontend.md`), scripts in `tools/`. The dev app is "TeXLocal Dev" (bundle `com.texlocal.mac.devbuild`).
 
 ## Checks
 
