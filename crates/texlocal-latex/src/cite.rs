@@ -179,7 +179,7 @@ fn raw_fields(body: &str) -> Vec<(String, String)> {
     for (i, c) in body.char_indices() {
         match c {
             '{' => depth += 1,
-            '}' if depth == 0 => {
+            '}' | ')' if depth == 0 && (c == '}' || !quoted) => {
                 push(&body[from..i]);
                 return found;
             }
@@ -329,6 +329,13 @@ mod tests {
             tidy(CROSSREF, |key| taken.contains(&key)).unwrap().key,
             "abbott2016observationb"
         );
+    }
+
+    #[test]
+    fn a_parenthesized_entry_loses_only_its_closing_parenthesis() {
+        let tidied = tidy("@misc(k,title={X})", |_| false).unwrap();
+        assert_eq!(tidied.entry, "@misc{x,\n  title = {X}\n}\n");
+        assert_eq!(crate::bib::entry(&tidied.entry, "x").as_deref(), Some("X"));
     }
 
     #[test]
