@@ -2,30 +2,64 @@ import AppKit
 import PDFKit
 import SwiftUI
 
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindowRestoration, NSMenuItemValidation, AppWindow {
-    static let identifier = NSUserInterfaceItemIdentifier("main")
-    private static var kept: [MainWindowController] = []
-
+/// What the Projects window and a project’s window share: a model told when it is main, and a controller kept while the window is open.
+class AppWindowController: NSWindowController, NSWindowDelegate, AppWindow {
+    private static var kept: [AppWindowController] = []
     let model: WindowModel
+
+    init(model: WindowModel, size: NSSize) {
+        self.model = model
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.tabbingMode = .disallowed
+        window.toolbarStyle = .unified
+        super.init(window: window)
+        window.delegate = self
+        model.controller = self
+        Self.kept.append(self)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var undoManager: UndoManager? { window?.undoManager }
+    func show() { showWindow(nil) }
+    func performPDF(_ action: PDFAction) {}
+    func revealSidebar() {}
+    func focusSearch() {}
+
+    func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
+    func windowDidResignMain(_ notification: Notification) { model.isMain = false }
+
+    func windowWillClose(_ notification: Notification) {
+        model.isMain = false
+        model.windowClosed()
+        closed()
+        Self.kept.removeAll { $0 === self }
+    }
+
+    func closed() {}
+}
+
+final class MainWindowController: AppWindowController, NSWindowRestoration, NSMenuItemValidation {
+    static let identifier = NSUserInterfaceItemIdentifier("main")
+
     private let views: WorkspaceViews
     private var project: ProjectModel { views.project }
     private(set) var workspace: WorkspaceController?
     private var watches: [Task<Void, Never>] = []
-    private let framed: Bool
+    private var framed = false
 
     init(app: AppModel, project id: String) {
         let model = WindowModel(app: app, project: id)
         let views = WorkspaceViews(project: ProjectModel(id: id, window: model))
         model.project = views.project
-        (self.model, self.views) = (model, views)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 760),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                              backing: .buffered, defer: true)
+        self.views = views
+        super.init(model: model, size: NSSize(width: 1200, height: 760))
+        let window = self.window!
         window.identifier = Self.identifier
         window.restorationClass = Self.self
-        window.isReleasedWhenClosed = false
-        window.tabbingMode = .disallowed
-        window.toolbarStyle = .unified
         window.autorecalculatesKeyViewLoop = true
         window.contentMinSize = ColumnMetrics.contentMinimum
         window.backgroundColor = .untintedTextBackground
@@ -33,10 +67,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         framed = window.setFrameUsingName(frameName)
         if !framed { window.center() }
         window.setFrameAutosaveName(frameName)
-        super.init(window: window)
-        window.delegate = self
-        model.controller = self
-        Self.kept.append(self)
         let project = views.project
         showWorkspace(in: window)
         watches = [
@@ -49,7 +79,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show() {
+    override func show() {
         if !framed, let window, !window.isVisible, !window.isMiniaturized,
            let front = NSApp.orderedWindows.first(where: { $0 !== window && $0.isVisible && $0.windowController is MainWindowController }) {
             window.setFrame(front.cascadingReferenceFrame, display: false)
@@ -58,10 +88,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         showWindow(nil)
     }
 
-    override var undoManager: UndoManager? { window?.undoManager }
-    func performPDF(_ action: PDFAction) { workspace?.performPDF(action) }
-    func revealSidebar() { workspace?.revealSidebar() }
-    func focusSearch() { workspace?.focusSearch() }
+    override func performPDF(_ action: PDFAction) { workspace?.performPDF(action) }
+    override func revealSidebar() { workspace?.revealSidebar() }
+    override func focusSearch() { workspace?.focusSearch() }
 
     override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
         guard action == #selector(NSSplitViewController.toggleInspector(_:)) else { return super.supplementalTarget(forAction: action, sender: sender) }
@@ -79,21 +108,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSWindow
         self.workspace = workspace
     }
 
-    func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
-    func windowDidResignMain(_ notification: Notification) { model.isMain = false }
-
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard model.shownProject != nil else { return true }
         Task { await model.close() }
         return false
     }
 
-    func windowWillClose(_ notification: Notification) {
-        model.isMain = false
-        model.windowClosed()
+    override func closed() {
         watches.forEach { $0.cancel() }
         workspace?.close()
-        Self.kept.removeAll { $0 === self }
     }
 
     @objc func performFindPanelAction(_ sender: Any?) { findAction(for: sender)?() }

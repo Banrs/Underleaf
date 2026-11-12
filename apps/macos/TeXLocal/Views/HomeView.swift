@@ -2,24 +2,13 @@ import AppKit
 import QuickLookThumbnailing
 import SwiftUI
 
-final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation, AppWindow {
-    private static var kept: [HomeWindowController] = []
-    let model: WindowModel
-
+final class HomeWindowController: AppWindowController, NSMenuItemValidation {
     init(app: AppModel) {
-        model = WindowModel(app: app)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                              backing: .buffered, defer: true)
-        window.isReleasedWhenClosed = false
+        let model = WindowModel(app: app)
+        super.init(model: model, size: NSSize(width: 720, height: 600))
+        let window = self.window!
         window.isRestorable = false
         window.isExcludedFromWindowsMenu = true
-        window.tabbingMode = .disallowed
-        window.toolbarStyle = .unified
-        super.init(window: window)
-        window.delegate = self
-        model.controller = self
-        Self.kept.append(self)
         let home = NSHostingController(rootView: HomeView()
             .background(WindowModals(window: model, project: nil))
             .frame(minWidth: ColumnMetrics.contentMinimum.width, minHeight: ColumnMetrics.contentMinimum.height)
@@ -34,26 +23,12 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var undoManager: UndoManager? { window?.undoManager }
-    func show() { showWindow(nil) }
-    func performPDF(_ action: PDFAction) {}
-    func revealSidebar() {}
-
-    func focusSearch() { window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first?.beginSearchInteraction() }
+    override func focusSearch() { window?.toolbar?.items.lazy.compactMap { $0 as? NSSearchToolbarItem }.first?.beginSearchInteraction() }
 
     @objc func performFindPanelAction(_ sender: Any?) { focusSearch() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         item.action != #selector(performFindPanelAction(_:)) || NSTextFinder.Action(rawValue: item.tag) == .showFindInterface
-    }
-
-    func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
-    func windowDidResignMain(_ notification: Notification) { model.isMain = false }
-
-    func windowWillClose(_ notification: Notification) {
-        model.isMain = false
-        model.windowClosed()
-        Self.kept.removeAll { $0 === self }
     }
 }
 
