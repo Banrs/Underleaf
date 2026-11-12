@@ -51,10 +51,20 @@ fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, Core
     beside(&pdf).map_err(|_| CoreError::not_found(messages::no_synctex()))
 }
 
+/// The SyncTeX file beside a PDF. A build writes it plain, since gzipping it took the engine a sixth as long again on a
+/// 400-page book, and an earlier build or another tool may have left a gzipped one: the one written last is the PDF's.
 pub(crate) fn synctex_file(pdf: &Path) -> Option<PathBuf> {
-    let plain = pdf.with_extension("synctex");
-    let gzipped = plain.with_extension("synctex.gz");
-    [plain, gzipped].into_iter().find(|file| file.is_file())
+    let written = |file: &PathBuf| {
+        let meta = std::fs::metadata(file).ok().filter(|meta| meta.is_file())?;
+        Some(meta.modified().ok())
+    };
+    let files = ["synctex.gz", "synctex"].map(|ext| pdf.with_extension(ext));
+    let files = files
+        .into_iter()
+        .filter_map(|file| Some((written(&file)?, file)));
+    files
+        .max_by_key(|(written, _)| *written)
+        .map(|(_, file)| file)
 }
 
 fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
@@ -220,5 +230,34 @@ mod tests {
         junk.set_modified(modified).unwrap();
         drop(junk);
         assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
+    }
+
+    #[test]
+    fn the_synctex_written_last_is_the_pdfs_and_the_plain_one_when_both_were_written_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let pdf = dir.path().join("main.pdf");
+        let (plain, gzipped) = (
+            dir.path().join("main.synctex"),
+            dir.path().join("main.synctex.gz"),
+        );
+        assert_eq!(synctex_file(&pdf), None);
+        fs::write(&gzipped, "").unwrap();
+        assert_eq!(synctex_file(&pdf).as_ref(), Some(&gzipped));
+        fs::write(&plain, "").unwrap();
+        let written = fs::metadata(&plain).unwrap().modified().unwrap();
+        let at = |file: &Path, time| {
+            File::options()
+                .write(true)
+                .open(file)
+                .unwrap()
+                .set_modified(time)
+                .unwrap()
+        };
+        at(&gzipped, written);
+        assert_eq!(synctex_file(&pdf).as_ref(), Some(&plain));
+        at(&gzipped, written + std::time::Duration::from_secs(1));
+        assert_eq!(synctex_file(&pdf).as_ref(), Some(&gzipped));
+        at(&plain, written + std::time::Duration::from_secs(2));
+        assert_eq!(synctex_file(&pdf).as_ref(), Some(&plain));
     }
 }

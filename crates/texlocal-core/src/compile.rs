@@ -156,7 +156,7 @@ pub fn start(
             settings.engine.flag(),
             "-interaction=batchmode",
             "-file-line-error",
-            "-synctex=1",
+            "-synctex=-1",
             if settings.stop_on_first_error {
                 "-halt-on-error"
             } else {

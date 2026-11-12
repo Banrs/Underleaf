@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes the 400-page book the performance tests time: main.tex, 40 chapters, 200 references.
 
-python3 tools/perf-book.py <folder>, then `latexmk -pdf -synctex=1 -outdir=build main.tex` in it for the PDF.
+python3 tools/perf-book.py <folder>, then `latexmk -pdf -synctex=-1 -outdir=build main.tex` in it for the PDF.
 """
 import pathlib
 import random

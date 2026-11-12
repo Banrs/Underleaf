@@ -46,7 +46,9 @@ fn main() {
         .map_or_else(fixture, PathBuf::from);
     let before = LIVE.load(Relaxed);
     PEAK.store(before, Relaxed);
-    let bytes = std::fs::read(project.join("build/main.synctex.gz")).expect("a built project");
+    let built = ["synctex", "synctex.gz"].map(|ext| project.join("build/main").with_extension(ext));
+    let bytes = built.iter().find_map(|file| std::fs::read(file).ok());
+    let bytes = bytes.expect("a built project");
     let started = Instant::now();
     let sync = SyncTex::read(bytes).unwrap();
     let parsed = started.elapsed();
