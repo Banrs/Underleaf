@@ -14,8 +14,6 @@ extension SourceTextView: NSTextContentStorageDelegate {
         return found
     }
 
-    func hidden(_ fold: Fold) -> NSRange { fold.hidden(in: document, length: length) }
-
     var foldedLines: [Int: NSRange] { folds.headers(in: document) }
 
     /// VoiceOver's actions offer what the gutter's chevron does for the caret's line.
@@ -31,14 +29,14 @@ extension SourceTextView: NSTextContentStorageDelegate {
 
     func foldAtCaret() {
         let line = document.line(at: caret)
-        let over = foldable.values.filter { $0.line <= line && line <= $0.end && !folds.ranges.contains(hidden($0)) }
+        let over = foldable.values.filter { $0.line <= line && line <= $0.end && !folds.ranges.contains($0.hidden.range) }
         guard let fold = over.max(by: { $0.line < $1.line }) else { return NSSound.beep() }
-        setFolds(folds.ranges + [hidden(fold)], keeping: fold.line)
+        setFolds(folds.ranges + [fold.hidden.range], keeping: fold.line)
     }
 
     func unfoldAtCaret() {
         let line = document.line(at: caret)
-        let own = foldable[line].map(hidden)
+        let own = foldable[line]?.hidden.range
         let opening = folds.ranges.filter { $0 == own || NSIntersectionRange($0, selection).length > 0 }
         guard !opening.isEmpty else { return NSSound.beep() }
         setFolds(folds.ranges.filter { !opening.contains($0) })
@@ -49,7 +47,7 @@ extension SourceTextView: NSTextContentStorageDelegate {
         guard !all.isEmpty else { return NSSound.beep() }
         let line = document.line(at: caret)
         let outer = all.first { $0.line < line && line <= $0.end }
-        setFolds(all.map(hidden), keeping: outer?.line)
+        setFolds(all.map(\.hidden.range), keeping: outer?.line)
     }
 
     func unfoldAll() {
@@ -60,7 +58,7 @@ extension SourceTextView: NSTextContentStorageDelegate {
     func toggleFold(line: Int) {
         if let range = foldedLines[line] { return setFolds(folds.ranges.filter { $0 != range }) }
         guard let fold = foldable[line] else { return }
-        setFolds(folds.ranges + [hidden(fold)], keeping: line)
+        setFolds(folds.ranges + [fold.hidden.range], keeping: line)
     }
 
     private func setFolds(_ ranges: [NSRange], keeping line: Int? = nil) {
