@@ -286,9 +286,10 @@ private let thumbnail = CGSize(width: 32, height: 40)
 
 private struct TemplateCard: View {
     let template: ProjectTemplate
-    private static let page = CGSize(width: 120, height: 120 * 11 / 8.5)
+    // A Letter page, its height on whole points so its edges fall on pixels.
+    private static let page = CGSize(width: 120, height: (120 * 11 / 8.5).rounded())
     static let width = page.width + 2 * TemplateButtonStyle.edge
-    private static let corner: CGFloat = 6
+    static let corner: CGFloat = 6
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -311,7 +312,8 @@ private struct TemplateButtonStyle: ButtonStyle {
     @State private var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        // Concentric with the page inside it.
+        let shape = RoundedRectangle(cornerRadius: TemplateCard.corner + Self.edge, style: .continuous)
         configuration.label
             .padding(Self.edge)
             .background {
