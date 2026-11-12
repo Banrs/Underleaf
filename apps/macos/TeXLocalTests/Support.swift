@@ -104,6 +104,16 @@ func writeNativePixels(_ name: String, of view: NSView, scale: Int, to folder: U
     return written
 }
 
+func blankPDF(count: Int) throws -> Data {
+    let document = PDFDocument()
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
+    for index in 0..<count {
+        let page = try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds))?.page(at: 0))
+        document.insert(page, at: index)
+    }
+    return try #require(document.dataRepresentation())
+}
+
 func textPDF(_ pages: [String]) throws -> PDFDocument {
     let document = PDFDocument()
     for text in pages {

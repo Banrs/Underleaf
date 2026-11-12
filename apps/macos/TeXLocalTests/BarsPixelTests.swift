@@ -12,10 +12,11 @@ struct BarsPixelTests {
 
     @Test func theStatusBarsOtherItemsAndTheLogsPanelAreWrittenOut() async throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let pdf = try blankPDF(count: 1)
         var written = 0
         for dark in [false, true] {
             for key in [false, true] {
-                written += try await status(dark: dark, key: key)
+                written += try await status(dark: dark, key: key, data: pdf)
             }
         }
         #expect(written > 0)
@@ -28,7 +29,7 @@ struct BarsPixelTests {
         return window
     }
 
-    private func status(dark: Bool, key: Bool) async throws -> Int {
+    private func status(dark: Bool, key: Bool, data: Data) async throws -> Int {
         let suffix = "\(dark ? "dark" : "light")-\(key ? "key" : "inactive")"
         var written = 0
         for width in [1300, 860, 700, 560] as [CGFloat] {
@@ -44,7 +45,7 @@ struct BarsPixelTests {
             defer { workspace.close(); window.close() }
             project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
             project.store.apply(.outline(Analysis(tree: [], words: 1234, headingStyles: [], packages: [])))
-            views.pdf.show(try Self.pdf())
+            views.pdf.show(try #require(PDFDocument(data: data)))
             let columns = workspace.columns.view
             // The split accessory sits alongside the columns, so capture them from the workspace.
             let captureView = workspace.view
@@ -96,10 +97,5 @@ struct BarsPixelTests {
             }
         }
         return written
-    }
-
-    private static func pdf() throws -> PDFDocument {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 612, height: 792))
-        return try #require(PDFDocument(data: view.dataWithPDF(inside: view.bounds)))
     }
 }
