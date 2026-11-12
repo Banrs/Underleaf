@@ -185,12 +185,7 @@ struct SheetsPixelTests {
     private static func fill(_ project: ProjectModel) {
         let settings = ProjectSettings(mainFile: "main.tex", engine: .xelatex, stopOnFirstError: false, shellEscape: true)
         project.store.apply(.project(ProjectState(name: "Thesis", root: "/Users/Shared/Thesis", settings: settings, problem: nil)))
-        project.store.apply(.tree([
-            TreeNode(name: "chapters", path: "chapters", kind: nil,
-                     children: [TreeNode(name: "intro.tex", path: "chapters/intro.tex", kind: .tex, children: nil, main: false)], main: false),
-            TreeNode(name: "main.tex", path: "main.tex", kind: .tex, children: nil, main: true),
-            TreeNode(name: "refs.bib", path: "refs.bib", kind: .bib, children: nil, main: false),
-        ]))
+        project.store.apply(.tree([treeFolder("chapters", [treeFile("chapters/intro.tex")]), treeFile("main.tex", main: true), treeFile("refs.bib", .bib)]))
         project.tree.arrived()
     }
 

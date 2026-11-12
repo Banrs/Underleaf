@@ -127,29 +127,21 @@ struct ChromePixelTests {
     }
 
     private static let tree: [TreeNode] = [
-        folder("chapters", [file("chapters/intro.tex", .tex), file("chapters/method.tex", .tex)]),
-        folder("figures", [file("figures/plot.png", .image), file("figures/diagram.pdf", .pdf)]),
-        file("main.tex", .tex, main: true),
-        file("refs.bib", .bib),
-        file("mystyle.sty", .text),
-        file("notes.txt", .text),
-        file("data.csv", .text),
-        file("archive.zip", .other),
+        treeFolder("chapters", [treeFile("chapters/intro.tex", .tex), treeFile("chapters/method.tex", .tex)]),
+        treeFolder("figures", [treeFile("figures/plot.png", .image), treeFile("figures/diagram.pdf", .pdf)]),
+        treeFile("main.tex", .tex, main: true),
+        treeFile("refs.bib", .bib),
+        treeFile("mystyle.sty", .text),
+        treeFile("notes.txt", .text),
+        treeFile("data.csv", .text),
+        treeFile("archive.zip", .other),
     ]
-
-    private static func folder(_ path: String, _ children: [TreeNode]) -> TreeNode {
-        TreeNode(name: path.fileName, path: path, kind: nil, children: children, main: false)
-    }
-
-    private static func file(_ path: String, _ kind: FileKind, main: Bool = false) -> TreeNode {
-        TreeNode(name: path.fileName, path: path, kind: kind, children: nil, main: main)
-    }
 
     /// A finished build when `ok` is set, otherwise one compiling.
     private static func build(ok: Bool?, issues: [(error: Bool, file: String)]) -> BuildState {
         let items = issues.enumerated().map { index, issue in
-            LogItem(kind: issue.error ? .error : .warning, file: issue.file, line: 10 + index,
-                    message: Message(id: .tex, args: [:], text: issue.error ? "Undefined control sequence." : "Citation undefined."))
+            logItem(issue.error ? .error : .warning, issue.error ? "Undefined control sequence." : "Citation undefined.",
+                    file: issue.file, line: 10 + index)
         }
         let result = ok.map { CompileResult(ok: $0, stopped: false, durationMs: 2340, pdf: $0 ? "/tmp/main.pdf" : nil, badBoxes: []) }
         return BuildState(compiling: ok == nil, auto: false, outdated: false, result: result, issues: items, lines: [:])
