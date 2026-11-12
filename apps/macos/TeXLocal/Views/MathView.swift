@@ -15,6 +15,8 @@ struct MathView: View {
                 Image(nsImage: image)
                     .renderingMode(.template)
                     .resizable()
+                    // Rounding the frame up to whole points mustn't stretch a small formula one way more than the other.
+                    .aspectRatio(contentMode: .fit)
                     .foregroundStyle(.primary)
                     .frame(width: (image.size.width * scale).rounded(.up), height: (image.size.height * scale).rounded(.up))
             } else {
