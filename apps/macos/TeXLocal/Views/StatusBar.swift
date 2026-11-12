@@ -104,7 +104,7 @@ private struct BuildStatus: View {
         if result.stopped { return ("Build Stopped", nil, nil) }
         if result.ok { return ("Build Succeeded · \(result.durationText)", "checkmark.circle.fill", .green) }
         return (project.errorCount == 0 ? "Build Failed" : "Build Failed · ^[\(project.errorCount) Error](inflect: true)",
-                "xmark.octagon.fill", nil)
+                "exclamationmark.octagon.fill", nil)
     }
 
     private var label: some View {
@@ -118,7 +118,7 @@ private struct BuildStatus: View {
                 }
             }
             if project.errorCount > 0, project.result?.failed != true {
-                badge("\(project.errorCount)", "xmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)",
+                badge("\(project.errorCount)", "exclamationmark.octagon.fill", spoken: "^[\(project.errorCount) error](inflect: true)",
                       count: project.errorCount)
             }
             if project.warningCount > 0 {

@@ -46,7 +46,7 @@ struct FieldPixelTests {
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = false } }
         }
 
-        let bar = NavigatorFilterBar(project: project, window: windowModel)
+        let bar = NSHostingView(rootView: NavigatorFilterBar(project: project).environment(windowModel))
         for navigator in Navigator.allCases {
             project.navigator.shown = navigator
             for text in ["", "intro"] {
@@ -60,28 +60,24 @@ struct FieldPixelTests {
         project.navigator.hiddenIssueKinds = [.badBox]
         try await shot("bar-issues-some-hidden", bar, height: bar.intrinsicContentSize.height)
         project.navigator.hiddenIssueKinds = []
-        (project.navigator.showsOnlyRecentIssues, project.navigator.showsOnlyErrors) = (true, true)
+        project.navigator.showsOnlyErrors = true
         try await shot("bar-issues-toggles-on", bar, height: bar.intrinsicContentSize.height)
-        (project.navigator.showsOnlyRecentIssues, project.navigator.showsOnlyErrors) = (false, false)
+        project.navigator.showsOnlyErrors = false
         project.navigator.shown = .files
         project.navigator.showsOnlyRecentFiles = true
         try await shot("bar-files-toggle-on", bar, height: bar.intrinsicContentSize.height)
         project.navigator.showsOnlyRecentFiles = false
 
-        let find = FindHeader(project: project, field: FieldHandle())
-        try await shot("find-header", find, height: max(find.fittingSize.height, 60))
-        try await shot("find-header-pressed", find, height: max(find.fittingSize.height, 60), pressing: true)
-
-        for (name, symbol, options) in [("logs-filter", true, true), ("symbol-filter", true, false), ("plain-search", false, false)] {
+        for options in [false, true] {
             for text in ["", "intro"] {
-                let field = SearchField(text: .constant(text), prompt: "Filter", symbol: symbol ? SearchField.filterSymbol : nil, textSize: .small,
-                                        optionsTitle: options ? "Show" : nil, options: options ? [("Errors", .constant(true))] : [])
-                    .controlSize(.regular)
-                    .frame(width: 182)
-                let hosted = NSHostingView(rootView: field)
-                try await shot("\(name)-\(text.isEmpty ? "empty" : "text")", hosted, height: 40, width: 200)
-                if text.isEmpty { try await shot("\(name)-pressed", hosted, height: 40, width: 200, pressing: true) }
+                let field = FilterField(text: .constant(text), options: options ? [("Errors", .constant(true))] : []) {}.frame(width: 182)
+                try await shot("filter\(options ? "-menu" : "")-\(text.isEmpty ? "empty" : "text")", NSHostingView(rootView: field), height: 40, width: 200)
             }
+        }
+        for text in ["", "intro"] {
+            let hosted = NSHostingView(rootView: SearchField(text: .constant(text), prompt: "Search").frame(width: 182))
+            try await shot("plain-search-\(text.isEmpty ? "empty" : "text")", hosted, height: 40, width: 200)
+            if text.isEmpty { try await shot("plain-search-pressed", hosted, height: 40, width: 200, pressing: true) }
         }
         return written
     }

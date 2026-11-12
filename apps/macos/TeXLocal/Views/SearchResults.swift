@@ -1,169 +1,51 @@
 import AppKit
 import SwiftUI
 
-final class FindHeader: NSView, NSSearchFieldDelegate {
-    private lazy var crumb = Breadcrumb { [weak self] item, choice in self?.choose(item, choice) }
-    private let usages = NSTextField(labelWithString: "")
-    private let matchCase = NSButton(title: "Aa", target: nil, action: nil)
-    private let query = NavigatorField()
-    private let replacement = NavigatorField()
-    private let replace = NSButton(title: String(localized: "Replace"), target: nil, action: nil)
-    private let replaceAll = NSButton(title: String(localized: "Replace All"), target: nil, action: nil)
-    private let count = NSTextField(labelWithString: "")
-    private let project: ProjectModel
-
-    init(project: ProjectModel, field: FieldHandle) {
-        self.project = project
-        super.init(frame: .zero)
-        let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-        crumb.setAccessibilityLabel(String(localized: "Search Options"))
-
-        usages.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-        usages.lineBreakMode = .byTruncatingMiddle
-        usages.setAccessibilityRole(.staticText)
-
-        matchCase.setButtonType(.pushOnPushOff)
-        matchCase.isBordered = false
-        matchCase.toolTip = String(localized: "Match Case")
-        matchCase.setAccessibilityLabel(String(localized: "Match Case"))
-        (matchCase.target, matchCase.action) = (self, #selector(toggleCase))
-
-        // Small fields with 11 pt text, as in Xcode's Find navigator.
-        for field in [query, replacement] {
-            field.controlSize = .small
-            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            field.sendsSearchStringImmediately = true
-            field.delegate = self
-            (field.target, field.action) = (self, #selector(edited(_:)))
-        }
-        query.placeholderString = String(localized: "Search Project")
-        query.setAccessibilityLabel(query.placeholderString)
-        replacement.placeholderString = String(localized: "With")
-        replacement.setAccessibilityLabel(String(localized: "Replace With"))
-        query.keepRecents(as: "Find Queries")
-        replacement.keepRecents(as: "Replacements")
-
-        // Neither is the default button, since Replace All can't be undone file by file.
-        for (button, action) in [(replace, #selector(replaceChosen)), (replaceAll, #selector(replaceEvery))] {
-            button.bezelStyle = .push
-            button.font = small
-            (button.target, button.action) = (self, action)
-        }
-        replace.toolTip = String(localized: "Replace the selected search result")
-
-        count.font = small
-        count.textColor = .secondaryLabelColor
-        count.alignment = .center
-        for view in [crumb, usages, matchCase, query, replacement, replace, replaceAll, count] { addSubview(view) }
-        field.field = query
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    private var replacing: Bool { project.search.showsReplace }
-    private var groups: [SearchGroup] { project.shownGroups }
-
-    override var isFlipped: Bool { true }
-
-    override var intrinsicContentSize: NSSize {
-        var height = Self.row + 2 + Self.field
-        if replacing { height += 6 + Self.field + 6 + replaceAll.intrinsicContentSize.height }
-        return NSSize(width: NSView.noIntrinsicMetric, height: height + (groups.isEmpty ? 6 : 5 + Self.band))
-    }
-
-    /// Shows the search as well as placing the controls, since AppKit lays the header out again whenever what this reads of
-    /// the model changes.
-    override func layout() {
-        super.layout()
-        let search = project.search, groups = self.groups, hits = groups.reduce(0) { $0 + $1.hits.count }
-        if project.navigator.shown != .search, [query, replacement].contains(where: { $0.currentEditor() != nil }) { window?.makeFirstResponder(nil) }
-        for (field, text) in [(query, search.query), (replacement, search.replacement)]
-            where field.stringValue != text && (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
-            field.stringValue = text
-        }
-        crumb.items = [Breadcrumb.Item(choices: Self.modes, chosen: replacing ? 1 : 0),
-                       Breadcrumb.Item(choices: Self.criteria, chosen: search.asked.wholeWords ? 1 : 0)]
-        usages.stringValue = search.usages.map { String(localized: "Usages of \($0.name)") } ?? ""
-        for view in [crumb, matchCase] { view.isHidden = search.usages != nil }
-        usages.isHidden = search.usages == nil
-        matchCase.state = search.asked.matchCase ? .on : .off
-        matchCase.contentTintColor = search.asked.matchCase ? .controlAccentColor : .secondaryLabelColor
-        matchCase.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: search.asked.matchCase ? .bold : .regular)
-        for view in [replacement, replace, replaceAll] { view.isHidden = !replacing }
-        replace.isEnabled = search.chosen.map { chosen in groups.contains { $0.hits.contains { $0.id == chosen } } } ?? false
-        // Replace All changes every match in the project, so it waits until the filter no longer hides any.
-        let filtered = !project.navigator.searchFilter.isEmpty
-        replaceAll.isEnabled = search.hitCount > 0 && !filtered
-        replaceAll.toolTip = filtered ? String(localized: "Clear the filter to replace every match")
-            : String(localized: "Replace all search results")
-        count.stringValue = String(AttributedString(localized: "^[\(hits) result](inflect: true) in ^[\(groups.count) file](inflect: true)").characters)
-        count.isHidden = hits == 0
-
-        let width = bounds.width
-        let path = crumb.intrinsicContentSize
-        crumb.frame = NSRect(x: 2, y: Self.row - path.height, width: path.width, height: path.height)
-        usages.frame = NSRect(x: 8, y: (Self.row - 14) / 2, width: width - 16, height: 14)
-        matchCase.frame = NSRect(x: width - 8 - 21, y: crumb.frame.minY + 2, width: 21, height: 16)
-        var y = Self.row + 2
-        // 22 pt fields, 1 pt inside each 24 pt row, as in Xcode.
-        query.frame = NSRect(x: 6, y: y, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
-        y += Self.field
-        if replacing {
-            replacement.frame = NSRect(x: 6, y: y + 6, width: width - 12, height: Self.field).insetBy(dx: 0, dy: 1)
-            y += 6 + Self.field + 6
-            let all = replaceAll.intrinsicContentSize, one = replace.intrinsicContentSize
-            replaceAll.frame = NSRect(origin: NSPoint(x: width - 6 - all.width, y: y), size: all)
-            replace.frame = NSRect(origin: NSPoint(x: replaceAll.frame.minX - 7 - one.width, y: y), size: one)
-            y += all.height
-        }
-        let label = count.intrinsicContentSize.height
-        count.frame = NSRect(x: 6, y: y + 5 + (Self.band - label) / 2, width: width - 12, height: label)
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard control === query, selector == #selector(NSResponder.insertNewline(_:)), !textView.hasMarkedText() else { return false }
-        let step = NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1
-        query.remember()
-        if !project.search.step(step, in: groups) { NSSound.beep() }
-        return true
-    }
-
-    @objc private func edited(_ field: NSSearchField) {
-        if field === query { project.search.query = field.stringValue } else { project.search.replacement = field.stringValue }
-    }
-
-    private func choose(_ item: Int, _ choice: Int) {
-        if item == 0 { project.search.replacing = choice == 1 } else { project.search.asked.wholeWords = choice == 1 }
-    }
-
-    @objc private func toggleCase() { project.search.asked.matchCase.toggle() }
-
-    @objc private func replaceChosen() {
-        replacement.remember()
-        Task { await project.replaceChosen() }
-    }
-
-    @objc private func replaceEvery() {
-        replacement.remember()
-        Task { await project.replaceAll() }
-    }
-
-    private static let row: CGFloat = 20, field: CGFloat = 24, band: CGFloat = 22
-    private static let modes = [String(localized: "Find"), String(localized: "Replace")]
-    private static let criteria = [String(localized: "Containing"), String(localized: "Matching Word")]
-}
-
-private struct FindHeaderView: NSViewRepresentable {
+/// The search's field and options, laid out as the system's find bar is: the options in the field's menu and Replace
+/// beside it, with the replacement and its buttons below while it's on.
+private struct FindHeader: View {
     let project: ProjectModel
     let field: FieldHandle
-    /// What sets the header's height, so SwiftUI measures it again as it changes.
-    let replacing: Bool, counted: Bool
+    let groups: [SearchGroup]
 
-    func makeNSView(context: Context) -> FindHeader { FindHeader(project: project, field: field) }
-    func updateNSView(_ view: FindHeader, context: Context) {}
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: FindHeader, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 0, height: nsView.intrinsicContentSize.height)
+    var body: some View {
+        @Bindable var search = project.search
+        let hits = groups.reduce(0) { $0 + $1.hits.count }
+        VStack(spacing: 6) {
+            if let usages = search.usages {
+                Text("Usages of \(usages.name)").font(.subheadline.bold()).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack {
+                SearchField(text: $search.query, prompt: String(localized: "Search Project"), handle: field, recents: "Find Queries",
+                            step: { if !project.search.step($0, in: groups) { NSSound.beep() } },
+                            options: search.usages == nil ? [(String(localized: "Match Case"), $search.asked.matchCase),
+                                                             (String(localized: "Whole Words"), $search.asked.wholeWords)] : [])
+                if search.usages == nil { Toggle("Replace", isOn: $search.replacing).controlSize(.regular) }
+            }
+            if search.showsReplace {
+                SearchField(text: $search.replacement, prompt: String(localized: "Replace With"), symbol: "pencil")
+                HStack {
+                    Spacer()
+                    Button("Replace") { Task { await project.replaceChosen() } }
+                        .disabled(!groups.contains { $0.hits.contains { $0.id == search.chosen } })
+                        .help("Replace the selected search result")
+                    // Replace All changes every match in the project, so it waits until the filter no longer hides any.
+                    let filtered = !project.navigator.searchFilter.isEmpty
+                    Button("Replace All") { Task { await project.replaceAll() } }
+                        .disabled(search.hitCount == 0 || filtered)
+                        .help(filtered ? "Clear the filter to replace every match" : "Replace all search results")
+                }
+                .controlSize(.regular)
+            }
+            if hits > 0 {
+                Text("^[\(hits) result](inflect: true) in ^[\(groups.count) file](inflect: true)")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .controlSize(.large)
+        .padding(.horizontal, 7)
+        .padding(.bottom, 6)
     }
 }
 
@@ -178,7 +60,7 @@ struct SearchResults: View {
             .listStyle(.sidebar)
             .accessibilityLabel("Search Results")
             .safeAreaBar(edge: .top, spacing: 0) {
-                FindHeaderView(project: project, field: field, replacing: project.search.showsReplace, counted: !groups.isEmpty)
+                FindHeader(project: project, field: field, groups: groups)
             }
             .overlay {
                 if let failure = project.search.failure {

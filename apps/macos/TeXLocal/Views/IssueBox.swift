@@ -21,7 +21,7 @@ struct IssueBox: View, Equatable {
         let shape = RoundedRectangle(cornerRadius: 4)
         HStack {
             if issues > 1 { Text(verbatim: "\(issues)").monospacedDigit() }
-            Image(systemName: isError ? "xmark.circle.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+            Image(systemName: isError ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
             if let text { Text(verbatim: text).lineLimit(1).fixedSize(horizontal: !truncates, vertical: false) }
         }
         .padding(.horizontal, 6)
