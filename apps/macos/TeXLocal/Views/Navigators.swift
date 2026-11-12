@@ -26,23 +26,20 @@ final class NavigatorArea: NSViewController {
 }
 
 extension Navigator {
-    var title: String {
+    /// Each navigator's title, symbol, filter text and the filter's tooltip, which follows Xcode's ("Show files with matching name").
+    private var spec: (title: String, symbol: String, filter: ReferenceWritableKeyPath<NavigatorModel, String>, filterHelp: String) {
         switch self {
-        case .files: String(localized: "Files")
-        case .outline: String(localized: "Outline")
-        case .search: String(localized: "Search")
-        case .issues: String(localized: "Issues")
+        case .files: (String(localized: "Files"), "folder", \.fileFilter, String(localized: "Show files with matching name"))
+        case .outline: (String(localized: "Outline"), "list.bullet.indent", \.outlineFilter, String(localized: "Show sections with matching title"))
+        case .search: (String(localized: "Search"), "magnifyingglass", \.searchFilter, String(localized: "Show results with matching text"))
+        case .issues: (String(localized: "Issues"), "exclamationmark.triangle", \.issueFilter, String(localized: "Show issues with matching text"))
         }
     }
 
-    var symbol: String {
-        switch self {
-        case .files: "folder"
-        case .outline: "list.bullet.indent"
-        case .search: "magnifyingglass"
-        case .issues: "exclamationmark.triangle"
-        }
-    }
+    var title: String { spec.title }
+    var symbol: String { spec.symbol }
+    fileprivate var filter: ReferenceWritableKeyPath<NavigatorModel, String> { spec.filter }
+    fileprivate var filterHelp: String { spec.filterHelp }
 
     var shortcut: KeyEquivalent { KeyEquivalent(Character(String(Self.allCases.firstIndex(of: self)! + 1))) }
 }
@@ -95,27 +92,6 @@ struct NoFilterResults: View {
             .font(.system(size: 16, weight: .medium))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private extension Navigator {
-    var filter: ReferenceWritableKeyPath<NavigatorModel, String> {
-        switch self {
-        case .files: \.fileFilter
-        case .outline: \.outlineFilter
-        case .search: \.searchFilter
-        case .issues: \.issueFilter
-        }
-    }
-
-    /// The filter's tooltip, following Xcode's ("Show files with matching name").
-    var filterHelp: String {
-        switch self {
-        case .files: String(localized: "Show files with matching name")
-        case .outline: String(localized: "Show sections with matching title")
-        case .search: String(localized: "Show results with matching text")
-        case .issues: String(localized: "Show issues with matching text")
-        }
     }
 }
 
