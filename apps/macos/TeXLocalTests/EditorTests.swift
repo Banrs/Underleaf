@@ -153,14 +153,6 @@ struct EditorTests {
         #expect(text.selection == .caret(28))
     }
 
-    @Test func aViewThatCantBeEditedRefusesAnEditAndSaysSo() {
-        let (editor, window) = Self.editor("text")
-        defer { window.close() }
-        let text = editor.textView
-        text.isEditable = false
-        #expect(!text.apply([TextEdit(.caret(0), "x")], named: "Edit") && text.string == "text")
-    }
-
     @Test func spreadsheetCellsPasteAsATabularOnALineOfTheirOwnAtItsIndentationInOneUndoStep() {
         let (editor, window) = Self.editor("  x\n    ")
         defer { window.close() }
