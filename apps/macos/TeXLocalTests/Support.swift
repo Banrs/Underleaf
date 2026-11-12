@@ -81,7 +81,7 @@ func writePixels(_ view: NSView, in rect: NSRect, using rep: NSBitmapImageRep, t
                  overlay: ((NSBitmapImageRep) -> Void)? = nil) throws {
     view.cacheDisplay(in: rect, to: rep)
     overlay?(rep)
-    try rep.representation(using: .png, properties: [:])?.write(to: file)
+    try #require(rep.representation(using: .png, properties: [:])).write(to: file)
 }
 
 func writeScaledPixels(_ name: String, of view: NSView, in rect: NSRect, to folder: URL, scales: [Int] = [2, 4]) throws {
