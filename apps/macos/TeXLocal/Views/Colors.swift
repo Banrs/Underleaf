@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-extension ShapeStyle where Self == Color { static var textSurface: Color { Color(nsColor: .textBackgroundColor) } }
+extension ShapeStyle where Self == Color { static var textSurface: Color { Color(nsColor: .untintedTextBackground) } }
 
 extension NSView {
     var inDarkAppearance: Bool { effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
