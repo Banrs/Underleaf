@@ -67,14 +67,6 @@ private extension ShapeStyle where Self == Color {
     static var filterSymbol: Color { Color(nsColor: .secondaryLabelColor) }
 }
 
-extension NSSearchField {
-    /// Adds the field's text to its recents, which a field sending each keystroke never does itself.
-    func remember() {
-        guard !stringValue.isEmpty else { return }
-        recentSearches = Array(([stringValue] + recentSearches.filter { $0 != stringValue }).prefix(10))
-    }
-}
-
 final class FieldHandle {
     weak var field: NSTextField?
 
@@ -97,7 +89,6 @@ struct SearchField: NSViewRepresentable {
     var step: (@MainActor (Int) -> Void)?
     var move: (@MainActor (Int) -> Void)?
     var close: (@MainActor () -> Void)?
-    var optionsTitle: String?
     var options: [(title: String, isOn: Binding<Bool>)] = []
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
@@ -115,7 +106,10 @@ struct SearchField: NSViewRepresentable {
             switch selector {
             case #selector(NSResponder.insertNewline(_:)):
                 guard let step = field.step else { return false }
-                if field.recents != nil { (control as? NSSearchField)?.remember() }
+                // A field sending each keystroke never adds its text to recents itself.
+                if field.recents != nil, let search = control as? NSSearchField, !search.stringValue.isEmpty {
+                    search.recentSearches = Array(([search.stringValue] + search.recentSearches.filter { $0 != search.stringValue }).prefix(10))
+                }
                 step(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? -1 : 1)
                 return true
             case #selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveDown(_:)):
@@ -156,7 +150,6 @@ struct SearchField: NSViewRepresentable {
         if !context.environment.isEnabled, view.currentEditor() != nil { view.window?.makeFirstResponder(nil) }
         if !options.isEmpty || recents != nil, let cell = view.cell as? NSSearchFieldCell {
             let menu = NSMenu()
-            if let optionsTitle { menu.addItem(.sectionHeader(title: optionsTitle)) }
             for (tag, option) in options.enumerated() {
                 let item = menu.addItem(withTitle: option.title, action: #selector(Coordinator.toggle(_:)), keyEquivalent: "")
                 (item.target, item.tag, item.state) = (context.coordinator, tag, option.isOn.wrappedValue ? .on : .off)

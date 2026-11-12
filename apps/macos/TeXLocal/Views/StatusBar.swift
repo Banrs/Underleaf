@@ -165,17 +165,17 @@ private struct LiveStatus: View {
     let project: ProjectModel
 
     var body: some View {
-        if project.texpresso.phase != .stopped || project.texpresso.needsAttention {
+        if project.livePhase != .stopped || project.liveNeedsAttention {
             let title = project.liveEngine
             Button { project.panel.show(.texpresso) } label: {
                 Label {
                     if let title {
-                        Text("\(Text(project.texpresso.title)) \(Text("· \(title)").foregroundStyle(.secondary))")
+                        Text("\(Text(project.liveTitle)) \(Text("· \(title)").foregroundStyle(.secondary))")
                     } else {
-                        Text(project.texpresso.title)
+                        Text(project.liveTitle)
                     }
                 } icon: {
-                    Image(systemName: project.texpresso.needsAttention ? "exclamationmark.triangle" : "bolt")
+                    Image(systemName: project.liveNeedsAttention ? "exclamationmark.triangle" : "bolt")
                 }
             }
             .help(title.map { "Live Preview typesets with \($0), so line breaks may differ from the compiled PDF; show the Live Preview log" }

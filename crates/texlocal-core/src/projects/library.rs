@@ -19,7 +19,7 @@ use crate::error::CoreError;
 use crate::messages;
 use crate::paths::{Project, fold_case, safe_rel_file, same_folded, sanitize_name, ui_file};
 use crate::service::Service;
-use crate::settings::{Engine, SettingsPatch, new_settings, read_settings};
+use crate::settings::{Engine, SettingsPatch, read_settings, write_settings};
 use crate::{SETTINGS_FILE, atomic, sys};
 
 #[derive(Serialize, JsonSchema)]
@@ -146,7 +146,7 @@ pub fn create_project(
             engine,
             ..SettingsPatch::default()
         };
-        new_settings(&root.join(SETTINGS_FILE), &settings)
+        write_settings(&root.join(SETTINGS_FILE), &settings)
     })
 }
 

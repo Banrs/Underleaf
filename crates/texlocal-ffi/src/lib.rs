@@ -87,10 +87,10 @@ unsafe fn command_args<'a>(
     Ok((command, args))
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tl_send(
+unsafe fn send(
     handle: *const TlHandle,
     id: u64,
+    session: Option<u64>,
     command: *const c_char,
     args_json: *const c_char,
 ) {
@@ -99,9 +99,22 @@ pub unsafe extern "C" fn tl_send(
     };
     let _entered = handle.runtime.enter();
     caught(|| match unsafe { command_args(command, args_json) } {
-        Ok((command, args)) => handle.sessions.send(id, command, args),
+        Ok((command, args)) => match session {
+            Some(session) => handle.sessions.send_to(id, session, command, args),
+            None => handle.sessions.send(id, command, args),
+        },
         Err(err) => handle.sessions.refuse(id, err),
     });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tl_send(
+    handle: *const TlHandle,
+    id: u64,
+    command: *const c_char,
+    args_json: *const c_char,
+) {
+    unsafe { send(handle, id, None, command, args_json) }
 }
 
 #[unsafe(no_mangle)]
@@ -112,14 +125,7 @@ pub unsafe extern "C" fn tl_session_send(
     command: *const c_char,
     args_json: *const c_char,
 ) {
-    let Some(handle) = (unsafe { handle.as_ref() }) else {
-        return;
-    };
-    let _entered = handle.runtime.enter();
-    caught(|| match unsafe { command_args(command, args_json) } {
-        Ok((command, args)) => handle.sessions.send_to(id, session, command, args),
-        Err(err) => handle.sessions.refuse(id, err),
-    });
+    unsafe { send(handle, id, Some(session), command, args_json) }
 }
 
 #[unsafe(no_mangle)]

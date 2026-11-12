@@ -144,7 +144,7 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     sys::rename_exclusive(&src, &dest)?;
     if let Some(main_file) = &moved_main
         && let Err(err) = write_settings(
-            project,
+            &project.settings,
             &SettingsPatch {
                 main_file: Some(main_file.clone()),
                 ..SettingsPatch::default()

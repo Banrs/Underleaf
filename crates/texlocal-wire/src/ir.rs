@@ -132,9 +132,8 @@ impl Ir {
                 "{store} has a case without a value"
             );
         }
-        let mut named: Vec<&Ty> = self.defs.values().flat_map(Def::holds).collect();
-        named.extend(self.requests.iter().map(|r| &r.reply));
-        for ty in named {
+        let held = self.defs.values().flat_map(Def::holds);
+        for ty in held.chain(self.requests.iter().map(|r| &r.reply)) {
             if let Some(name) = ty.named() {
                 let defined = name == PAYLOAD || self.defs.contains_key(name);
                 assert!(defined, "{name} has no definition");

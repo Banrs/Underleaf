@@ -105,7 +105,7 @@ impl Actor {
     }
 
     pub fn fix(&mut self, fix: Fix, reply: Pending<Option<Fixed>>) {
-        let edits = match fix {
+        let patch = match fix {
             Fix::Install(file) => {
                 let (service, children) = (Arc::clone(&self.core.service), self.core.children);
                 tokio::spawn(async move {
@@ -127,20 +127,19 @@ impl Actor {
                 });
                 return self.before(Reason::AddPackage, added, reply);
             }
-            Fix::Xelatex => self.patch_settings(SettingsPatch {
+            Fix::Xelatex => SettingsPatch {
                 engine: Some(Engine::Xelatex),
                 ..SettingsPatch::default()
-            }),
-            Fix::ShellEscape => self.patch_settings(SettingsPatch {
+            },
+            Fix::ShellEscape => SettingsPatch {
                 shell_escape: Some(true),
                 ..SettingsPatch::default()
-            }),
+            },
         };
-        reply.send(edits.map(|edits| Some(Fixed { edits })));
-    }
-
-    fn patch_settings(&mut self, patch: SettingsPatch) -> Result<Option<DocumentEdits>, CoreError> {
-        self.set_settings(&patch, false).map(|()| None)
+        reply.send(
+            self.set_settings(&patch, false)
+                .map(|()| Some(Fixed { edits: None })),
+        );
     }
 
     fn add_package(&mut self, name: String) -> Result<Then<ProjectEdits>, CoreError> {

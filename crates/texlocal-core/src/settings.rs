@@ -103,13 +103,13 @@ fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, CoreError> {
 fn update<T: DeserializeOwned + Default + Serialize>(
     path: &Path,
     change: impl FnOnce(&mut T) -> Result<(), CoreError>,
-) -> Result<T, CoreError> {
+) -> Result<(), CoreError> {
     let mut value = load(path)?;
     change(&mut value)?;
     let bytes = serde_json::to_vec_pretty(&value)
         .map_err(|e| CoreError::internal(messages::unexpected(e)))?;
     atomic::write(path, &bytes, Flush::Full)?;
-    Ok(value)
+    Ok(())
 }
 
 fn read_device(file: &Path) -> DeviceFile {
@@ -122,7 +122,7 @@ fn update_device(
 ) -> Result<(), CoreError> {
     match fs::create_dir(file.parent().expect("a file is in a folder")) {
         Err(err) if err.kind() != ErrorKind::AlreadyExists => Err(err.into()),
-        _ => update(file, change).map(drop),
+        _ => update(file, change),
     }
 }
 
@@ -142,19 +142,8 @@ pub fn read_settings(file: &Path) -> StoredSettings {
     load::<ProjectFile>(file).unwrap_or_default().settings
 }
 
-pub fn write_settings(
-    project: &Project,
-    patch: &SettingsPatch,
-) -> Result<StoredSettings, CoreError> {
-    store_settings(&project.settings, patch)
-}
-
-pub(crate) fn new_settings(file: &Path, patch: &SettingsPatch) -> Result<(), CoreError> {
-    store_settings(file, patch).map(drop)
-}
-
-fn store_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettings, CoreError> {
-    let file = update(file, |file: &mut ProjectFile| {
+pub fn write_settings(file: &Path, patch: &SettingsPatch) -> Result<(), CoreError> {
+    update(file, |file: &mut ProjectFile| {
         let settings = &mut file.settings;
         if let Some(main_file) = &patch.main_file {
             settings.main_file = safe_rel_file(main_file)?;
@@ -164,8 +153,7 @@ fn store_settings(file: &Path, patch: &SettingsPatch) -> Result<StoredSettings, 
             .stop_on_first_error
             .unwrap_or(settings.stop_on_first_error);
         Ok(())
-    })?;
-    Ok(file.settings)
+    })
 }
 
 pub fn problem(project: &Project) -> Option<Message> {
@@ -239,7 +227,6 @@ impl AppSettings {
             change(app);
             Ok(())
         })
-        .map(drop)
     }
 }
 

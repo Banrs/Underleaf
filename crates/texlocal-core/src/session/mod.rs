@@ -127,6 +127,13 @@ impl<T: Serialize> Pending<T> {
     pub fn send(self, result: Result<T, CoreError>) {
         self.0.send(result.map(|value| json!(value)));
     }
+
+    pub fn spawn(self, work: impl FnOnce() -> Result<T, CoreError> + Send + 'static)
+    where
+        T: 'static,
+    {
+        tokio::task::spawn_blocking(move || self.send(work()));
+    }
 }
 
 pub(crate) fn stopped() -> CoreError {
@@ -288,6 +295,25 @@ mod tests {
     use super::*;
     use crate::process::Tree;
     use crate::projects::History;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_background_reply_answers_once_even_when_its_work_panics() {
+        let (queue, replies) = channel();
+        let reply = |id| Pending::<u32>::new(Reply(Some((id, queue.clone()))));
+        reply(1).spawn(|| Ok(42));
+        reply(2).spawn(|| panic!("background work panics"));
+        let mut answers = HashMap::new();
+        for _ in 0..2 {
+            let Said::Reply(reply) = replies.recv_timeout(Duration::from_secs(10)).unwrap() else {
+                panic!("expected a reply");
+            };
+            assert!(answers.insert(reply.id, json!(reply.answer)).is_none());
+        }
+        assert_eq!(answers[&1], json!({ "type": "ok", "value": 42 }));
+        assert_eq!(answers[&2]["value"]["message"]["id"], "went_wrong");
+        drop(queue);
+        assert!(replies.recv_timeout(Duration::from_secs(10)).is_err());
+    }
 
     struct Panics;
 

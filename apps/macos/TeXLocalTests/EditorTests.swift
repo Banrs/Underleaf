@@ -48,6 +48,20 @@ struct EditorTests {
         #expect(document.text == "shown")
     }
 
+    @Test func aRejectedInsertionDoesNotStartItsSnippet() throws {
+        let (editor, window) = Self.editor("before")
+        defer { window.close() }
+        let text = editor.textView
+        text.selection = .caret(3)
+        text.isEditable = false
+        let insertion = Insertion(edit: TextEdit(start: 0, length: 0, text: "abc"), caret: 1,
+                                  fields: [SnippetField(start: 0, length: 1, index: 0)])
+
+        #expect(!text.insert(insertion, named: "Insert"))
+        #expect(text.string == "before" && text.selection == .caret(3))
+        #expect(!text.document.endSnippet())
+    }
+
     @Test func foldsMoveWithEditsBeforeThemOpenOnEditsInsideAndStepTheCaretOverThemBothWays() {
         let document = SourceDocument(text: "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
         let fold = Fold(line: 1, end: 3).hidden(in: document, length: 51)

@@ -114,9 +114,7 @@ impl Actor {
             return reply.send(Err(err));
         }
         let project = self.core.project.clone();
-        tokio::task::spawn_blocking(move || {
-            reply.send(zipexport::export_zip(&project, &dest, for_arxiv));
-        });
+        reply.spawn(move || zipexport::export_zip(&project, &dest, for_arxiv));
     }
 
     pub fn write_ui(&self, patch: UiPatch) -> Result<(), CoreError> {
@@ -156,7 +154,7 @@ impl Actor {
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
         let main = self.tree.main.clone();
         let project = &self.core.project;
-        settings::write_settings(project, patch)?;
+        settings::write_settings(&project.settings, patch)?;
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if !self.main_file_changed(main.as_ref()) && build && self.core.auto_compile {
             self.core.later.push_back(Later::Compile(true));

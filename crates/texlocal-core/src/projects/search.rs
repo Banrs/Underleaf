@@ -43,17 +43,6 @@ pub struct Written {
     pub count: usize,
 }
 
-pub fn search_groups(hits: Vec<SearchHit>) -> Vec<SearchGroup> {
-    let mut groups: BTreeMap<String, Vec<SearchHit>> = BTreeMap::new();
-    for hit in hits {
-        groups.entry(hit.file.clone()).or_default().push(hit);
-    }
-    groups
-        .into_iter()
-        .map(|(file, hits)| SearchGroup { file, hits })
-        .collect()
-}
-
 fn cap(rel: &str) -> u64 {
     match file_kind(rel) {
         FileKind::Tex | FileKind::Bib => u64::MAX,
@@ -67,8 +56,9 @@ pub fn search_project(
     chosen: &dyn Fn(&str) -> bool,
     found: &dyn Fn(&str, &str) -> Vec<Place>,
     limit: usize,
-) -> Result<Vec<SearchHit>, CoreError> {
-    let mut hits = Vec::new();
+) -> Result<Vec<SearchGroup>, CoreError> {
+    let mut groups = Vec::new();
+    let mut count = 0;
     visit_files(project, &mut |abs, rel| {
         if !chosen(rel) {
             return Ok(true);
@@ -81,10 +71,11 @@ pub fn search_project(
             },
         };
         let places = found(rel, &text);
+        let mut hits = Vec::new();
         let lines: Vec<&str> = text.split('\n').collect();
         let mut last = 0;
         for place in places {
-            if hits.len() >= limit {
+            if count >= limit {
                 break;
             }
             if place.line == last {
@@ -104,6 +95,7 @@ pub fn search_project(
                 .nth(60)
                 .map_or(line.len(), |(at, _)| end + at);
             let ellipsis = if from > 0 { "…" } else { "" };
+            count += 1;
             hits.push(SearchHit {
                 file: rel.to_owned(),
                 line: place.line,
@@ -116,9 +108,16 @@ pub fn search_project(
                 after: line[end..to].trim_end().to_owned(),
             });
         }
-        Ok(hits.len() < limit)
+        if !hits.is_empty() {
+            groups.push(SearchGroup {
+                file: rel.to_owned(),
+                hits,
+            });
+        }
+        Ok(count < limit)
     })?;
-    Ok(hits)
+    groups.sort_by(|a, b| a.file.cmp(&b.file));
+    Ok(groups)
 }
 
 pub(crate) fn replace_in_files(
@@ -194,4 +193,63 @@ fn replaced(file: &str, places: &[Place], to: &str) -> String {
     }
     out.push_str(&file[copied..]);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use texlocal_latex::search::Query;
+
+    use super::*;
+
+    #[test]
+    fn groups_are_sorted_after_the_global_limit_and_one_hit_per_line_are_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("a")).unwrap();
+        for (name, text) in [
+            ("a/b.tex", "🔎 cat cat\ncat"),
+            ("a.tex", "cat"),
+            ("z.tex", "cat"),
+        ] {
+            fs::write(root.join(name), text).unwrap();
+        }
+        let project = Project {
+            root: root.into(),
+            settings: root.join("settings"),
+            ui: root.join("ui"),
+            build: root.join("build"),
+            history: root.join("history"),
+        };
+        let query = Query::new("cat", true, false);
+        let find = |_: &str, text: &str| query.places(text);
+        let search = |limit| {
+            search_project(
+                &project,
+                &HashMap::new(),
+                &texlocal_latex::is_text,
+                &find,
+                limit,
+            )
+            .unwrap()
+        };
+        let groups = search(3);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.file.as_str())
+                .collect::<Vec<_>>(),
+            ["a.tex", "a/b.tex"]
+        );
+        let hits = &groups[1].hits;
+        assert_eq!(
+            hits.iter()
+                .map(|hit| (hit.line, hit.column))
+                .collect::<Vec<_>>(),
+            [(1, 3), (2, 0)]
+        );
+        assert_eq!(hits[0].matched, "cat");
+        assert_eq!(hits[0].file, groups[1].file);
+        assert_eq!(search(1)[0].file, "a/b.tex");
+        assert!(search(0).is_empty());
+    }
 }

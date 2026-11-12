@@ -17,7 +17,7 @@ use crate::paths::{
 };
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
-use crate::settings::{Engine, SettingsPatch, copy_ui, new_settings};
+use crate::settings::{Engine, SettingsPatch, copy_ui, write_settings};
 use crate::zipexport::{left_out, private};
 use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, atomic, sys};
 
@@ -347,7 +347,7 @@ pub(crate) fn import_project(service: &Service, src: &Path) -> Result<ProjectInf
             fs::write(root.join(file), content)?;
             settings.main_file = Some(file.into());
         }
-        new_settings(&root.join(SETTINGS_FILE), &settings)
+        write_settings(&root.join(SETTINGS_FILE), &settings)
     })
 }
 

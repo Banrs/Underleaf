@@ -14,8 +14,7 @@ extension SourceTextView {
 
     @discardableResult
     func insert(_ insertion: Insertion?, named name: String) -> Bool {
-        guard let insertion else { return false }
-        apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)])
+        guard let insertion, apply([insertion.edit], named: name, selecting: [.caret(insertion.caret)]) else { return false }
         if let first = document.startSnippet(insertion.fields, at: insertion.edit.start) { selection = first }
         return true
     }

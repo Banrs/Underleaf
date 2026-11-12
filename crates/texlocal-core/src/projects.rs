@@ -30,7 +30,7 @@ pub(crate) use library::{
 pub use opened::{Opening, forget_folder, open_path};
 pub(crate) use opened::{find as find_opened, is_opened};
 pub(crate) use search::replace_in_files;
-pub use search::{SearchGroup, Written, search_groups, search_project};
+pub use search::{SearchGroup, Written, search_project};
 pub use symbols::{Files, scan_facts};
 pub use tree::{TreeNode, file_tree};
 pub(crate) use tree::{shown, walk};

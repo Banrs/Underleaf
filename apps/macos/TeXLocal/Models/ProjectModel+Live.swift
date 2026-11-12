@@ -2,21 +2,38 @@ import Foundation
 import os
 
 extension ProjectModel {
+    var livePhase: LivePhase { store.live?.phase ?? .stopped }
+    var liveActive: Bool { livePhase == .starting || livePhase == .running }
+    var liveNeedsAttention: Bool { store.live?.attention == true }
+    var liveTitle: LocalizedStringResource {
+        switch livePhase {
+        case .stopped: liveNeedsAttention ? "Live Preview Needs Attention" : "Live Preview Stopped"
+        case .starting: "Starting Live Preview…"
+        case .running:
+            store.live?.halted == true ? "Live Preview Paused at an Error"
+                : liveNeedsAttention ? "Live Preview Needs Attention" : "Live Preview On"
+        }
+    }
+    var liveLog: String {
+        guard let live = store.live else { return "" }
+        return (live.failures.map(\.text) + [store.liveLog ?? ""]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     var livePreview: Bool {
-        get { texpresso.active }
+        get { liveActive }
         set { if newValue { startTeXpresso() } else { session.send(StopLive()) } }
     }
 
     var canSwitchLivePreview: Bool { window?.app.canPreviewLive == true && initialLoadComplete }
 
-    var showsLive: Bool { !closed && texpresso.active && livePDF }
+    var showsLive: Bool { !closed && liveActive && livePDF }
 
     var liveEngine: String? {
-        texpresso.engine.flatMap { engine in livePDF && engine != settings?.engine ? engine.title : nil }
+        (store.live?.engine).flatMap { engine in livePDF && engine != settings?.engine ? engine.title : nil }
     }
 
     func startTeXpresso() {
-        guard texpresso.phase == .stopped else { return }
+        guard livePhase == .stopped else { return }
         session.send(StartLive())
     }
 
