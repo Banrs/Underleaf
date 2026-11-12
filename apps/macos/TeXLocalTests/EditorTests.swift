@@ -120,24 +120,15 @@ struct EditorTests {
         #expect(text.string == "\\begin{list}\n  \n\\end{list}" && text.document.text == text.string)
     }
 
-    @Test func typingInAnEndsNameMirrorsItsBeginAndKeepsTheCaretAfterTheTypedLetters() {
+    @Test(arguments: [("ab", "xab", 20), ("(", "x()", 19)])
+    func typingInAnEndsNameMirrorsItsBeginAndPlacesTheCaret(_ typing: (input: String, name: String, caret: Int)) {
         let (editor, window) = Self.editor("\\begin{x}\n\\end{x}")
         defer { window.close() }
         let text = editor.textView
         text.selection = .caret(16)
-        Self.type("ab", in: text)
-        #expect(text.string == "\\begin{xab}\n\\end{xab}" && text.document.text == text.string)
-        #expect(text.selection == .caret(20))
-    }
-
-    @Test func aPairTypedInAnEndsNamePutsTheCaretInsideItOnceItsBeginIsMirrored() {
-        let (editor, window) = Self.editor("\\begin{x}\n\\end{x}")
-        defer { window.close() }
-        let text = editor.textView
-        text.selection = .caret(16)
-        Self.type("(", in: text)
-        #expect(text.string == "\\begin{x()}\n\\end{x()}" && text.document.text == text.string)
-        #expect(text.selection == .caret(19))
+        Self.type(typing.input, in: text)
+        #expect(text.string == "\\begin{\(typing.name)}\n\\end{\(typing.name)}" && text.document.text == text.string)
+        #expect(text.selection == .caret(typing.caret))
     }
 
     @Test func acceptingACompletionInAnEndsNameLeavesTheCaretAfterItOnceItsBeginIsMirrored() throws {
