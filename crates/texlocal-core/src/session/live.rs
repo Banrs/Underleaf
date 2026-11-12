@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -52,13 +52,10 @@ struct Issue {
     at: u32,
 }
 
-/// Shows a live PDF or none, and drops the SyncTeX parsed for the revisions beside the one that was shown: a run
-/// writes its revisions to a folder of its own, and none before the latest is asked for again.
+/// Shows a live PDF or none, and drops the SyncTeX parsed for the revisions before it.
 fn show(cx: &mut Core, pdf: Option<PathBuf>) {
-    let shown = std::mem::replace(&mut cx.pdf.live, pdf);
-    if let Some(folder) = shown.as_deref().and_then(Path::parent) {
-        cx.pdf.synctex.forget(folder, cx.pdf.live.as_deref());
-    }
+    cx.pdf.live = pdf;
+    cx.pdf.synctex.forget_live(cx.pdf.live.as_deref());
 }
 
 pub(crate) fn typeset_lines(typeset: &str, text: &str, line: u32) -> SyncLines {
@@ -469,7 +466,7 @@ impl Live {
                 if pages > 0 {
                     show(cx, Some(PathBuf::from(&path)));
                     self.typeset.clone_from(&self.sources.read);
-                    cx.pdf.synctex.warm(PathBuf::from(&path));
+                    cx.pdf.synctex.warm_live(PathBuf::from(&path));
                     cx.publish_pdf();
                     cx.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }

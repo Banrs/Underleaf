@@ -188,7 +188,7 @@ impl Builds {
         }
         if let Some(pdf) = &result.pdf {
             if result.pdf_changed {
-                cx.pdf.synctex.warm(pdf.into());
+                cx.pdf.synctex.warm_built(pdf.into());
             }
             cx.pdf.built = Some(pdf.clone());
             cx.pdf.version += u64::from(result.pdf_changed);
@@ -305,7 +305,7 @@ impl Builds {
             return None;
         }
         if result.is_ok() {
-            cx.pdf.synctex.forget(&cx.project.build, None);
+            cx.pdf.synctex.forget_built();
             (cx.pdf.built, self.outdated, self.result) = (None, false, None);
             self.publish(cx, docs);
             cx.publish(SessionSection::BuildLog(String::new()));

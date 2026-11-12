@@ -57,46 +57,78 @@ pub(crate) fn synctex_file(pdf: &Path) -> Option<PathBuf> {
         .map(|(_, file)| file)
 }
 
-/// A session's parsed SyncTeX: its build's and its live revision's, gone with the session.
-pub(crate) struct Parsed(Arc<Kept<SyncTex>>);
+/// A session's parsed SyncTeX: its build's and its live revision's, each kept apart so that forgetting one leaves the
+/// other, and both gone with the session. A 400-page book's is 62 MB.
+pub(crate) struct Parsed {
+    built: Arc<Kept<SyncTex>>,
+    live: Arc<Kept<SyncTex>>,
+}
 
-/// What a job on another thread reads a session's SyncTeX through. The session makes it on its own thread before the
-/// job starts, so a job that was waiting or reading when the session forgot a PDF doesn't keep what it read after.
-pub(crate) struct Reader {
+/// One of a session's two, with how many times it had forgotten when a job was made.
+struct Noted {
     kept: Arc<Kept<SyncTex>>,
     forgets: u64,
 }
 
+/// What a job on another thread reads a session's SyncTeX through. The session makes it on its own thread before the
+/// job starts, so a job that was waiting or reading when the session forgot a PDF doesn't keep what it read after.
+pub(crate) struct Reader {
+    built: Noted,
+    live: Noted,
+}
+
 impl Default for Parsed {
     fn default() -> Self {
-        Self(Arc::new(Kept::holding(2)))
+        let one = || Arc::new(Kept::holding(1));
+        Self {
+            built: one(),
+            live: one(),
+        }
     }
 }
 
 impl Parsed {
     pub fn reader(&self) -> Reader {
         Reader {
-            forgets: self.0.forgets(),
-            kept: Arc::clone(&self.0),
+            built: Noted::now(&self.built),
+            live: Noted::now(&self.live),
         }
     }
 
-    pub fn warm(&self, pdf: PathBuf) -> JoinHandle<()> {
-        let reader = self.reader();
-        tokio::task::spawn_blocking(move || drop(reader.beside(&pdf)))
+    pub fn warm_built(&self, pdf: PathBuf) -> JoinHandle<()> {
+        Noted::now(&self.built).warm(pdf)
     }
 
-    /// Drops what was parsed for the PDFs in a folder but one, which nothing asks for again once a build is cleaned, a
-    /// Live Preview ends or a live revision is superseded: a 400-page book's is 62 MB.
-    pub fn forget(&self, folder: &Path, but: Option<&Path>) {
-        let kept = but.map(|pdf| ["synctex", "synctex.gz"].map(|ext| pdf.with_extension(ext)));
+    pub fn warm_live(&self, pdf: PathBuf) -> JoinHandle<()> {
+        Noted::now(&self.live).warm(pdf)
+    }
+
+    /// Drops what was parsed for a build that was cleaned.
+    pub fn forget_built(&self) {
+        self.built.forget(|_| true);
+    }
+
+    /// Drops what was parsed for the live revisions but the one shown, which nothing asks for again.
+    pub fn forget_live(&self, shown: Option<&Path>) {
+        let kept = shown.map(|pdf| ["synctex", "synctex.gz"].map(|ext| pdf.with_extension(ext)));
         let kept = kept.as_ref().map_or(&[][..], |kept| kept);
-        let gone = |file: &Path| file.starts_with(folder) && !kept.iter().any(|kept| kept == file);
-        self.0.forget(gone);
+        self.live
+            .forget(|file| !kept.iter().any(|kept| kept == file));
     }
 }
 
-impl Reader {
+impl Noted {
+    fn now(kept: &Arc<Kept<SyncTex>>) -> Self {
+        Self {
+            forgets: kept.forgets(),
+            kept: Arc::clone(kept),
+        }
+    }
+
+    fn warm(self, pdf: PathBuf) -> JoinHandle<()> {
+        tokio::task::spawn_blocking(move || drop(self.beside(&pdf)))
+    }
+
     fn beside(&self, pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
         let file = synctex_file(pdf).ok_or(ErrorKind::NotFound)?;
         self.kept.get_since(Some(self.forgets), &file, |file| {
@@ -105,17 +137,20 @@ impl Reader {
                 .ok_or_else(|| Error::new(ErrorKind::InvalidData, "not a SyncTeX file"))
         })
     }
+}
 
+impl Reader {
     /// The SyncTeX of the live PDF given, else of the project's built one.
     pub fn of(&self, project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
-        let pdf = match live {
-            Some(live) => live.to_path_buf(),
-            None => project
-                .built_pdf()
-                .ok_or_else(|| CoreError::not_found(messages::no_pdf_yet()))?,
+        let parsed = match live {
+            Some(live) => self.live.beside(live),
+            None => {
+                let built = project.built_pdf();
+                let built = built.ok_or_else(|| CoreError::not_found(messages::no_pdf_yet()))?;
+                self.built.beside(&built)
+            }
         };
-        self.beside(&pdf)
-            .map_err(|_| CoreError::not_found(messages::no_synctex()))
+        parsed.map_err(|_| CoreError::not_found(messages::no_synctex()))
     }
 }
 
@@ -251,33 +286,45 @@ mod tests {
     #[tokio::test]
     async fn a_warmed_synctex_is_kept_until_forgotten_and_not_by_a_job_from_before_that() {
         let dir = tempfile::tempdir().unwrap();
-        let (pdf, file) = (dir.path().join("main.pdf"), dir.path().join("main.synctex"));
-        fs::write(&file, SYNCTEX).unwrap();
-        let modified = fs::metadata(&file).unwrap().modified().unwrap();
-        // The file's stamp stays as it was, so what is read after tells kept from read again.
-        let put = |bytes: &[u8]| {
-            let mut same = File::options().write(true).open(&file).unwrap();
+        let pdfs = ["live.pdf", "main.pdf"].map(|name| dir.path().join(name));
+        let files = pdfs.each_ref().map(|pdf| pdf.with_extension("synctex"));
+        for file in &files {
+            fs::write(file, SYNCTEX).unwrap();
+        }
+        let modified = files
+            .each_ref()
+            .map(|file| fs::metadata(file).unwrap().modified().unwrap());
+        // A file's stamp stays as it was, so what is read after tells kept from read again.
+        let put = |which: usize, bytes: &[u8]| {
+            let mut same = File::options().write(true).open(&files[which]).unwrap();
             same.write_all(bytes).unwrap();
-            same.set_modified(modified).unwrap();
+            same.set_modified(modified[which]).unwrap();
         };
         let junk = vec![b'x'; SYNCTEX.len()];
+        let [live, built] = &pdfs;
         let parsed = Parsed::default();
-        let kept = || parsed.reader().beside(&pdf).is_ok();
+        let kept = || parsed.reader().live.beside(live).is_ok();
         let waiting = parsed.reader();
-        parsed.warm(pdf.clone()).await.unwrap();
-        put(&junk);
+        parsed.warm_live(live.clone()).await.unwrap();
+        put(0, &junk);
         assert!(kept());
-        parsed.forget(dir.path(), Some(&pdf));
+        parsed.forget_live(Some(live));
         assert!(kept());
-        parsed.forget(dir.path(), None);
+        parsed.forget_live(None);
         assert!(!kept(), "the junk is read");
-        put(SYNCTEX.as_bytes());
-        assert_eq!(waiting.beside(&pdf).unwrap().inputs().count(), 1);
-        put(&junk);
+        put(0, SYNCTEX.as_bytes());
+        assert_eq!(waiting.live.beside(live).unwrap().inputs().count(), 1);
+        put(0, &junk);
         assert!(
             !kept(),
             "a job that was waiting when its PDF was forgotten kept what it read"
         );
+        // What Live Preview forgot is nothing to a job reading the build's.
+        assert!(waiting.built.beside(built).is_ok());
+        put(1, &junk);
+        assert!(parsed.reader().built.beside(built).is_ok());
+        parsed.forget_built();
+        assert!(parsed.reader().built.beside(built).is_err());
     }
 
     #[test]
