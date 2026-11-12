@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import SwiftUI
 
 final class WorkspaceController: ThinSplitViewController {
@@ -12,7 +13,8 @@ final class WorkspaceController: ThinSplitViewController {
     let columns = ThinSplitViewController(splitView: ColumnsSplitView())
     private let area = ThinSplitViewController(isVertical: false)
     private var sidebarItem, sourceItem, pdfItem, panelItem, inspectorItem, areaItem: NSSplitViewItem!
-    private var pdfEmpty: NSView!
+    private var sourceEmpty, pdfEmpty: NSView!
+    private let preview: QLPreviewView = QLPreviewView(frame: .zero, style: .normal)
     private let searchField = FieldHandle()
     private let inspectorMount = Mount()
 
@@ -95,20 +97,11 @@ final class WorkspaceController: ThinSplitViewController {
             app.buildPanelHeight = max(ColumnMetrics.panelMinimum, (size.height * 0.25).rounded())
         }
 
-        sourceItem = NSSplitViewItem(viewController: host(SourceColumn(project: project), width: panes - pdfWidth))
-        sourceItem.minimumThickness = ColumnMetrics.paneMinimum
-        let pdfPane = NSViewController()
-        pdfPane.view = NSView(frame: NSRect(x: 0, y: 0, width: pdfWidth, height: 0))
-        let empty = NSHostingView(rootView: pane(PDFEmptyState(project: project)))
-        empty.sizingOptions = []
-        pdfEmpty = empty
-        for pane in [pdf.view, empty] as [NSView] {
-            pane.frame = pdfPane.view.bounds
-            pane.autoresizingMask = [.width, .height]
-            pdfPane.view.addSubview(pane)
-        }
-        pdfItem = NSSplitViewItem(viewController: pdfPane)
-        pdfItem.minimumThickness = ColumnMetrics.paneMinimum
+        sourceEmpty = hosted(SourceEmptyState())
+        pdfEmpty = hosted(PDFEmptyState(project: project))
+        // A file that isn't text is shown by Quick Look, over the editor.
+        sourceItem = column([views.editor.scrollView, preview, sourceEmpty], width: panes - pdfWidth)
+        pdfItem = column([pdf.view, pdfEmpty], width: pdfWidth)
         columns.addSplitViewItem(sourceItem)
         columns.addSplitViewItem(pdfItem)
 
@@ -165,6 +158,26 @@ final class WorkspaceController: ThinSplitViewController {
         }
     }
 
+    /// A column of AppKit views laid over each other, each filling it.
+    private func column(_ layers: [NSView], width: CGFloat) -> NSSplitViewItem {
+        let column = NSViewController()
+        column.view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 0))
+        for layer in layers {
+            layer.frame = column.view.bounds
+            layer.autoresizingMask = [.width, .height]
+            column.view.addSubview(layer)
+        }
+        let item = NSSplitViewItem(viewController: column)
+        item.minimumThickness = ColumnMetrics.paneMinimum
+        return item
+    }
+
+    private func hosted(_ content: some View) -> NSView {
+        let view = NSHostingView(rootView: pane(content))
+        view.sizingOptions = []
+        return view
+    }
+
     private func pane(_ content: some View, mount: Mount? = nil) -> some View {
         Pane(project: project, mount: mount, content: content).environment(app).environment(window).environment(views)
     }
@@ -177,8 +190,20 @@ final class WorkspaceController: ThinSplitViewController {
     }
 
     private func watch() {
-        let window = window, project = project, pdf = pdf
+        let window = window, project = project, pdf = pdf, app = app, editor = views.editor, text = views.editor.textView, preview = preview
         watches = [
+            track({ app.fontSize }) { text.fontSize = CGFloat($0) },
+            track({ app.fontName }) { text.fontName = $0 },
+            track({ app.lineNumbers }) { text.showsLineNumbers = $0 },
+            track({ app.autoPair }) { text.autoPair = $0 },
+            track({ app.autoComplete }) { text.autoComplete = $0 },
+            track({ project.editsText }) { editor.shown = $0 },
+            track({ project.openPath == nil }) { [weak self] in self?.sourceEmpty.isHidden = !$0 },
+            track({ project.editsText ? nil : project.openURL }) {
+                preview.isHidden = $0 == nil
+                preview.previewItem = $0 as NSURL?
+            },
+            track({ project.previewVersion }, initial: false) { _ in preview.refreshPreviewItem() },
             track({ [window.showSource, window.showPDF] }) { [weak self] _ in self?.showPanes() },
             track({ project.panel.shown }) { [weak self] in self?.setPanelShown($0) },
             track({ project.hasPDF || pdf.isLoading }) { [weak self] in self?.pdfEmpty.isHidden = $0 },
@@ -255,6 +280,7 @@ final class WorkspaceController: ThinSplitViewController {
         watches.forEach { $0.cancel() }
         collapses = []
         toolbar.close()
+        preview.close()
     }
 
     func performPDF(_ action: PDFAction) {
@@ -263,6 +289,14 @@ final class WorkspaceController: ThinSplitViewController {
             guard let self else { return }
             views.perform(action)
         }
+    }
+}
+
+struct SourceEmptyState: View {
+    var body: some View {
+        ContentUnavailableView("No File Open", systemImage: "text.document", description: Text("Choose a file in the sidebar."))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.textSurface)
     }
 }
 
