@@ -108,7 +108,7 @@ final class IssueOverlay {
         if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
         if !reported.tokens.isEmpty, let textFont = view.font {
             // Xcode 27.2's, measured at 2×: twice the font's underline thickness on whole pixels (3 px at 13 pt), from a
-            // whole number of pixels below the baseline at the font's underline position (2 px), unbroken by descenders.
+            // whole number of pixels below the baseline at the font's underline position (2 px), broken around descenders.
             let scale = view.window?.backingScaleFactor ?? 2
             let thickness = view.onPixels(2 * textFont.underlineThickness)
             let drop = (-textFont.underlinePosition * scale).rounded(.down) / scale
@@ -120,11 +120,46 @@ final class IssueOverlay {
                     let start = view.onPixels(lineLeft + line.locationForCharacter(at: part.location).x)
                     let end = view.onPixels(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
                     let baseline = view.onPixels(top + line.typographicBounds.minY + line.glyphOrigin.y)
-                    issue.tokens.append(CGRect(x: start, y: baseline + drop, width: end - start, height: thickness))
+                    let under = CGRect(x: start, y: baseline + drop, width: end - start, height: thickness)
+                    issue.tokens += Self.skippingInk(under, of: line, part, left: lineLeft, baseline: baseline, scale: scale)
                 }
             }
         }
         return issue
+    }
+
+    /// The underline's pieces between the glyphs that cross it, as Xcode 27.2 breaks its own: around the ink within a
+    /// pixel of the line, with a point clear either side.
+    private static func skippingInk(_ under: CGRect, of line: NSTextLineFragment, _ part: NSRange, left: CGFloat,
+                                    baseline: CGFloat, scale: CGFloat) -> [CGRect] {
+        // The band in a glyph's own space, where y rises from the baseline.
+        let band = CGRect(x: -1_000, y: baseline - under.maxY - 1 / scale, width: 2_000, height: under.height + 2 / scale)
+        var gaps: [ClosedRange<CGFloat>] = []
+        let string = line.attributedString.string as NSString
+        var index = part.location
+        while index < NSMaxRange(part) {
+            let character = string.rangeOfComposedCharacterSequence(at: index)
+            defer { index = NSMaxRange(character) }
+            var units = [UniChar](repeating: 0, count: character.length), glyphs = [CGGlyph](repeating: 0, count: character.length)
+            string.getCharacters(&units, range: character)
+            guard let font = line.attributedString.attribute(.font, at: index, effectiveRange: nil) as? NSFont,
+                  CTFontGetGlyphsForCharacters(font, units, &glyphs, units.count), let glyph = glyphs.first,
+                  let path = CTFontCreatePathForGlyph(font, glyph, nil) else { continue }
+            let ink = path.intersection(CGPath(rect: band, transform: nil)).boundingBoxOfPath
+            guard !ink.isNull, ink.width > 0 else { continue }
+            let x = left + line.locationForCharacter(at: index).x
+            gaps.append((x + ink.minX - 1)...(x + ink.maxX + 1))
+        }
+        var pieces = [under]
+        for gap in gaps {
+            let from = (gap.lowerBound * scale).rounded(.down) / scale, to = (gap.upperBound * scale).rounded(.up) / scale
+            pieces = pieces.flatMap { piece -> [CGRect] in
+                guard from < piece.maxX, to > piece.minX else { return [piece] }
+                return [CGRect(x: piece.minX, y: piece.minY, width: from - piece.minX, height: piece.height),
+                        CGRect(x: to, y: piece.minY, width: piece.maxX - to, height: piece.height)].filter { $0.width > 0 }
+            }
+        }
+        return pieces
     }
 
     private struct Fit {
