@@ -174,8 +174,6 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
         overlay.addSubview(mark)
     }
 
-    override func mouseMoved(with event: NSEvent) { if !updateDividerCursor(with: event) { super.mouseMoved(with: event) } }
-    override func cursorUpdate(with event: NSEvent) { if !updateDividerCursor(with: event) { super.cursorUpdate(with: event) } }
 
     override func setFrameSize(_ newSize: NSSize) {
         guard newSize != frame.size else { return }

@@ -2,30 +2,6 @@ import AppKit
 import PDFKit
 
 extension NSView {
-    func updateDividerCursor(with event: NSEvent) -> Bool {
-        guard let window, window.isKeyWindow, let workspace = window.contentView, let content = workspace.superview,
-              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
-        guard hit.isDescendant(of: workspace) else { return true }
-        let resizing = [NSCursor.columnResize, .columnResize(directions: .left), .columnResize(directions: .right)].contains(NSCursor.current)
-        if let split = hit as? NSSplitView, split.isVertical, split.arrangedSubviews.count == 2,
-           split.arrangedSubviews.allSatisfy({ !split.isSubviewCollapsed($0) }), isDescendant(of: split) {
-            let position = split.arrangedSubviews[0].frame.maxX
-            var directions: NSHorizontalDirection.Set = []
-            if position > split.minPossiblePositionOfDivider(at: 0) { directions.insert(.left) }
-            if position < split.maxPossiblePositionOfDivider(at: 0) { directions.insert(.right) }
-            guard !directions.isEmpty else { return false }
-            NSCursor.columnResize(directions: directions).set()
-            return true
-        }
-        if hit is NSScroller { NSCursor.arrow.set(); return true }
-        if let pdf = sequence(first: hit, next: \.superview).first(where: { $0 is PDFView }) as? PDFView, self is NSTextView || resizing {
-            pdf.setCursorFor(pdf.areaOfInterest(forMouse: event))
-            return true
-        }
-        if resizing { (hit is NSTextView || hit is NSTextField ? NSCursor.iBeam : .arrow).set() }
-        return false
-    }
-
     func isDoubleClick(_ event: NSEvent) -> Bool {
         guard event.type == .leftMouseDown, event.clickCount == 2, let up = NSApp.currentEvent, up.type == .leftMouseUp else { return false }
         return abs(up.locationInWindow.x - event.locationInWindow.x) <= 4 && abs(up.locationInWindow.y - event.locationInWindow.y) <= 4

@@ -477,7 +477,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let point = convert(event.locationInWindow, from: nil)
         let overGutter = inGutter(point, before: sourceTextStart)
         gutterHover(overGutter)
-        if updateDividerCursor(with: event) { return true }
         let overControl = overGutter && (point.x < gutter.numbersEnd || foldLine(at: point) != nil)
         guard overControl || issue(at: event) != nil else { return false }
         NSCursor.arrow.set()
