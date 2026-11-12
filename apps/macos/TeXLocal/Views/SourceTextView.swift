@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
     static func plainDocument() -> SourceTextView {
@@ -239,34 +238,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         return convert(window.convertFromScreen(firstRect(forCharacterRange: range, actualRange: nil)), from: nil)
     }
 
-    private func popoverRect(at offset: Int) -> NSRect? {
-        guard var rect = rect(of: .caret(offset)) else { return nil }
-        rect.size.width = max(rect.width, 1)
-        return rect
-    }
-
-    private lazy var helpPopover: NSPopover = {
+    lazy var helpPopover: NSPopover = {
         let popover = NSPopover()
         popover.behavior = .transient
         return popover
     }()
 
     private(set) lazy var hoverHelp = HoverHelp(for: self)
-
-    func showQuickHelp(_ help: QuickHelp, picture: ReferencePicture?, at offset: Int, hovering: Bool) {
-        let bold = NSFontManager.shared.convert(font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular), toHaveTrait: .boldFontMask)
-        let content = NSHostingController(rootView: QuickHelpView(help: help, picture: picture, font: bold) { [weak self] place in
-            self?.helpPopover.close()
-            self?.hoverHelp.close()
-            self?.openDefinition(place)
-        })
-        content.sizingOptions = .preferredContentSize
-        if hovering { return helpPopover.isShown ? () : hoverHelp.show(content, at: offset) }
-        guard let rect = popoverRect(at: offset) else { return }
-        hoverHelp.close()
-        helpPopover.contentViewController = content
-        helpPopover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
-    }
 
     var autoPair = true, autoComplete = true
     var spellCheckToggled: (Bool) -> Void = { _ in }

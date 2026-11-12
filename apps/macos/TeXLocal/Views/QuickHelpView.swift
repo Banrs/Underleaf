@@ -22,3 +22,23 @@ struct QuickHelpView: View {
         .padding()
     }
 }
+
+struct ReferencePictureView: View {
+    let picture: ReferencePicture
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
+        Image(nsImage: picture.image)
+            .colorInverted(picture.darkPaper)
+            .clipShape(shape)
+            .overlay { shape.strokeBorder(.separator) }
+            .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    @ViewBuilder func colorInverted(_ inverted: Bool) -> some View {
+        // As the PDF view shows dark paper.
+        if inverted { colorInvert().hueRotation(.degrees(180)) } else { self }
+    }
+}
