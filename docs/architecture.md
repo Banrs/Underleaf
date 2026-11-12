@@ -22,7 +22,6 @@ Where a new thing goes:
 - A call only one system has goes in `sys/<system>.rs`, behind a function `sys.rs` names.
 - What is only how one app looks (which rows are expanded, where a split sits) stays in that app. The Mac app's
   `FoldSet` is this kind: the folds come from `Folds`, and which of them are closed is the view's.
-  The app owns which rows are open; the core keeps the saved copy true to the paths.
 
 ## The boundary
 

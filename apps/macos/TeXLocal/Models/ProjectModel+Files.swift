@@ -46,8 +46,10 @@ extension ProjectModel {
             try await session.call(Rename(from: from, to: to))
         }), let result = renamed else { return nil }
         trail.moved(result.from, to: result.to)
-        navigator.renamed { remapPath($0, from: result.from, to: result.to) }
-        (expandedFolders, foldedHeadings) = (Set(result.expandedFolders), Set(result.foldedHeadings))
+        let remap = { (path: String) in remapPath(path, from: result.from, to: result.to) }
+        expandedFolders = Set(expandedFolders.map(remap))
+        navigator.renamed(remap)
+        foldedHeadings = Set(foldedHeadings.map { key in key.firstIndex(of: "\t").map { remap(String(key[..<$0])) + key[$0...] } ?? key })
         return result
     }
 

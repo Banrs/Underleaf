@@ -490,6 +490,22 @@ struct ViewsTests {
         #expect(window.alert == nil && views.shown.count == 3)
     }
 
+    @Test func aFolderOpenedOrAHeadingFoldedWhileARenameIsPendingStaysThatWay() async throws {
+        let info = try await newProject()
+        let project = ProjectModel(id: info.id, window: defaults.window())
+        try await project.load()
+        let folder = try #require(await project.createEntry(in: "", directory: true))
+        project.expandedFolders = [folder]
+        project.foldedHeadings = ["\(folder)/a.tex\tIntro"]
+        let rename = Task.immediate { await project.renameEntry(folder, to: "moved") }
+        project.expandedFolders.insert("other")
+        project.foldedHeadings.insert("main.tex\tIntro")
+        await rename.value
+        #expect(project.expandedFolders == ["moved", "other"])
+        #expect(project.foldedHeadings == ["moved/a.tex\tIntro", "main.tex\tIntro"])
+        #expect(await project.close().value)
+    }
+
     @Test func deletingAnEntryMovesItToTheTrashWithItsUndoOnTheWindow() async throws {
         let info = try await newProject()
         let window = defaults.window(), host = UndoHost()
