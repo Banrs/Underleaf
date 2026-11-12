@@ -42,7 +42,8 @@ struct BuildPanelBar: View {
             .labelsHidden()
             .buttonStyle(.borderless)
             .controlSize(.small)
-            .padding(.horizontal, 10)
+            // Sets the title's first stem over the log text's, 17.5 pt into the pane at 13 pt, as Xcode's console lines up its own.
+            .padding(.horizontal, 6.5)
             .frame(height: 24)
             .glassEffect(.regular.interactive(), in: .capsule)
             .fixedSize()
