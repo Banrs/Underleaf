@@ -59,13 +59,6 @@ extension SourceTextView {
         previewMath()
     }
 
-    func math(at caret: Int) -> MathPreview? {
-        if let lastMath, lastMath.caret == caret { return lastMath.value }
-        let value = document.mathAt(caret: caret)
-        lastMath = (caret, value)
-        return value
-    }
-
     func offset(_ location: any NSTextLocation) -> Int { textLayoutManager?.textContentManager?.offset(of: location) ?? 0 }
 
     func textRange(_ range: NSRange) -> NSTextRange? { textLayoutManager?.textContentManager?.textRange(of: range) }

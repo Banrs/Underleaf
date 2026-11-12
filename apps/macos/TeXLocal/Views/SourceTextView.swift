@@ -42,7 +42,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         foldCache = nil
         textStorage?.setAttributedString(NSAttributedString(string: text, attributes: typingAttributes))
         loading = false
-        lastMath = nil
         dismissedMath = nil
         _ = document.endSnippet()
         completions.close()
@@ -68,7 +67,6 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         foldCache = nil
         let edits = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
         if !edits.filter({ folds.edited($0.range, delta: $0.text.utf16.count - $0.length) }).isEmpty { Task { self.relayOutFolds() } }
-        lastMath = nil
         staleColours = min(staleColours ?? edited.location, edited.location)
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
     }
@@ -249,11 +247,10 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
     var hasKeyboard: Bool { window?.isKeyWindow == true && window?.firstResponder === self }
 
     private(set) lazy var mathPreview = MathPopover()
-    var lastMath: (caret: Int, value: MathPreview?)?
     var dismissedMath: Int?
 
     func previewMath() {
-        let maths = loading ? nil : math(at: caret)
+        let maths = loading ? nil : document.mathAt(caret: caret)
         if maths?.start != dismissedMath { dismissedMath = nil }
         guard hasKeyboard, let maths, dismissedMath == nil, enclosingScrollView != nil, let rect = popoverRect(at: caret),
               shownRect.contains(NSPoint(x: rect.minX, y: rect.midY)) else { return mathPreview.close() }
@@ -399,7 +396,7 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         if completions.offered != nil {
             completions.close()
         } else if document.endSnippet() {
-        } else if mathPreview.isWanted, let maths = math(at: caret) {
+        } else if mathPreview.isWanted, let maths = document.mathAt(caret: caret) {
             dismissedMath = maths.start
             mathPreview.close()
         } else {
