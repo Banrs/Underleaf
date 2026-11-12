@@ -82,12 +82,9 @@ struct EditorPDFPixelTests {
     }
 
     private func emptyColumn(dark: Bool, key: Bool, suffix: String) async throws {
-        let defaults = TestDefaults()
-        let model = defaults.window()
-        let views = WorkspaceViews(project: ProjectModel(id: "Pixels", window: model))
         let window = Self.window(NSSize(width: 420, height: 300), dark: dark, key: key)
         defer { window.close() }
-        let column = NSHostingView(rootView: SourceColumn(project: views.project).environment(views).environment(model.app).environment(model))
+        let column = NSHostingView(rootView: SourceEmptyState())
         column.frame = window.contentView?.bounds ?? .zero
         window.contentView = column
         try await write("source-column-empty-\(suffix)", column)
