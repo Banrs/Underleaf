@@ -508,6 +508,13 @@ fn maths_renders_as_svg_or_nothing() {
     for tex in ["\\text{中}", "😀", "x + \\text{Ω😀}"] {
         assert_eq!(drawn(tex), Value::Null, "{tex}");
     }
+    for tag in [r"\tag{\text{A}}", r"\tag {\text{A}}"] {
+        let mut doc = SourceDocument::new(&format!("$x{tag}$"));
+        let math = run(&mut doc, "MathAt", json!({ "caret": 1 }));
+        let tex = math["tex"].as_str().unwrap();
+        assert_eq!(tex, "x", "{tag}");
+        assert_eq!(drawn(tex), drawn("x"), "{tag}");
+    }
     let sane = |tex: &str| {
         let svg = drawn(tex);
         let (width, height) = (svg["width"].as_f64()?, svg["height"].as_f64()?);
