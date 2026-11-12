@@ -36,7 +36,9 @@ struct FilterField<Toggles: View>: View {
                 .accessibilityValue("Active", isEnabled: hasActiveOptions)
                 .fixedSize()
             }
-            TextField("Filter", text: $text).textFieldStyle(.plain).help(help)
+            // AppKit's placeholder colour, as Xcode's field has; SwiftUI's own prompt over glass came out a fifth brighter.
+            TextField(text: $text, prompt: Text("Filter").foregroundStyle(Color(nsColor: .placeholderTextColor))) { Text("Filter") }
+                .textFieldStyle(.plain).help(help)
             if !text.isEmpty { Button("Clear", systemImage: "xmark.circle.fill") { text = "" }.foregroundStyle(.filterSymbol) }
             toggles
         }
@@ -59,13 +61,14 @@ struct FilterToggle: View {
     var body: some View {
         Toggle(label, systemImage: symbol, isOn: $isOn)
             .symbolVariant(isOn ? .fill : .none)
-            .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.filterSymbol))
+            // Off, Xcode 27.2 draws a filter's toggles in the tertiary label colour, a step quieter than the filter symbol.
+            .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(nsColor: .tertiaryLabelColor)))
             .help(help)
     }
 }
 
 private extension ShapeStyle where Self == Color {
-    /// The label colour AppKit gives a field's symbols, which a hierarchical style over glass comes out lighter than.
+    /// The colour Xcode 27.2 draws a filter's symbol in; a hierarchical secondary style over glass comes out a quarter dimmer.
     static var filterSymbol: Color { Color(nsColor: .secondaryLabelColor) }
 }
 
