@@ -220,9 +220,6 @@ private struct IssueList: View {
                 Text(fix.confirm?.text ?? "")
             }
             .onChange(of: project.chosenIssue) { _, place in if let place { proxy.scrollTo(place) } }
-            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { _ in
-                if let place = project.chosenIssue { proxy.scrollTo(place) }
-            }
         }
     }
 
