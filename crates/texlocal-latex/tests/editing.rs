@@ -282,7 +282,7 @@ fn a_section_folds_to_the_next_heading() {
     let mut doc = SourceDocument::new("\\section{A}\ntext\n\\section{B}\nmore\n");
     assert_eq!(
         run(&mut doc, "Folds", json!({})),
-        json!([{ "line": 1, "end": 2 }, { "line": 3, "end": 4 }])
+        json!([{ "line": 1, "end": 2, "hidden": { "start": 12, "length": 5 } }, { "line": 3, "end": 4, "hidden": { "start": 29, "length": 5 } }])
     );
 }
 

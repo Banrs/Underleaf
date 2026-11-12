@@ -36,11 +36,3 @@ struct FoldSet: Equatable {
         return nil
     }
 }
-
-extension Fold {
-    func hidden(in document: SourceDocument, length: Int) -> NSRange {
-        let start = document.lineStart(line + 1)
-        let end = self.end < document.lineCount ? document.lineStart(self.end + 1) : length
-        return NSRange(location: start, length: end - start)
-    }
-}

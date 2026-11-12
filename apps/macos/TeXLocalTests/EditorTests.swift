@@ -17,7 +17,7 @@ struct EditorTests {
         let heading = try #require(document.setHeading(caret: 3, command: "subsection"))
         #expect(heading.edit.text == "\\subsection{Intro}")
         #expect(document.mathAt(caret: 22) == MathPreview(start: 21, tex: "x^2", display: false))
-        #expect(document.folds() == [Fold(line: 1, end: 3)])
+        #expect(document.folds() == [Fold(line: 1, end: 3, hidden: TextRange(start: 16, length: 20))])
         #expect(document.toggleComment([NSRange(location: 0, length: 0)]).first?.text == "% ")
         #expect(document.words(in: NSRange(location: 16, length: 15)) == 2)
         #expect(document.selectsCommand(NSRange(location: 1, length: 7)) && !document.selectsCommand(NSRange(location: 9, length: 5)))
@@ -63,9 +63,9 @@ struct EditorTests {
     }
 
     @Test func foldsMoveWithEditsBeforeThemOpenOnEditsInsideAndStepTheCaretOverThemBothWays() {
-        let document = SourceDocument(text: "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
-        let fold = Fold(line: 1, end: 3).hidden(in: document, length: 51)
-        #expect(fold == NSRange(location: 16, length: 16) && Fold(line: 4, end: 5).hidden(in: document, length: 51) == NSRange(location: 46, length: 5))
+        let document = SourceDocument(text: "\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\n\\section{A}\nafter")
+        let fold = document.folds()[0].hidden.range
+        #expect(fold == NSRange(location: 16, length: 16) && document.folds()[1].hidden.range == NSRange(location: 58, length: 5))
         let folds = FoldSet([fold, fold])
         #expect(folds.ranges == [fold] && folds.headers(in: document) == [1: fold] && folds.hides(16) && !folds.hides(32))
         #expect(folds.caret(on: 1, hiding: .caret(20), in: document) == .caret(15))

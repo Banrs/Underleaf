@@ -4,12 +4,13 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::scan::{Group, Scanner, Visit, blank_line, tex_space};
-use super::{SourceDocument, headings, is};
+use super::{SourceDocument, TextRange, headings, is, span};
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Fold {
     pub(crate) line: u32,
     pub(crate) end: u32,
+    pub(crate) hidden: TextRange,
 }
 
 #[derive(Default)]
@@ -57,7 +58,12 @@ impl SourceDocument {
                 end -= 1;
             }
             if end > line {
-                folds.push(Fold { line, end });
+                let start = self.text.bounds(line as usize - 1).next;
+                folds.push(Fold {
+                    line,
+                    end,
+                    hidden: span(start, self.text.bounds(end as usize - 1).next - start),
+                });
             }
         };
         for &(open, close) in &found.environments {

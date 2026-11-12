@@ -411,6 +411,7 @@ nonisolated struct Fixed: Decodable, Hashable, Sendable {
 nonisolated struct Fold: Decodable, Hashable, Sendable {
     var line: Int
     var end: Int
+    var hidden: TextRange
 }
 
 nonisolated struct Folds: SourceRequest {
