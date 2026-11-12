@@ -304,6 +304,7 @@ impl Builds {
             return None;
         }
         if result.is_ok() {
+            synctex::forget(&cx.project.build, None);
             (cx.pdf.built, self.outdated, self.result) = (None, false, None);
             self.publish(cx, docs);
             cx.publish(SessionSection::BuildLog(String::new()));

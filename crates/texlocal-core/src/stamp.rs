@@ -98,6 +98,15 @@ impl<T> Kept<T> {
         }
         Ok(value)
     }
+
+    /// Drops the values kept for the paths chosen, which would otherwise stay until as many others as it holds were read.
+    pub(crate) fn forget(&self, chosen: impl Fn(&Path) -> bool) {
+        let dropped: Vec<_> = lock(&self.held)
+            .1
+            .extract_if(|path, _| chosen(path))
+            .collect();
+        drop(dropped);
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +147,14 @@ mod tests {
         assert_eq!(reads.get(), 7);
         fs::remove_file(two).unwrap();
         assert!(get(two).is_err());
+        get(one).unwrap();
+        assert_eq!(reads.get(), 8);
+        kept.forget(|path| path == two);
+        get(one).unwrap();
+        assert_eq!(reads.get(), 8);
+        kept.forget(|path| path == one);
+        get(one).unwrap();
+        assert_eq!(reads.get(), 9);
     }
 
     #[test]

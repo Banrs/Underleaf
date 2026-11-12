@@ -67,8 +67,9 @@ pub(crate) fn synctex_file(pdf: &Path) -> Option<PathBuf> {
         .map(|(_, file)| file)
 }
 
+static PARSED: Kept<SyncTex> = Kept::new();
+
 fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
-    static PARSED: Kept<SyncTex> = Kept::new();
     let file = synctex_file(pdf).ok_or(ErrorKind::NotFound)?;
     PARSED.get(&file, |file| {
         let bytes = std::fs::read(file)?;
@@ -78,6 +79,14 @@ fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
 
 pub(crate) fn warm(pdf: PathBuf) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || drop(beside(&pdf)))
+}
+
+/// Drops what was parsed for the PDFs in a folder but one, which nothing asks for again once a project closes, a Live
+/// Preview ends or a live revision is superseded: a 400-page book's is 62 MB, and four would stay.
+pub(crate) fn forget(folder: &Path, but: Option<&Path>) {
+    let kept = but.map(|pdf| ["synctex", "synctex.gz"].map(|ext| pdf.with_extension(ext)));
+    let kept = kept.as_ref().map_or(&[][..], |kept| kept);
+    PARSED.forget(|file| file.starts_with(folder) && !kept.iter().any(|kept| kept == file));
 }
 
 fn source_file(project: &Project, name: &str) -> Option<String> {
@@ -230,6 +239,10 @@ mod tests {
         junk.set_modified(modified).unwrap();
         drop(junk);
         assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
+        forget(dir.path(), Some(&pdf));
+        assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
+        forget(dir.path(), None);
+        assert!(beside(&pdf).is_err(), "the junk is read");
     }
 
     #[test]

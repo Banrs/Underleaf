@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -50,6 +50,14 @@ pub(crate) struct LiveState {
 struct Issue {
     item: LogItem,
     at: u32,
+}
+
+/// Drops the SyncTeX parsed for the revisions beside the PDF that was shown, but for the one shown now: a run writes
+/// its revisions to a folder of its own, and none before the latest is asked for again.
+fn forget_live(shown: Option<PathBuf>, now: Option<&Path>) {
+    if let Some(folder) = shown.as_deref().and_then(Path::parent) {
+        synctex::forget(folder, now);
+    }
 }
 
 pub(crate) fn typeset_lines(typeset: &str, text: &str, line: u32) -> SyncLines {
@@ -193,7 +201,7 @@ impl Live {
     fn ended(&mut self, cx: &mut Core, docs: &Docs) {
         self.phase = LivePhase::Stopped;
         self.reset(cx);
-        cx.pdf.live = None;
+        forget_live(cx.pdf.live.take(), None);
         self.publish(cx, docs, false);
         self.publish_log(cx);
         cx.publish_pdf();
@@ -455,9 +463,10 @@ impl Live {
                     return;
                 }
                 if pages > 0 {
-                    cx.pdf.live = Some(PathBuf::from(&path));
+                    let pdf = PathBuf::from(&path);
+                    forget_live(cx.pdf.live.replace(pdf.clone()), Some(&pdf));
                     self.typeset.clone_from(&self.sources.read);
-                    synctex::warm(PathBuf::from(&path));
+                    synctex::warm(pdf);
                     cx.publish_pdf();
                     cx.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }

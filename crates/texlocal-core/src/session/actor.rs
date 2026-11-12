@@ -31,7 +31,7 @@ use crate::projects::{self, Job, Reason, RenameResult, SearchGroup, Snapshot};
 use crate::protocol::requests;
 use crate::service::{InSession, Service};
 use crate::settings::{self, SettingsPatch, UiPatch, UiState};
-use crate::synctex::{ForwardLoc, InverseLoc, PageClick};
+use crate::synctex::{self, ForwardLoc, InverseLoc, PageClick};
 
 requests! {
     Session(actor: Actor, pending) {
@@ -436,6 +436,7 @@ impl Actor {
 
     fn end(&mut self) -> Vec<Pending<bool>> {
         self.core.service.processes.end(self.core.children);
+        synctex::forget(&self.core.project.build, None);
         match std::mem::replace(&mut self.stage, Stage::Closed) {
             Stage::Closing(held, closes) => {
                 drop(held);
