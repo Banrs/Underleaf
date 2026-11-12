@@ -134,6 +134,9 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         let rowHeight = NSLayoutManager().defaultLineHeight(for: font)
         let style = NSMutableParagraphStyle()
         style.lineSpacing = (rowHeight * 1.1).rounded() - rowHeight
+        // Xcode's default tab width of 4 columns, where AppKit's 28 pt stops fall between them.
+        style.tabStops = []
+        style.defaultTabInterval = 4 * (" " as NSString).size(withAttributes: [.font: font]).width
         return style
     }
 

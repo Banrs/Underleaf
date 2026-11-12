@@ -312,6 +312,19 @@ struct EditorTests {
         #expect(text.foldClick(at: chevron) && text.folds.isEmpty)
     }
 
+    @Test func aTabReachesTheFourthColumn() {
+        let (editor, window) = Self.editor("\tx\n    x\n\t\tx\n        x")
+        defer { window.close() }
+        let text = editor.textView
+        text.fontSize = 13
+        window.displayIfNeeded()
+        // Where each line's x starts, after its tabs or spaces.
+        let x = zip(1...4, [1, 4, 2, 8]).map { line, indent in
+            text.firstRect(forCharacterRange: .caret(text.document.lineStart(line) + indent), actualRange: nil).minX
+        }
+        #expect(abs(x[0] - x[1]) < 0.01 && abs(x[2] - x[3]) < 0.01)
+    }
+
     @Test(arguments: ["current", ""])
     func theCurrentLineAlignsWithTheTextKitRow(_ line: String) throws {
         let (editor, window) = Self.editor("first\n\(line)\nlast")
