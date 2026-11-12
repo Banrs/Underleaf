@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::SourceDocument;
 use super::catalog::CATALOG;
-use super::scan::{End, Group, Visit, environment_name};
+use super::scan::{End, Group, Visit, closing_brace, environment_name};
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct MathPreview {
@@ -17,7 +17,7 @@ pub(crate) struct MathPreview {
     pub(crate) display: bool,
 }
 
-static LABELS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:label|tag)\{[^}]*\}").unwrap());
+static LABELS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\(?:label|tag)\s*\{").unwrap());
 static NUMBERING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\\(?:nonumber|notag)(?-u:\b)").unwrap());
 static CONTROL_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\[A-Za-z@]+").unwrap());
@@ -112,7 +112,14 @@ impl SourceDocument {
 }
 
 fn preview_tex(environment: Option<&str>, body: &str) -> String {
-    let body = LABELS.replace_all(body, "");
+    let (mut body, mut rest) = (String::new(), body);
+    while let Some((start, end)) = LABELS.find_iter(rest).find_map(|label| {
+        closing_brace(&rest[label.end()..]).map(|close| (label.start(), label.end() + close + 1))
+    }) {
+        body.push_str(&rest[..start]);
+        rest = &rest[end..];
+    }
+    body.push_str(rest);
     let body = NUMBERING.replace_all(&body, "");
     let clean = body.trim();
     let environment = match environment {
