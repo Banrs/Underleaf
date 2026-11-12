@@ -123,7 +123,7 @@ struct NavigatorPane: View {
                 let shown = navigator == project.navigator.shown
                 // disabled() leaves a List in the key-view loop and focusable(false) takes it out; with no interactions,
                 // focusable(true) adds no stop of its own before the list.
-                list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: []).accessibilityHidden(!shown)
+                list(navigator).opacity(shown ? 1 : 0).disabled(!shown).focusable(shown, interactions: [])
             }
         }
         .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
