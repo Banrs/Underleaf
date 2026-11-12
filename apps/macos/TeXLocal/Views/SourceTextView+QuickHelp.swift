@@ -1,61 +1,5 @@
 import AppKit
-import PDFKit
 import SwiftUI
-
-/// What a label names, cut from the shown PDF.
-struct ReferencePicture {
-    let image: NSImage
-    let darkPaper: Bool
-
-    static let maxSize = CGSize(width: 420, height: 300)
-}
-
-extension PDFController {
-    func picture(of loc: ForwardLoc, scale: CGFloat) -> ReferencePicture? {
-        guard let page = view.document?.page(number: Int(loc.page)) else { return nil }
-        let bounds = page.bounds(for: SyncPDFView.box)
-        guard let box = SyncTeXGeometry.area(loc, pageBounds: bounds) else { return nil }
-        let margin: CGFloat = 6
-        let area = box.insetBy(dx: -margin, dy: -margin).intersection(bounds)
-        guard area.width > 1, area.height > 1 else { return nil }
-        let zoom = min(1.5, ReferencePicture.maxSize.width / area.width, ReferencePicture.maxSize.height / area.height)
-        let size = CGSize(width: (area.width * zoom).rounded(), height: (area.height * zoom).rounded())
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
-                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-              let context = NSGraphicsContext(bitmapImageRep: rep)?.cgContext else { return nil }
-        context.setFillColor(.white)
-        context.fill(CGRect(x: 0, y: 0, width: rep.pixelsWide, height: rep.pixelsHigh))
-        context.scaleBy(x: zoom * scale, y: zoom * scale)
-        // `draw(with:to:)` puts the box's corner at the origin.
-        context.translateBy(x: bounds.minX - area.minX, y: bounds.minY - area.minY)
-        page.draw(with: SyncPDFView.box, to: context)
-        rep.size = size
-        let image = NSImage()
-        image.addRepresentation(rep)
-        return ReferencePicture(image: image, darkPaper: view.darkPaper)
-    }
-}
-
-struct ReferencePictureView: View {
-    let picture: ReferencePicture
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
-        Image(nsImage: picture.image)
-            .colorInverted(picture.darkPaper)
-            .clipShape(shape)
-            .overlay { shape.strokeBorder(.separator) }
-            .accessibilityHidden(true)
-    }
-}
-
-extension View {
-    @ViewBuilder func colorInverted(_ inverted: Bool) -> some View {
-        // As the PDF view shows dark paper.
-        if inverted { colorInvert().hueRotation(.degrees(180)) } else { self }
-    }
-}
 
 /// Quick Help for the reference or citation the pointer rests on: shown after a pause, and closed once the pointer
 /// leaves both the key and the popover, or on a key press, click or scroll.
@@ -135,5 +79,26 @@ extension SourceTextView {
         guard let at = [index, index - 1].first(where: { $0 >= 0 && $0 < length && rect(of: NSRange(location: $0, length: 1))?.contains(point) == true }),
               let range = document.reference(at: at), let rect = rect(of: range) else { return nil }
         return (range, rect.insetBy(dx: -2, dy: -2))
+    }
+
+    func popoverRect(at offset: Int) -> NSRect? {
+        guard var rect = rect(of: .caret(offset)) else { return nil }
+        rect.size.width = max(rect.width, 1)
+        return rect
+    }
+
+    func showQuickHelp(_ help: QuickHelp, picture: ReferencePicture?, at offset: Int, hovering: Bool) {
+        let bold = NSFontManager.shared.convert(font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular), toHaveTrait: .boldFontMask)
+        let content = NSHostingController(rootView: QuickHelpView(help: help, picture: picture, font: bold) { [weak self] place in
+            self?.helpPopover.close()
+            self?.hoverHelp.close()
+            self?.openDefinition(place)
+        })
+        content.sizingOptions = .preferredContentSize
+        if hovering { return helpPopover.isShown ? () : hoverHelp.show(content, at: offset) }
+        guard let rect = popoverRect(at: offset) else { return }
+        hoverHelp.close()
+        helpPopover.contentViewController = content
+        helpPopover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
     }
 }
