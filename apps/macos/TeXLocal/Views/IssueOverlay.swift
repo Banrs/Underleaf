@@ -121,7 +121,8 @@ final class IssueOverlay {
                     let end = view.onPixels(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
                     let baseline = view.onPixels(top + line.typographicBounds.minY + line.glyphOrigin.y)
                     let under = CGRect(x: start, y: baseline + drop, width: end - start, height: thickness)
-                    issue.tokens += Self.skippingInk(under, of: line, part, left: lineLeft, baseline: baseline, scale: scale)
+                    issue.tokens += Self.skippingInk(under, of: line, part, left: lineLeft, baseline: baseline, scale: scale,
+                                                     clearance: 2 * textFont.underlineThickness)
                 }
             }
         }
@@ -129,9 +130,9 @@ final class IssueOverlay {
     }
 
     /// The underline's pieces between the glyphs that cross it, as Xcode 27.2 breaks its own: around the ink within a
-    /// pixel of the line, with a point clear either side.
+    /// pixel of the line, the line's unrounded thickness clear either side (1.27 pt at 13 pt; cuts match Xcode's on screen).
     private static func skippingInk(_ under: CGRect, of line: NSTextLineFragment, _ part: NSRange, left: CGFloat,
-                                    baseline: CGFloat, scale: CGFloat) -> [CGRect] {
+                                    baseline: CGFloat, scale: CGFloat, clearance: CGFloat) -> [CGRect] {
         // The band in a glyph's own space, where y rises from the baseline.
         let band = CGRect(x: -1_000, y: baseline - under.maxY - 1 / scale, width: 2_000, height: under.height + 2 / scale)
         var gaps: [ClosedRange<CGFloat>] = []
@@ -148,7 +149,7 @@ final class IssueOverlay {
             let ink = path.intersection(CGPath(rect: band, transform: nil)).boundingBoxOfPath
             guard !ink.isNull, ink.width > 0 else { continue }
             let x = left + line.locationForCharacter(at: index).x
-            gaps.append((x + ink.minX - 1)...(x + ink.maxX + 1))
+            gaps.append((x + ink.minX - clearance)...(x + ink.maxX + clearance))
         }
         var pieces = [under]
         for gap in gaps {
