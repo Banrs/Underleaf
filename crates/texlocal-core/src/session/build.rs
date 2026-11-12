@@ -82,6 +82,7 @@ pub(crate) struct Shown {
     pub built: Option<String>,
     pub version: u64,
     pub live: Option<PathBuf>,
+    pub synctex: synctex::Parsed,
 }
 
 impl Core {
@@ -187,7 +188,7 @@ impl Builds {
         }
         if let Some(pdf) = &result.pdf {
             if result.pdf_changed {
-                synctex::warm(pdf.into());
+                cx.pdf.synctex.warm(pdf.into());
             }
             cx.pdf.built = Some(pdf.clone());
             cx.pdf.version += u64::from(result.pdf_changed);
@@ -304,7 +305,7 @@ impl Builds {
             return None;
         }
         if result.is_ok() {
-            synctex::forget(&cx.project.build, None);
+            cx.pdf.synctex.forget(&cx.project.build, None);
             (cx.pdf.built, self.outdated, self.result) = (None, false, None);
             self.publish(cx, docs);
             cx.publish(SessionSection::BuildLog(String::new()));

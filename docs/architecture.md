@@ -132,7 +132,7 @@ are unchanged, with the least recently used dropped past a capacity.
 | Cache | Holds | Bound |
 | --- | --- | --- |
 | A session's `projects::Files` | Each source file's `Facts` | Every file of the project; gone with the session |
-| `PARSED` in `synctex.rs` | Parsed SyncTeX trees | Four, and `synctex::forget` drops a tree once its project closes, its build is cleaned, its Live Preview ends or its live revision is superseded. A tree is large: 62 MB for the 400-page book |
+| A session's `synctex::Parsed` | Parsed SyncTeX trees: the build's and the live revision's | Two, gone with the session. `forget` drops a tree once its build is cleaned, its Live Preview ends or its live revision is superseded, and a job that started before that doesn't keep what it reads after. A tree is large: 62 MB for the 400-page book |
 | `HASHES` in `projects/history.rs` | A file's content hash, so an unchanged file isn't hashed for each snapshot | The files of two of the largest projects |
 | `READ` in `tex.rs` | What the TeX distribution has installed, from its `ls-R` | Four |
 

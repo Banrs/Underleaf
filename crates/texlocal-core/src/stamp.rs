@@ -41,7 +41,8 @@ type Paths<T> = HashMap<PathBuf, T, BuildHasherDefault<DefaultHasher>>;
 
 pub(crate) struct Kept<T> {
     capacity: usize,
-    held: Mutex<(u64, Paths<Held<T>>)>,
+    /// How many values were used, how many times some were forgotten, and the values.
+    held: Mutex<(u64, u64, Paths<Held<T>>)>,
 }
 
 struct Held<T> {
@@ -58,7 +59,7 @@ impl<T> Kept<T> {
     pub(crate) const fn holding(capacity: usize) -> Self {
         Self {
             capacity,
-            held: Mutex::new((0, HashMap::with_hasher(BuildHasherDefault::new()))),
+            held: Mutex::new((0, 0, HashMap::with_hasher(BuildHasherDefault::new()))),
         }
     }
 
@@ -67,9 +68,26 @@ impl<T> Kept<T> {
         path: &Path,
         read: impl FnOnce(&Path) -> Result<T, E>,
     ) -> Result<Arc<T>, E> {
+        self.get_since(None, path, read)
+    }
+
+    /// How many times values were forgotten, for a reader to note before it starts.
+    pub(crate) fn forgets(&self) -> u64 {
+        lock(&self.held).1
+    }
+
+    /// As `get`, for a reader that noted `forgets` before it started, or does now. What it reads isn't kept if
+    /// anything was forgotten since, as the value may be what was: forgetting it before the read ended would
+    /// otherwise leave it kept for good.
+    pub(crate) fn get_since<E>(
+        &self,
+        noted: Option<u64>,
+        path: &Path,
+        read: impl FnOnce(&Path) -> Result<T, E>,
+    ) -> Result<Arc<T>, E> {
         let stamp = Stamp::at(path).ok();
-        {
-            let (uses, held) = &mut *lock(&self.held);
+        let noted = {
+            let (uses, forgets, held) = &mut *lock(&self.held);
             if let Some(kept) = held.get_mut(path)
                 && stamp.is_some_and(|stamp| stamp == kept.stamp && stamp.trusted())
             {
@@ -77,10 +95,14 @@ impl<T> Kept<T> {
                 kept.used = *uses;
                 return Ok(Arc::clone(&kept.value));
             }
-        }
+            noted.unwrap_or(*forgets)
+        };
         let value = Arc::new(read(path)?);
         if let Some(stamp) = stamp {
-            let (uses, held) = &mut *lock(&self.held);
+            let (uses, forgets, held) = &mut *lock(&self.held);
+            if *forgets != noted {
+                return Ok(value);
+            }
             *uses += 1;
             let kept = Held {
                 stamp,
@@ -101,10 +123,11 @@ impl<T> Kept<T> {
 
     /// Drops the values kept for the paths chosen, which would otherwise stay until as many others as it holds were read.
     pub(crate) fn forget(&self, chosen: impl Fn(&Path) -> bool) {
-        let dropped: Vec<_> = lock(&self.held)
-            .1
-            .extract_if(|path, _| chosen(path))
-            .collect();
+        let dropped: Vec<_> = {
+            let (_, forgets, held) = &mut *lock(&self.held);
+            *forgets += 1;
+            held.extract_if(|path, _| chosen(path)).collect()
+        };
         drop(dropped);
     }
 }
@@ -155,6 +178,40 @@ mod tests {
         kept.forget(|path| path == one);
         get(one).unwrap();
         assert_eq!(reads.get(), 9);
+    }
+
+    #[test]
+    fn a_value_forgotten_while_it_was_read_or_before_its_reader_started_is_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        fs::write(&file, "a").unwrap();
+        let (kept, reads) = (Kept::new(), std::cell::Cell::new(0));
+        let read = |path: &Path| {
+            reads.set(reads.get() + 1);
+            fs::read_to_string(path)
+        };
+        let forgotten = |path: &Path| {
+            kept.forget(|chosen| chosen == path);
+            read(path)
+        };
+        assert_eq!(*kept.get(&file, forgotten).unwrap(), "a");
+        let waiting = kept.forgets();
+        assert_eq!(*kept.get(&file, read).unwrap(), "a");
+        assert_eq!(*kept.get(&file, read).unwrap(), "a");
+        assert_eq!(
+            reads.get(),
+            2,
+            "the first read wasn't kept and the second was"
+        );
+        kept.forget(|chosen| chosen == file);
+        assert_eq!(*kept.get_since(Some(waiting), &file, read).unwrap(), "a");
+        assert_eq!(*kept.get(&file, read).unwrap(), "a");
+        assert_eq!(*kept.get_since(Some(waiting), &file, read).unwrap(), "a");
+        assert_eq!(
+            reads.get(),
+            4,
+            "a late reader's isn't kept, and it is given what is"
+        );
     }
 
     #[test]

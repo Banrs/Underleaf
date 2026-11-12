@@ -143,7 +143,7 @@ impl Actor {
         let (project, docs) = (self.core.project.clone(), self.docs.handles());
         let settings = settings::read_settings(&project.settings);
         let aux = settings.output(&project.build, "aux");
-        let live = self.live.pdf(&self.core);
+        let (live, reader) = (self.live.pdf(&self.core), self.core.pdf.synctex.reader());
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().clone());
         reply.spawn(move || {
             let root = &project.root;
@@ -191,7 +191,8 @@ impl Actor {
                         let typeset = |line| map_line(typeset, &text, line);
                         lines = typeset(*lines.start())..=typeset(*lines.end());
                     }
-                    let areas = synctex::areas(&project, live.as_deref()).ok()?;
+                    let sync = reader.of(&project, live.as_deref()).ok()?;
+                    let areas = synctex::areas(sync, &project);
                     areas(file, lines).into_iter().next().map(|(area, _)| area)
                 }),
                 _ => None,
@@ -214,6 +215,7 @@ impl Actor {
         let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let doc = self.docs.get(&file).map(|doc| doc.doc.clone());
         let typeset = matches!(live, Ok(Some(_))).then(|| self.live.typeset().get(&file).cloned());
+        let reader = self.core.pdf.synctex.reader();
         reply.spawn(move || {
             let live = live?;
             let typeset = typeset.flatten();
@@ -227,7 +229,8 @@ impl Actor {
                     }
                 }
             };
-            synctex::forward(&project, &file, &lines, live.as_deref())
+            let sync = reader.of(&project, live.as_deref())?;
+            synctex::forward(&sync, &project, &file, &lines)
         });
     }
 
@@ -241,12 +244,13 @@ impl Actor {
     ) {
         let (live, project) = (self.live.pdf(&self.core), self.core.project.clone());
         let sources = self.live.typeset().clone();
-        let docs = self.docs.handles();
+        let (docs, reader) = (self.docs.handles(), self.core.pdf.synctex.reader());
         reply.spawn(move || {
             let live = live?;
             let typeset = |rel: &str| live.as_ref().and_then(|_| sources.get(rel));
             let text = |rel: &str| typeset(rel).map(ToString::to_string);
-            let mut loc = synctex::inverse(&project, page, x, y, click, live.as_deref(), &text)?;
+            let sync = reader.of(&project, live.as_deref())?;
+            let mut loc = synctex::inverse(&sync, &project, page, x, y, click, &text)?;
             // SyncTeX answers in the typeset text's lines, which edits since may have moved.
             if let (Some(typeset), Some(doc)) = (typeset(&loc.file), docs.get(&loc.file)) {
                 loc.line = map_line(&doc.snapshot().0, typeset, loc.line);
@@ -263,10 +267,12 @@ impl Actor {
             return reply.send(Ok(Vec::new()));
         }
         let (boxes, project) = (self.builds.bad_boxes().to_vec(), self.core.project.clone());
+        let reader = self.core.pdf.synctex.reader();
         reply.spawn(move || {
-            let Ok(areas) = synctex::areas(&project, None) else {
+            let Ok(sync) = reader.of(&project, None) else {
                 return Ok(Vec::new());
             };
+            let areas = synctex::areas(sync, &project);
             let mut found = Vec::new();
             for item in boxes {
                 let (Some(file), Some(line)) = (item.file, item.line) else {

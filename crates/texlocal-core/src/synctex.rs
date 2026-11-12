@@ -41,16 +41,6 @@ pub struct InverseLoc {
     pub column: Option<u32>,
 }
 
-fn sync_for(project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
-    let pdf = match live {
-        Some(live) => live.to_path_buf(),
-        None => project
-            .built_pdf()
-            .ok_or_else(|| CoreError::not_found(messages::no_pdf_yet()))?,
-    };
-    beside(&pdf).map_err(|_| CoreError::not_found(messages::no_synctex()))
-}
-
 /// The SyncTeX file beside a PDF. A build writes it plain, since gzipping it took the engine a sixth as long again on a
 /// 400-page book, and an earlier build or another tool may have left a gzipped one: the one written last is the PDF's.
 pub(crate) fn synctex_file(pdf: &Path) -> Option<PathBuf> {
@@ -67,26 +57,66 @@ pub(crate) fn synctex_file(pdf: &Path) -> Option<PathBuf> {
         .map(|(_, file)| file)
 }
 
-static PARSED: Kept<SyncTex> = Kept::new();
+/// A session's parsed SyncTeX: its build's and its live revision's, gone with the session.
+pub(crate) struct Parsed(Arc<Kept<SyncTex>>);
 
-fn beside(pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
-    let file = synctex_file(pdf).ok_or(ErrorKind::NotFound)?;
-    PARSED.get(&file, |file| {
-        let bytes = std::fs::read(file)?;
-        SyncTex::read(bytes).ok_or_else(|| Error::new(ErrorKind::InvalidData, "not a SyncTeX file"))
-    })
+/// What a job on another thread reads a session's SyncTeX through. The session makes it on its own thread before the
+/// job starts, so a job that was waiting or reading when the session forgot a PDF doesn't keep what it read after.
+pub(crate) struct Reader {
+    kept: Arc<Kept<SyncTex>>,
+    forgets: u64,
 }
 
-pub(crate) fn warm(pdf: PathBuf) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || drop(beside(&pdf)))
+impl Default for Parsed {
+    fn default() -> Self {
+        Self(Arc::new(Kept::holding(2)))
+    }
 }
 
-/// Drops what was parsed for the PDFs in a folder but one, which nothing asks for again once a project closes, a Live
-/// Preview ends or a live revision is superseded: a 400-page book's is 62 MB, and four would stay.
-pub(crate) fn forget(folder: &Path, but: Option<&Path>) {
-    let kept = but.map(|pdf| ["synctex", "synctex.gz"].map(|ext| pdf.with_extension(ext)));
-    let kept = kept.as_ref().map_or(&[][..], |kept| kept);
-    PARSED.forget(|file| file.starts_with(folder) && !kept.iter().any(|kept| kept == file));
+impl Parsed {
+    pub fn reader(&self) -> Reader {
+        Reader {
+            forgets: self.0.forgets(),
+            kept: Arc::clone(&self.0),
+        }
+    }
+
+    pub fn warm(&self, pdf: PathBuf) -> JoinHandle<()> {
+        let reader = self.reader();
+        tokio::task::spawn_blocking(move || drop(reader.beside(&pdf)))
+    }
+
+    /// Drops what was parsed for the PDFs in a folder but one, which nothing asks for again once a build is cleaned, a
+    /// Live Preview ends or a live revision is superseded: a 400-page book's is 62 MB.
+    pub fn forget(&self, folder: &Path, but: Option<&Path>) {
+        let kept = but.map(|pdf| ["synctex", "synctex.gz"].map(|ext| pdf.with_extension(ext)));
+        let kept = kept.as_ref().map_or(&[][..], |kept| kept);
+        let gone = |file: &Path| file.starts_with(folder) && !kept.iter().any(|kept| kept == file);
+        self.0.forget(gone);
+    }
+}
+
+impl Reader {
+    fn beside(&self, pdf: &Path) -> std::io::Result<Arc<SyncTex>> {
+        let file = synctex_file(pdf).ok_or(ErrorKind::NotFound)?;
+        self.kept.get_since(Some(self.forgets), &file, |file| {
+            let bytes = std::fs::read(file)?;
+            SyncTex::read(bytes)
+                .ok_or_else(|| Error::new(ErrorKind::InvalidData, "not a SyncTeX file"))
+        })
+    }
+
+    /// The SyncTeX of the live PDF given, else of the project's built one.
+    pub fn of(&self, project: &Project, live: Option<&Path>) -> Result<Arc<SyncTex>, CoreError> {
+        let pdf = match live {
+            Some(live) => live.to_path_buf(),
+            None => project
+                .built_pdf()
+                .ok_or_else(|| CoreError::not_found(messages::no_pdf_yet()))?,
+        };
+        self.beside(&pdf)
+            .map_err(|_| CoreError::not_found(messages::no_synctex()))
+    }
 }
 
 fn source_file(project: &Project, name: &str) -> Option<String> {
@@ -94,12 +124,12 @@ fn source_file(project: &Project, name: &str) -> Option<String> {
 }
 
 pub(crate) fn forward(
+    sync: &SyncTex,
     project: &Project,
     file: &str,
     lines: &SyncLines,
-    live: Option<&Path>,
 ) -> Result<ForwardLoc, CoreError> {
-    let (sync, tag) = tagged(project, file, live)?;
+    let tag = tagged(sync, project, file)?;
     let mut matches: Vec<_> = (sync.forward(tag, lines).into_iter())
         .filter(|shown| shown.page >= 1)
         .map(located)
@@ -122,20 +152,19 @@ pub(crate) fn forward(
 /// Where lines were typeset on one page, as one box, and how far they run past the width TeX set them to, in points.
 pub(crate) type PageArea = (ForwardLoc, f64);
 
-/// Finds where lines of a file were typeset, as one box on each page they're on from the first, reading the SyncTeX
-/// file and matching its inputs to the project's files once for every lookup.
+/// Finds where lines of a file were typeset, as one box on each page they're on from the first, matching the
+/// SyncTeX's inputs to the project's files once for every lookup.
 pub(crate) fn areas(
+    sync: Arc<SyncTex>,
     project: &Project,
-    live: Option<&Path>,
-) -> Result<impl Fn(&str, RangeInclusive<u32>) -> Vec<PageArea> + use<>, CoreError> {
-    let sync = sync_for(project, live)?;
+) -> impl Fn(&str, RangeInclusive<u32>) -> Vec<PageArea> + use<> {
     let mut tags = HashMap::new();
     for (tag, name) in sync.inputs() {
         if let Some(file) = source_file(project, name) {
             tags.entry(file).or_insert(tag);
         }
     }
-    Ok(move |file: &str, lines| {
+    move |file: &str, lines| {
         let Some(&tag) = tags.get(file) else {
             return Vec::new();
         };
@@ -144,21 +173,14 @@ pub(crate) fn areas(
         shown
             .map(|(shown, over)| (located(shown), f64::from(over)))
             .collect()
-    })
+    }
 }
 
-fn tagged(
-    project: &Project,
-    file: &str,
-    live: Option<&Path>,
-) -> Result<(Arc<SyncTex>, i32), CoreError> {
-    let sync = sync_for(project, live)?;
-    let tag = sync
-        .inputs()
+fn tagged(sync: &SyncTex, project: &Project, file: &str) -> Result<i32, CoreError> {
+    sync.inputs()
         .find(|(_, name)| source_file(project, name).as_deref() == Some(file))
         .map(|(tag, _)| tag)
-        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))?;
-    Ok((sync, tag))
+        .ok_or_else(|| CoreError::not_found(messages::no_match_in_pdf()))
 }
 
 fn located(shown: Shown) -> ForwardLoc {
@@ -174,19 +196,18 @@ fn located(shown: Shown) -> ForwardLoc {
 }
 
 pub(crate) fn inverse(
+    sync: &SyncTex,
     project: &Project,
     page: f64,
     x: f64,
     y: f64,
     click: Option<PageClick>,
-    live: Option<&Path>,
     typeset: &dyn Fn(&str) -> Option<String>,
 ) -> Result<InverseLoc, CoreError> {
     if !(page.is_finite() && x.is_finite() && y.is_finite()) || page < 1.0 {
         return Err(CoreError::bad_request(messages::invalid_pdf_place()));
     }
     let root = &project.root;
-    let sync = sync_for(project, live)?;
     let (name, line) = sync
         .inverse(page as i32, x as f32, y as f32)
         .and_then(|(name, line)| Some((name, u32::try_from(line).ok()?)))
@@ -228,21 +249,35 @@ mod tests {
     const SYNCTEX: &str = "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{1\n[1,3:0,800:600,800,0\n(1,3:100,100:400,10,2\ng1,3:150,100\n)\n]\n}1\nPostamble:\n";
 
     #[tokio::test]
-    async fn a_warmed_synctex_is_not_read_again_while_its_file_is_unchanged() {
+    async fn a_warmed_synctex_is_kept_until_forgotten_and_not_by_a_job_from_before_that() {
         let dir = tempfile::tempdir().unwrap();
         let (pdf, file) = (dir.path().join("main.pdf"), dir.path().join("main.synctex"));
         fs::write(&file, SYNCTEX).unwrap();
         let modified = fs::metadata(&file).unwrap().modified().unwrap();
-        warm(pdf.clone()).await.unwrap();
-        let mut junk = File::options().write(true).open(&file).unwrap();
-        junk.write_all(&vec![b'x'; SYNCTEX.len()]).unwrap();
-        junk.set_modified(modified).unwrap();
-        drop(junk);
-        assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
-        forget(dir.path(), Some(&pdf));
-        assert_eq!(beside(&pdf).unwrap().inputs().count(), 1);
-        forget(dir.path(), None);
-        assert!(beside(&pdf).is_err(), "the junk is read");
+        // The file's stamp stays as it was, so what is read after tells kept from read again.
+        let put = |bytes: &[u8]| {
+            let mut same = File::options().write(true).open(&file).unwrap();
+            same.write_all(bytes).unwrap();
+            same.set_modified(modified).unwrap();
+        };
+        let junk = vec![b'x'; SYNCTEX.len()];
+        let parsed = Parsed::default();
+        let kept = || parsed.reader().beside(&pdf).is_ok();
+        let waiting = parsed.reader();
+        parsed.warm(pdf.clone()).await.unwrap();
+        put(&junk);
+        assert!(kept());
+        parsed.forget(dir.path(), Some(&pdf));
+        assert!(kept());
+        parsed.forget(dir.path(), None);
+        assert!(!kept(), "the junk is read");
+        put(SYNCTEX.as_bytes());
+        assert_eq!(waiting.beside(&pdf).unwrap().inputs().count(), 1);
+        put(&junk);
+        assert!(
+            !kept(),
+            "a job that was waiting when its PDF was forgotten kept what it read"
+        );
     }
 
     #[test]

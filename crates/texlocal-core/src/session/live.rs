@@ -52,11 +52,12 @@ struct Issue {
     at: u32,
 }
 
-/// Drops the SyncTeX parsed for the revisions beside the PDF that was shown, but for the one shown now: a run writes
-/// its revisions to a folder of its own, and none before the latest is asked for again.
-fn forget_live(shown: Option<PathBuf>, now: Option<&Path>) {
+/// Shows a live PDF or none, and drops the SyncTeX parsed for the revisions beside the one that was shown: a run
+/// writes its revisions to a folder of its own, and none before the latest is asked for again.
+fn show(cx: &mut Core, pdf: Option<PathBuf>) {
+    let shown = std::mem::replace(&mut cx.pdf.live, pdf);
     if let Some(folder) = shown.as_deref().and_then(Path::parent) {
-        synctex::forget(folder, now);
+        cx.pdf.synctex.forget(folder, cx.pdf.live.as_deref());
     }
 }
 
@@ -201,7 +202,7 @@ impl Live {
     fn ended(&mut self, cx: &mut Core, docs: &Docs) {
         self.phase = LivePhase::Stopped;
         self.reset(cx);
-        forget_live(cx.pdf.live.take(), None);
+        show(cx, None);
         self.publish(cx, docs, false);
         self.publish_log(cx);
         cx.publish_pdf();
@@ -372,6 +373,7 @@ impl Live {
         };
         self.follows += 1;
         let (tx, project) = (cx.tx.clone(), cx.project.clone());
+        let reader = cx.pdf.synctex.reader();
         let (generation, follows) = (self.generation, self.follows);
         tokio::task::spawn_blocking(move || {
             let line = doc.with(|source| source.line_at(offset as u32));
@@ -379,7 +381,9 @@ impl Live {
             if matches!(lines, SyncLines::Whole(_)) {
                 return;
             }
-            let Ok(loc) = synctex::forward(&project, &path, &lines, Some(&pdf)) else {
+            let sync = reader.of(&project, Some(&pdf));
+            let Ok(loc) = sync.and_then(|sync| synctex::forward(&sync, &project, &path, &lines))
+            else {
                 return;
             };
             let followed = move |actor: &mut Actor| {
@@ -463,10 +467,9 @@ impl Live {
                     return;
                 }
                 if pages > 0 {
-                    let pdf = PathBuf::from(&path);
-                    forget_live(cx.pdf.live.replace(pdf.clone()), Some(&pdf));
+                    show(cx, Some(PathBuf::from(&path)));
                     self.typeset.clone_from(&self.sources.read);
-                    synctex::warm(pdf);
+                    cx.pdf.synctex.warm(PathBuf::from(&path));
                     cx.publish_pdf();
                     cx.emit(Event::LiveDocument(LiveDocument { path, changed }));
                 }
