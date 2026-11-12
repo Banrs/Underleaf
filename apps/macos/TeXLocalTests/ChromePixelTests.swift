@@ -73,7 +73,11 @@ struct ChromePixelTests {
         let columns = workspace.columns.view
         func bar(_ name: String) async throws {
             try await settlePixelLayout()
-            try write("status-\(name)-\(suffix)", columns, NSRect(x: 0, y: 0, width: columns.bounds.width, height: 48))
+            // The split accessory sits alongside the columns, so capture them from the workspace.
+            workspace.view.displayIfNeeded()
+            let bounds = columns.convert(columns.bounds, to: workspace.view)
+            let bottom = workspace.view.isFlipped ? bounds.maxY - 48 : bounds.minY
+            try write("status-\(name)-\(suffix)", workspace.view, NSRect(x: bounds.minX, y: bottom, width: bounds.width, height: 48))
             try await capture("status-\(name)")
         }
         project.store.apply(.build(Self.build(ok: false, issues: [(true, "main.tex"), (true, "main.tex"), (false, "refs.bib")])))
