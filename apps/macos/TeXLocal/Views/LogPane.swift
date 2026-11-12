@@ -18,9 +18,9 @@ struct LogPane: View {
                 ContentUnavailableView.search
             } else {
                 GeometryReader { geometry in
-                    // The editor's font at the 12 pt of the console in Xcode's default themes.
+                    // The editor's font, size and rows.
                     LogTextView(text: shown, title: title, bottomInset: geometry.safeAreaInsets.bottom,
-                                font: SourceTextView.font(named: app.fontName, size: 12, dark: colorScheme == .dark))
+                                font: SourceTextView.font(named: app.fontName, size: CGFloat(app.fontSize), dark: colorScheme == .dark))
                         .ignoresSafeArea(.container, edges: .bottom)
                 }
             }

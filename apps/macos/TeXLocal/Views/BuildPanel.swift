@@ -78,9 +78,6 @@ struct LogTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.automaticallyAdjustsContentInsets = false
         let view = scroll.documentView as! NSTextView
-        // TextKit 2 estimates the height of rows it hasn't laid out without their line spacing, which leaves the end of
-        // the log short of its last line. Asking for the layout manager moves the view to TextKit 1, whose heights are exact.
-        _ = view.layoutManager
         view.isEditable = false
         // With the container's own padding, text starts 16 pt in, as in Xcode's console.
         view.textContainerInset = NSSize(width: 11, height: 8)

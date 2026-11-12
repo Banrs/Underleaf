@@ -128,14 +128,16 @@ struct PaneTests {
         panel.isCollapsed = false
         try await waitUntil(timeout: .seconds(3)) { !text.isHidden && text.fragments.count > 5 }
         let bottom = text.visibleRect.maxY
-        var finished = false
+        // On the main actor, which AppKit calls the completion handler on, so the handler and the test share it safely.
+        final class Animation { var finished = false }
+        let animation = Animation()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.8
             panel.animator().isCollapsed = true
-        } completionHandler: { finished = true }
+        } completionHandler: { MainActor.assumeIsolated { animation.finished = true } }
         try await waitUntil(timeout: .seconds(2)) { text.visibleRect.maxY > bottom + 10 }
-        #expect(!finished && text.preparedContentRect.contains(text.visibleRect))
-        try await waitUntil(timeout: .seconds(2)) { finished }
+        #expect(!animation.finished && text.preparedContentRect.contains(text.visibleRect))
+        try await waitUntil(timeout: .seconds(2)) { animation.finished }
     }
 
     @Test func theSplitViewsKeepTheSidebarInspectorAndBuildPanelUnderTheirAutosaveNames() async throws {
