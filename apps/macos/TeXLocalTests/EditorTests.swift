@@ -326,8 +326,8 @@ struct EditorTests {
         #expect(abs(first.minY - caret.minY - 18) < 0.5 && abs(caret.minY - last.minY - 18) < 0.5)
         let row = text.convert(window.convertFromScreen(caret), from: nil)
         let band = try #require(text.currentLine?.rect)
-        // The whole 18 pt row from the top of the caret's, on a blank line as on one with text.
-        #expect(band.height == 18 && band.minY == text.onPixels(row.minY) && band.maxY == text.onPixels(row.maxY + 2))
+        // The whole 18 pt row with the caret centred in it, as in Xcode, on a blank line as on one with text.
+        #expect(band.height == 18 && band.minY == text.onPixels(row.minY - 1) && band.maxY == text.onPixels(row.maxY + 1))
 
         let native = NSTextView(usingTextLayoutManager: true)
         native.string = text.string

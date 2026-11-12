@@ -42,13 +42,12 @@ extension SourceTextView {
     }
 
     func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> CGRect {
-        // The whole row, so the bands of neighbouring lines meet: the line's box with the line spacing below it. TextKit 2
-        // puts that spacing above a line, but SF Mono's letters sit low in their box, and below is where they come out
-        // centred in the band.
+        // The whole row, so the bands of neighbouring lines meet, with the line and its caret centred in it as Xcode 27.2
+        // centres them: half the line spacing above the line and half below.
         let frame = fragment.layoutFragmentFrame
-        let spacing = (typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.lineSpacing ?? 0
-        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0))
-        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + spacing)
+        let half = ((typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.lineSpacing ?? 0) / 2
+        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) - half)
+        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + half)
         // Xcode 27.2's line highlight is inset 14 pt and 8 pt on a 2× display.
         let leading: CGFloat = 14, trailing: CGFloat = 8
         return CGRect(x: leading, y: top, width: max(0, bounds.width - leading - trailing), height: bottom - top)
