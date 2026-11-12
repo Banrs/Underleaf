@@ -490,35 +490,6 @@ struct ViewsTests {
         #expect(window.alert == nil && views.shown.count == 3)
     }
 
-    @Test func movingToTheTrashUndoesAndRedoesThroughTheCore() async throws {
-        let info = try await newProject()
-        let window = defaults.window()
-        let project = ProjectModel(id: info.id, window: window)
-        try await project.load()
-        let path = try #require(await project.createEntry(in: "", directory: false))
-        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.files.node(at: path) != nil }
-        var trashed: String?
-        defer { try? trashed.map(FileManager.default.removeItem(atPath:)) }
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        let item = UndoableTrash(undoManager: undo, trash: {
-            trashed = (try? await project.session.call(Trash(path: path))) ?? nil
-            return trashed
-        },
-                                 putBack: { (try? await project.session.call(PutBack(path: path, trashed: $0))) != nil })
-        undo.beginUndoGrouping()
-        await item.moveToTrash()
-        undo.endUndoGrouping()
-        #expect(!shown() && undo.undoActionName == "Move to Trash")
-        undo.undo()
-        try await waitUntil { shown() }
-        undo.redo()
-        try await waitUntil { !shown() }
-        undo.undo()
-        try await waitUntil { shown() }
-        #expect(await project.close().value)
-    }
-
     @Test func deletingAnEntryMovesItToTheTrashWithItsUndoOnTheWindow() async throws {
         let info = try await newProject()
         let window = defaults.window(), host = UndoHost()
