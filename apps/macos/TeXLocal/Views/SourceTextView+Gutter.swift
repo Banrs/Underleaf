@@ -41,13 +41,15 @@ extension SourceTextView {
         return (document.line(at: selection.location), band(lines, of: entry.fragment))
     }
 
+    /// What a row's highlight extends beyond its line on each side.
+    var halfLineSpacing: CGFloat { ((typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.lineSpacing ?? 0) / 2 }
+
     func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> CGRect {
         // The whole row, so the bands of neighbouring lines meet, with the line and its caret centred in it as Xcode 27.2
         // centres them: half the line spacing above the line and half below.
         let frame = fragment.layoutFragmentFrame
-        let half = ((typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.lineSpacing ?? 0) / 2
-        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) - half)
-        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + half)
+        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) - halfLineSpacing)
+        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + halfLineSpacing)
         // Xcode 27.2's line highlight is inset 14 pt and 8 pt on a 2× display.
         let leading: CGFloat = 14, trailing: CGFloat = 8
         return CGRect(x: leading, y: top, width: max(0, bounds.width - leading - trailing), height: bottom - top)

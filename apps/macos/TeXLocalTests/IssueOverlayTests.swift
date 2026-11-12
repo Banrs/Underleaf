@@ -31,8 +31,9 @@ struct IssueOverlayTests {
             let badge = try #require(row.message)
             #expect(badge.view.superview === text && badge.rect.width > 0 && badge.rect.height > 0)
             #expect(abs(badge.rect.maxX - row.band.maxX) < 0.5 && abs(badge.rect.minY - row.band.minY) < 0.5)
-            #expect(abs(badge.rect.maxY - text.onPixels(text.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
-                                                      + first.typographicBounds.maxY)) < 0.5)
+            #expect(badge.rect.maxY == text.onPixels(text.textContainerOrigin.y + fragment.layoutFragmentFrame.minY
+                                                     + first.typographicBounds.maxY + text.halfLineSpacing))
+            if width == 1200 { #expect(badge.rect.minY == row.band.minY && badge.rect.maxY == row.band.maxY) }
             let textEnd = text.textContainerOrigin.x + fragment.layoutFragmentFrame.minX + first.typographicBounds.maxX
             #expect(textEnd < badge.rect.minX)
             #expect(!row.tokens.isEmpty)
