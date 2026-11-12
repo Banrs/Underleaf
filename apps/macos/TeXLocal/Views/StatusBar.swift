@@ -72,7 +72,8 @@ struct StatusBar: View {
         .monospacedDigit()
         .buttonStyle(BarButtonStyle())
         .padding(.leading, Spacing.lead - Spacing.items / 2)
-        .padding(.trailing, 8)
+        // The Logs toggle's ink ends 17 pt from the window's edge, as Xcode 27.2's debug area toggle does.
+        .padding(.trailing, 7)
         .frame(maxWidth: .infinity)
         .frame(height: BarMetrics.height)
         .pointerStyle(.default)
@@ -289,7 +290,8 @@ private struct PanelToggle: View {
         Toggle(isOn: Bindable(project.panel).shown) {
             Label("Logs", systemImage: differentiateWithoutColor && !project.panel.shown
                   ? "square" : "inset.filled.bottomthird.square")
-                .font(.body)
+                // Xcode 27.2's debug area toggle: its square 12.5 pt across on screen.
+                .font(.system(size: 14))
         }
         .labelStyle(.iconOnly)
         .toggleStyle(.button)
