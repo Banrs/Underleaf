@@ -42,13 +42,12 @@ extension SourceTextView {
     }
 
     func band(_ lines: ArraySlice<NSTextLineFragment>, of fragment: NSTextLayoutFragment) -> CGRect {
-        // Whole rows with their line spacing, as Xcode's are, so the bands of neighbouring lines meet: a row ends where the
-        // next one in the paragraph starts, or at the paragraph's end.
-        let frame = fragment.layoutFragmentFrame, all = fragment.textLineFragments
-        let rowTop = lines.startIndex == all.startIndex ? 0 : all[lines.startIndex].typographicBounds.minY
-        let rowBottom = lines.endIndex < all.endIndex ? all[lines.endIndex].typographicBounds.minY : frame.height
-        let top = onPixels(textContainerOrigin.y + frame.minY + rowTop)
-        let bottom = onPixels(textContainerOrigin.y + frame.minY + rowBottom)
+        // The whole row, as Xcode's is: the text with half the line spacing above it and half below, so the text is centred
+        // and the bands of neighbouring lines meet.
+        let frame = fragment.layoutFragmentFrame
+        let half = ((typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.lineSpacing ?? 0) / 2
+        let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) - half)
+        let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + half)
         // Xcode 27.2's line highlight is inset 14 pt and 8 pt on a 2× display.
         let leading: CGFloat = 14, trailing: CGFloat = 8
         return CGRect(x: leading, y: top, width: max(0, bounds.width - leading - trailing), height: bottom - top)
