@@ -1110,11 +1110,6 @@ nonisolated struct ReloadProjects: LibraryRequest {
     static let command = "ReloadProjects"
 }
 
-nonisolated struct ReloadTree: SessionRequest {
-    typealias Reply = Done
-    static let command = "ReloadTree"
-}
-
 nonisolated struct Rename: SessionRequest {
     typealias Reply = RenameResult?
     static let command = "Rename"

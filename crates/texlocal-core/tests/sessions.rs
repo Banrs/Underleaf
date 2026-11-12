@@ -158,9 +158,8 @@ async fn a_section_is_sent_again_only_when_it_changes() {
     doc.edit(0, 0, "% more\n", None, false);
     rig.call("Save", json!({ "reporting": true }));
     rig.call("Open", json!({ "path": "ch.tex" }));
-    rig.call("ReloadTree", json!({}));
     rig.call("SetSettings", json!({ "patch": { "engine": engine } }));
-    assert_eq!(rig.said(), ["reply"; 4]);
+    assert_eq!(rig.said(), ["reply"; 3]);
     rig.forget();
     rig.call("SetSettings", json!({ "patch": { "engine": "xelatex" } }));
     assert_eq!(rig.said(), ["project", "reply"]);
@@ -1009,9 +1008,12 @@ async fn another_apps_files_reach_the_tree() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reloaded_tree_marks_the_main_file_and_hides_dotfiles() {
     let rig = project().await;
-    write(&rig.root(), &[(".latexmkrc", ""), ("figs/a.png", "png")]);
+    write(&rig.root(), &[(".latexmkrc", "")]);
     rig.forget();
-    rig.call("ReloadTree", json!({}));
+    rig.call(
+        "CreateEntry",
+        json!({ "folder": "", "name": "figs", "dir": true }),
+    );
     assert!(rig.heard("tree"));
     let tree = rig.section("tree", |e| e.to_string().contains("figs"));
     assert_eq!(names(&tree, "name"), ["ch.tex", "figs", "main.tex"]);

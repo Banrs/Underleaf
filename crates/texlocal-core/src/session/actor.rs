@@ -74,7 +74,6 @@ requests! {
         StopLive {} -> () = Ok(actor.live.stop_asked(&mut actor.core, &actor.docs)),
         LiveView { first: u32, last: u32 } -> () = Ok(actor.live.view(first, last)),
         LiveLog { shown: bool } -> () = Ok(actor.live.show_log(&mut actor.core, &actor.docs, shown)),
-        ReloadTree {} -> () = Ok(actor.reload_tree()),
         ImportFiles { dir: String, paths: Vec<PathBuf>, conflict: Option<ImportConflict> } -> Imported
             = actor.import(&dir, &paths, conflict),
         ExportZip { dest: PathBuf, for_arxiv: bool } -> () => actor.export(dest, for_arxiv, pending),
