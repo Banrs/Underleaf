@@ -7,7 +7,7 @@ use crate::error::CoreError;
 use crate::messages;
 use crate::packages::{checked, run, said};
 use crate::process::{self, Processes};
-use crate::tex::{find_tool, join_path};
+use crate::tex::{executable, join_path};
 
 const RELEASE: &str = "https://api.github.com/repos/rstudio/tinytex-releases/releases/latest";
 const UNFINISHED: &str = ".texlocal-tinytex-";
@@ -139,7 +139,7 @@ async fn tlmgr(
     args: &[&str],
 ) -> Result<(), CoreError> {
     let path = join_path(std::iter::once(bin(root)).chain(std::env::split_paths(path_env)));
-    let tlmgr = find_tool("tlmgr", &path)
+    let tlmgr = executable(&bin(root), "tlmgr")
         .ok_or_else(|| CoreError::internal(messages::no_tinytex_tlmgr()))?;
     let mut command = process::tool(&tlmgr, &path);
     command.args(args);
@@ -148,6 +148,18 @@ async fn tlmgr(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_missing_bundled_tlmgr_does_not_run_one_from_path() {
+        let root = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("/usr/bin/true", root.path().join("tlmgr")).unwrap();
+        let processes = super::Processes::default();
+        let path = root.path().to_str().unwrap();
+        let refused = super::tlmgr(&processes, root.path(), path, &["update", "--self"])
+            .await
+            .unwrap_err();
+        assert_eq!(refused.message, super::messages::no_tinytex_tlmgr());
+    }
+
     #[tokio::test]
     async fn tinytex_is_not_installed_over_a_folder_already_there() {
         let root = tempfile::tempdir().unwrap();
