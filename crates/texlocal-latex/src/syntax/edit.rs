@@ -133,7 +133,10 @@ impl SourceDocument {
         let split = comment_start(line);
         let code = &String::from_utf16_lossy(&line[..split]);
         let comment = String::from_utf16_lossy(&line[split..]);
-        let (before, marks, title, rest) = match HEADING.captures(code) {
+        let (before, marks, title, rest) = match HEADING
+            .captures_iter(code)
+            .find(|c| complete::unescaped(code, c.get_match().start()))
+        {
             Some(c) => {
                 let open = c.get_match();
                 let body = &code[open.end()..];

@@ -46,6 +46,13 @@ fn a_heading_changes_level_or_becomes_text() {
 }
 
 #[test]
+fn an_escaped_backslash_does_not_start_a_heading() {
+    let mut doc = SourceDocument::new(r"\\section{Intro}");
+    let plain = run(&mut doc, "SetHeading", json!({ "caret": 3, "command": "" }));
+    assert_eq!(plain["edit"]["text"], r"\\section{Intro}");
+}
+
+#[test]
 fn typing_an_opener_inserts_its_closer() {
     for (typed, inserted) in [("$", "$$"), ("{", "{}"), ("(", "()")] {
         let mut doc = SourceDocument::new("a b");
