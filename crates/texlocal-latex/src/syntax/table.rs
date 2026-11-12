@@ -1,8 +1,47 @@
-use super::INDENT;
+use super::edit::Change;
+use super::{INDENT, SourceDocument, TextRange, clamp, indentation, span, splice};
+use crate::utf16;
+
+impl SourceDocument {
+    pub(crate) fn paste_table(
+        &self,
+        selection: TextRange,
+        cells: &str,
+        booktabs: bool,
+    ) -> Option<Change> {
+        let (text, selection) = (&self.text, clamp(selection, self.text.len()));
+        let (start, end) = selection.bounds();
+        let line = text.bounds(text.line_index(selection.start));
+        let contents = &text.units[line.start..line.end];
+        let indent = String::from_utf16_lossy(&contents[..indentation(contents)]);
+        let table = tabular(cells, &indent, booktabs)?;
+        let before = &text.units[line.start..start];
+        let after = &text.units[end..line.next.max(end)];
+        let blank = |units: &[u16]| {
+            units
+                .iter()
+                .all(|u| matches!(u, 0x09..=0x0d | 0x20 | 0x85 | 0x2028 | 0x2029))
+        };
+        let newline = |units: &[u16]| {
+            if blank(units) {
+                String::new()
+            } else {
+                format!("\n{indent}")
+            }
+        };
+        // On lines of its own, the text either side of it keeping theirs.
+        let pasted = format!("{}{table}{}", newline(before), newline(after));
+        let caret = start + utf16::len(&pasted);
+        Some(Change {
+            edits: vec![splice(start, end - start, pasted)],
+            selections: vec![span(caret, 0)],
+        })
+    }
+}
 
 /// Cells as Numbers, Excel and Google Sheets copy them, tab-separated, or as a CSV file holds them, as a tabular whose
 /// lines after the first start with `indent`. Text of fewer than two columns isn't a table.
-pub(crate) fn tabular(text: &str, indent: &str, booktabs: bool) -> Option<String> {
+fn tabular(text: &str, indent: &str, booktabs: bool) -> Option<String> {
     let rows = ['\t', ',']
         .into_iter()
         .map(|separator| rows(text, separator))

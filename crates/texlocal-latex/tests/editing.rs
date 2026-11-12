@@ -544,10 +544,13 @@ fn a_dropped_figure_is_included_only_where_tex_reads_it() {
 }
 
 fn table(cells: &str) -> Value {
-    free(
-        "Tabular",
-        json!({ "cells": cells, "indent": "", "booktabs": false }),
-    )
+    let mut doc = SourceDocument::new("");
+    run(
+        &mut doc,
+        "PasteTable",
+        json!({ "selection": caret(0), "cells": cells, "booktabs": false }),
+    )["edits"][0]["text"]
+        .clone()
 }
 
 fn lines(lines: &[&str]) -> Value {
@@ -575,9 +578,11 @@ fn spreadsheet_cells_become_a_tabular_ruled_under_its_header_with_numbers_on_the
 
 #[test]
 fn a_tabular_takes_booktabs_rules_and_the_lines_indentation_when_asked() {
-    let tabular = free(
-        "Tabular",
-        json!({ "cells": "a\tb\nx\t2\n", "indent": "    ", "booktabs": true }),
+    let mut doc = SourceDocument::new("    ");
+    let change = run(
+        &mut doc,
+        "PasteTable",
+        json!({ "selection": caret(4), "cells": "a\tb\nx\t2\n", "booktabs": true }),
     );
     let expected = lines(&[
         "\\begin{tabular}{lr}",
@@ -588,7 +593,46 @@ fn a_tabular_takes_booktabs_rules_and_the_lines_indentation_when_asked() {
         "      \\bottomrule",
         "    \\end{tabular}",
     ]);
-    assert_eq!(tabular, expected);
+    assert_eq!(change["edits"][0]["text"], expected);
+}
+
+#[test]
+fn spreadsheet_cells_paste_on_lines_of_their_own_at_the_current_lines_indentation() {
+    let cells = "Name\tScore\r\nAda\t10\r\n";
+    let table = |indent: &str, rules: [&str; 3]| {
+        [
+            "\\begin{tabular}{lr}",
+            &format!("  {}", rules[0]),
+            "  Name & Score \\\\",
+            &format!("  {}", rules[1]),
+            "  Ada & 10 \\\\",
+            &format!("  {}", rules[2]),
+            "\\end{tabular}",
+        ]
+        .join(&format!("\n{indent}"))
+    };
+    let ruled = table("  ", ["\\hline", "\\hline", "\\hline"]);
+    let booktabs = table("    ", ["\\toprule", "\\midrule", "\\bottomrule"]);
+    let paste = |at: u32, length: u32, cells: &str, booktabs: bool| {
+        let selection = json!({ "start": at, "length": length });
+        let args = json!({ "selection": selection, "cells": cells, "booktabs": booktabs });
+        run(&mut SourceDocument::new("  x\n    "), "PasteTable", args)
+    };
+    for (at, length, booktabs, pasted) in [
+        (3, 0, false, format!("\n  {ruled}")),
+        (2, 0, false, format!("{ruled}\n  ")),
+        (8, 0, true, booktabs),
+        (2, 1, false, ruled.clone()),
+        (2, 4, false, ruled),
+    ] {
+        let caret = caret(at + utf16::len(&pasted) as u32);
+        let edit = json!({ "start": at, "length": length, "text": pasted });
+        assert_eq!(
+            paste(at, length, cells, booktabs),
+            json!({ "edits": [edit], "selections": [caret] })
+        );
+    }
+    assert_eq!(paste(8, 0, "one column\nonly", false), Value::Null);
 }
 
 #[test]
