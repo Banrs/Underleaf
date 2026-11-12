@@ -2,21 +2,11 @@ import PDFKit
 import os
 
 extension PDFController {
-    func highlight(_ selection: PDFSelection?, or rect: CGRect, on page: PDFPage) {
-        if let selection, !view.find.isOpen {
-            view.removeMark()
-            selection.color = .findHighlightColor
-            view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        } else {
-            view.flash(rect, on: page)
-        }
-    }
-
     func sourcePoint() -> (page: Int, point: CGPoint)? {
         guard let document = view.document else { return nil }
         let probe = CGPoint(x: view.bounds.midX, y: view.shownRect.maxY - view.shownHeight * 0.2)
         guard let page = view.page(for: probe, nearest: true), let number = document.number(of: page) else { return nil }
-        let bounds = page.bounds(for: view.displayBox)
+        let bounds = page.bounds(for: SyncPDFView.box)
         var point = view.convert(probe, to: page)
         while point.y > bounds.minY {
             if let line = page.selectionForLine(at: point), let text = line.string, !text.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -57,9 +47,15 @@ extension PDFController {
         }
         let page = found?.page ?? located
         let rect = found.map { $0.selection.bounds(for: $0.page) }
-            ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+            ?? SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: SyncPDFView.box))
         show(rect, on: page)
-        highlight(found?.selection, or: rect, on: page)
+        if let selection = found?.selection, !view.find.isOpen {
+            view.removeMark()
+            selection.color = .findHighlightColor
+            view.setCurrentSelection(selection, animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        } else {
+            view.flash(rect, on: page)
+        }
     }
 
     func follow(_ loc: ForwardLoc, later: Bool = true) {
@@ -71,7 +67,7 @@ extension PDFController {
             return
         }
         feed.follow = nil
-        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: view.displayBox))
+        let rect = SyncTeXGeometry.highlightRect(loc, pageBounds: page.bounds(for: SyncPDFView.box))
         if !view.shownRect.contains(view.convert(rect, from: page)) { show(rect, on: page) }
     }
 
@@ -88,7 +84,7 @@ extension PDFController {
         guard first <= last else { return [] }
         return (first...last).compactMap { number in
             guard let page = document.page(number: number), let text = page.string else { return nil }
-            let bounds = page.bounds(for: view.displayBox)
+            let bounds = page.bounds(for: SyncPDFView.box)
             var near: [TextRange] = []
             for box in boxes where Int(box.page) == number {
                 guard let covered = page.selection(for: SyncTeXGeometry.highlightRect(box, pageBounds: bounds)) else { continue }

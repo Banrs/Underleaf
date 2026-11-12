@@ -167,7 +167,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     }
 
     func place(_ mark: NSView, at rect: CGRect, on page: PDFPage, in overlay: NSView) {
-        let box = page.bounds(for: displayBox)
+        let box = page.bounds(for: SyncPDFView.box)
         let scale = CGAffineTransform(scaleX: overlay.bounds.width / box.width, y: overlay.bounds.height / box.height)
         mark.frame = rect.applying(scale.translatedBy(x: -box.minX, y: -box.minY))
         mark.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin, .width, .height]
@@ -204,7 +204,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
 
     func goToStart() {
         guard let page = document?.page(at: 0) else { return }
-        go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: displayBox).maxY)))
+        go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: SyncPDFView.box).maxY)))
     }
 
     func go(to place: (index: Int, point: CGPoint)) {
@@ -263,7 +263,7 @@ final class SyncPDFView: PDFView, PDFPageOverlayViewProvider {
     private func goToSource(at location: CGPoint, quietly: Bool = false) {
         guard let page = page(for: location, nearest: true), let number = document?.number(of: page) else { return }
         let point = convert(location, to: page)
-        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: displayBox)), page.click(at: point), quietly)
+        onInverse(number, SyncTeXGeometry.synctexPoint(point, pageBounds: page.bounds(for: SyncPDFView.box)), page.click(at: point), quietly)
     }
 }
 

@@ -74,7 +74,7 @@ struct EditorPDFPixelTests {
         try await write("badboxes-\(suffix)", view)
         // Zooming resizes the marks with their pages, so each has to redraw its rounded ends at the new size.
         view.scaleFactor *= 1.5
-        view.go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: view.displayBox).maxY)))
+        view.go(to: PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: SyncPDFView.box).maxY)))
         try await write("badboxes-zoomed-\(suffix)", view)
         view.flash(CGRect(x: 72, y: 600, width: 160, height: 14), on: page)
         try await write("sync-mark-\(suffix)", view)

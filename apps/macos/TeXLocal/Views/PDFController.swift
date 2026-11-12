@@ -9,8 +9,8 @@ final class PDFController: NSObject {
     private static func label(_ scale: CGFloat) -> String { Double(scale).formatted(.percent.precision(.fractionLength(0))) }
 
     @ObservationIgnored let view = SyncPDFView()
-    var page = 0
-    var pageCount = 0
+    private(set) var page = 0
+    private(set) var pageCount = 0
     private(set) var isLoading = false
     private(set) var scale: CGFloat = 1
     var zoom = Zoom.fitWidth
@@ -90,7 +90,7 @@ final class PDFController: NSObject {
 
     private var pageScale: CGFloat {
         guard let page = view.currentPage else { return view.scaleFactor }
-        let margins = view.pageBreakMargins, box = view.displayBox
+        let margins = view.pageBreakMargins, box = SyncPDFView.box
         let pageHeight = abs(page.bounds(for: box).size.applying(page.transform(for: box)).height)
         return min(view.shownHeight / (pageHeight + margins.top + margins.bottom), view.scaleFactorForSizeToFit)
     }

@@ -108,9 +108,9 @@ enum MenuCommand {
         case .pdfFind: .pdf(.find)
         case .viewZoomIn: .pdf(.zoomIn)
         case .viewZoomOut: .pdf(.zoomOut)
-        case .viewActualSize: .pdf(.actualSize)
-        case .viewFitWidth: .pdf(.fitWidth)
-        case .viewFitPage: .pdf(.fitPage)
+        case .viewActualSize: .pdf(.zoom(.scale(1)))
+        case .viewFitWidth: .pdf(.zoom(.fitWidth))
+        case .viewFitPage: .pdf(.zoom(.fitPage))
         case .syncInverse: .pdf(.inverseFromView)
         default: nil
         }
@@ -146,7 +146,7 @@ struct ItemActions {
 }
 
 enum PDFAction {
-    case zoomIn, zoomOut, actualSize, fitWidth, fitPage, goToPage(Int), find, inverseFromView
+    case zoomIn, zoomOut, zoom(Zoom), goToPage(Int), find, inverseFromView
     case reveal(ForwardLoc, SyncSource?)
 }
 
