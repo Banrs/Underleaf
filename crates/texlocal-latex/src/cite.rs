@@ -18,6 +18,8 @@ pub struct CitationSource {
 
 static DOI: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\b(10\.\d{4,9}/[^\s"<>]+)"#).unwrap());
+static ESCAPED_TWICE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"%25([0-9a-fA-F]{2})").unwrap());
 static ARXIV: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?:arxiv:\s*|https?://(?:www\.)?arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z]{2})?/\d{7})(?:v\d+)?(?:\.pdf)?/?$").unwrap()
 });
@@ -34,8 +36,8 @@ pub fn citation_source(text: &str) -> Option<CitationSource> {
             accept: "text/plain".into(),
         });
     }
-    let found = DOI.captures(text)?;
-    let mut doi = &found[1];
+    let found = DOI.find(text)?;
+    let mut doi = found.as_str();
     // Punctuation after a DOI in prose, but not a bracket the DOI opened, as in `10.1002/(SICI)1097-4636(199907)`.
     loop {
         let unopened = |close: char, open: char| {
@@ -47,7 +49,10 @@ pub fn citation_source(text: &str) -> Option<CitationSource> {
             break;
         }
     }
-    let encoded = percent_encoded(doi.as_bytes());
+    let mut encoded = percent_encoded(doi.as_bytes());
+    if text[..found.start()].contains("://") {
+        encoded = ESCAPED_TWICE.replace_all(&encoded, "%$1").into_owned();
+    }
     Some(CitationSource {
         id: doi.to_owned(),
         url: format!("https://doi.org/{encoded}"),
@@ -279,6 +284,12 @@ mod tests {
         assert_eq!(
             doi("10.1002/(SICI)1097-4636").unwrap().1,
             "https://doi.org/10.1002/%28SICI%291097-4636"
+        );
+        let url = "https://doi.org/10.1000/a%28b%29";
+        assert_eq!(doi(url).unwrap().1, url);
+        assert_eq!(
+            doi("10.1000/a%28b%29").unwrap().1,
+            "https://doi.org/10.1000/a%2528b%2529"
         );
         for id in [
             "1706.03762",
