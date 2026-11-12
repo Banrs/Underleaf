@@ -60,3 +60,36 @@ extension NSImage {
         size = NSSize(width: drawing.width, height: drawing.height)
     }
 }
+
+struct MathView: View {
+    var tex = ""
+    var em: CGFloat = 0
+    var image: NSImage?
+
+    private static let widest: CGFloat = 560
+
+    var body: some View {
+        let line = (em * 1.2).rounded(.up)
+        Group {
+            if let image {
+                let scale = min(1, Self.widest / max(image.size.width, 1))
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    // Rounding the frame up to whole points mustn't stretch a small formula one way more than the other.
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(.primary)
+                    .frame(width: (image.size.width * scale).rounded(.up), height: (image.size.height * scale).rounded(.up))
+            } else {
+                Text(verbatim: tex).font(.system(size: em)).foregroundStyle(.red).lineLimit(1).frame(maxWidth: Self.widest)
+            }
+        }
+        .frame(minWidth: line, minHeight: line)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Math Preview")
+        .accessibilityValue(tex)
+        .focusable(false)
+        .allowsHitTesting(false)
+        .padding()
+    }
+}
