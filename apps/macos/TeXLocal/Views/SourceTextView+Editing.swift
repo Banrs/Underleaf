@@ -24,17 +24,8 @@ extension SourceTextView {
 
     /// Pastes spreadsheet cells as a tabular on a line of its own, at the current line's indentation.
     func pasteTable(from board: NSPasteboard = .general, booktabs: Bool) -> Bool {
-        let at = selectedRange(), line = source.lineRange(for: .caret(at.location))
-        let indent = String(source.substring(with: line).prefix { $0 == " " || $0 == "\t" })
-        guard isEditable, let cells = board.string(forType: .string),
-              let table = Syntax.call(Tabular(cells: cells, indent: indent, booktabs: booktabs)) ?? nil else { return false }
-        let before = source.substring(with: NSRange(location: line.location, length: at.location - line.location))
-        let after = source.substring(with: NSRange(location: NSMaxRange(at), length: max(0, NSMaxRange(line) - NSMaxRange(at))))
-        let blank = { (text: String) in text.allSatisfy { $0 == " " || $0 == "\t" || $0.isNewline } }
-        // On lines of its own, the text either side of it keeping theirs.
-        let text = (blank(before) ? "" : "\n\(indent)") + table + (blank(after) ? "" : "\n\(indent)")
-        return apply([TextEdit(at, text)], named: String(localized: "Paste as Table"),
-                     selecting: [.caret(at.location + (text as NSString).length)])
+        guard isEditable, let cells = board.string(forType: .string) else { return false }
+        return apply(document.pasteTable(cells, at: selectedRange(), booktabs: booktabs), named: String(localized: "Paste as Table"))
     }
 
     override func becomeFirstResponder() -> Bool {

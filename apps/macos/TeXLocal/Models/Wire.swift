@@ -969,6 +969,15 @@ nonisolated struct Partner: SourceRequest {
     var at: Int
 }
 
+nonisolated struct PasteTable: SourceRequest {
+    typealias Reply = Change?
+    static let command = "PasteTable"
+
+    var selection: TextRange
+    var cells: String
+    var booktabs: Bool
+}
+
 nonisolated struct PdfHit: Decodable, Hashable, Sendable {
     var page: Int
     var start: Int
@@ -1473,15 +1482,6 @@ nonisolated struct SynctexMatch: SessionRequest {
 nonisolated struct Tabbing: Decodable, Hashable, Sendable {
     var field: TextRange?
     var edits: [TextEdit]
-}
-
-nonisolated struct Tabular: SyntaxRequest {
-    typealias Reply = String?
-    static let command = "Tabular"
-
-    var cells: String
-    var indent: String
-    var booktabs: Bool
 }
 
 nonisolated struct Template: Decodable, Hashable, Sendable {

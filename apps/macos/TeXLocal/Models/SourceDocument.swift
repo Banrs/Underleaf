@@ -126,6 +126,10 @@ final class SourceDocument {
         call(Wrap(selections: selections.map(TextRange.init), template: template))
     }
 
+    func pasteTable(_ cells: String, at selection: NSRange, booktabs: Bool) -> Change? {
+        call(PasteTable(selection: TextRange(selection), cells: cells, booktabs: booktabs)) ?? nil
+    }
+
     func map(_ selections: [NSRange], through edits: [TextEdit]) -> [NSRange] {
         call(MapSelections(edits: edits, selections: selections.map(TextRange.init)))?.map(\.range) ?? selections
     }
