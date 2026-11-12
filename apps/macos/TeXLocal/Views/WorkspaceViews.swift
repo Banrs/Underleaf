@@ -154,9 +154,7 @@ final class WorkspaceViews: ProjectViews {
         switch action {
         case .zoomIn: pdf.zoom(in: true)
         case .zoomOut: pdf.zoom(in: false)
-        case .actualSize: pdf.setScale(1)
-        case .fitWidth: pdf.fitWidth()
-        case .fitPage: pdf.fitPage()
+        case .zoom(let zoom): pdf.apply(zoom)
         case .goToPage(let page): pdf.go(toPage: page)
         case .find: pdf.view.find.perform(.showFindInterface)
         case let .reveal(loc, source): pdf.reveal(loc, from: source)

@@ -38,7 +38,7 @@ struct PDFPerformanceTests {
         let window = try await onScreen(controller.view, size: NSSize(width: 700, height: 900))
         defer { window.close() }
         controller.showLive(LiveDocument(path: longPDF.path(percentEncoded: false), changed: []))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         let document = try #require(view.document)
         view.go(to: PDFDestination(page: try #require(document.page(at: 200)), at: CGPoint(x: 0, y: 500)))
         try await Task.sleep(for: .seconds(2))

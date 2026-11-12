@@ -151,7 +151,7 @@ nonisolated final class PDFText: NSObject, @MainActor NSTextFinderClient {
         guard let top = view.placeBeneathToolbar, let page = document.page(ifAt: top.index), let span = span(of: top.index) else {
             return NSRange()
         }
-        let box = page.bounds(for: view.displayBox)
+        let box = page.bounds(for: SyncPDFView.box)
         let below = page.selection(for: CGRect(x: box.minX, y: box.minY, width: box.width, height: max(0, top.point.y - box.minY)))
         let ranges = below.map { below in (0..<below.numberOfTextRanges(on: page)).map { below.range(at: $0, on: page) } } ?? []
         let first = ranges.map(\.location).filter { $0 != NSNotFound }.min()

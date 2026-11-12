@@ -20,8 +20,6 @@ extension PDFController {
     /// and replacing a page 1–2 ms.
     static let changedInPlace = 8
 
-    var liveReading: Task<Void, Never>? { feed.reading }
-
     func showLive(_ live: LiveDocument) {
         var changed = feed.document?.changed ?? []
         for range in live.changed { changed.insert(integersIn: range.first...range.last) }

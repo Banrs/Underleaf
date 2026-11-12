@@ -96,12 +96,12 @@ struct PDFTests {
         let place = try shown(view)
         view.flash(CGRect(x: 72, y: 600, width: 100, height: 12), on: try #require(document.page(at: 2)))
         for index in [1, 3] { controller.showLive(LivePage(page: index, pdf: try typedPage())) }
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         #expect(view.document === document && document.pageCount == 3 && view.mark?.page === document.page(at: 2))
         #expect(document.page(at: 1)?.string?.contains("typed") == true)
         #expect(try shown(view) == place)
         controller.showLive(LivePage(page: 2, pdf: try typedPage()))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         #expect(view.mark == nil)
     }
 
@@ -115,7 +115,7 @@ struct PDFTests {
         link.url = destination
         try #require(linked.page(at: 0)).addAnnotation(link)
         controller.showLive(LivePage(page: 0, pdf: try #require(linked.dataRepresentation())))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         let links = try #require(view.document?.page(at: 0)).annotations.filter { $0.type == "Link" }
         #expect(links.count == 1 && links.first?.url == destination)
     }
@@ -147,14 +147,14 @@ struct PDFTests {
         defer { try? FileManager.default.removeItem(at: url) }
         project.handle(.liveDocument(LiveDocument(path: url.path(percentEncoded: false), changed: [])))
         project.handle(.livePage(LivePage(page: 1, pdf: try typedPage())))
-        await views.pdf.liveReading?.value
+        await views.pdf.feed.reading?.value
         let document = try #require(views.pdf.view.document)
         #expect(document.pageCount == 2 && document.page(at: 1)?.string?.contains("typed") == true)
         project.handle(.livePage(LivePage(page: 0, pdf: try typedPage())))
         #expect(await project.close().value)
-        try await waitUntil { views.pdf.liveReading == nil }
+        try await waitUntil { views.pdf.feed.reading == nil }
         project.handle(.livePage(LivePage(page: 0, pdf: try typedPage())))
-        #expect(views.pdf.liveReading == nil && views.pdf.feed.pages.isEmpty)
+        #expect(views.pdf.feed.reading == nil && views.pdf.feed.pages.isEmpty)
     }
 
     @Test func aQueuedDocumentKeepsTheFollowThatAnOlderReadCannotShow() async throws {
@@ -182,13 +182,13 @@ struct PDFTests {
         let (old, new) = (try written(textPDF(count: 1)), try written(textPDF(count: 30)))
         defer { [old, new].forEach { try? FileManager.default.removeItem(at: $0) } }
         controller.showLive(LiveDocument(path: old.path(percentEncoded: false), changed: []))
-        let stopped = try #require(controller.liveReading)
+        let stopped = try #require(controller.feed.reading)
         await Task.yield()
         controller.stopLive()
         controller.showLive(LiveDocument(path: new.path(percentEncoded: false), changed: []))
         controller.follow(ForwardLoc(page: 20, h: 72, v: 300, width: 100, height: 10, matches: []))
         await stopped.value
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         #expect(view.document?.pageCount == 30 && controller.feed.follow == nil)
         #expect(try shown(view).page == 19)
     }
@@ -198,7 +198,7 @@ struct PDFTests {
         defer { window.close() }
         try await showLive(["one", "two"], in: controller)
         controller.showLive(LivePage(page: 1, pdf: try typedPage()))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         #expect(view.document?.page(at: 1)?.string?.contains("typed") == true)
         controller.showLive(LivePage(page: 1, pdf: try #require(try textPDF(["two"]).dataRepresentation())))
         try await showLive(["one", "two"], in: controller)
@@ -214,7 +214,7 @@ struct PDFTests {
         let document = try #require(view.document)
         let shown = try (0..<document.pageCount).filter { index in
             let page = try #require(document.page(at: index))
-            return view.convert(page.bounds(for: view.displayBox), from: page).intersects(view.shownRect)
+            return view.convert(page.bounds(for: SyncPDFView.box), from: page).intersects(view.shownRect)
         }
         #expect(shown.count > 3 && Set(view.coverPages.indices).isSuperset(of: shown))
     }
@@ -256,7 +256,7 @@ struct PDFTests {
         try await waitUntil { text.pageStrings.count == 4 }
         let document = try #require(view.document), lengths = text.pageStrings.map { ($0 as NSString).length }
         let second = try #require(document.page(at: 1))
-        view.go(to: PDFDestination(page: second, at: CGPoint(x: 0, y: second.bounds(for: view.displayBox).maxY)))
+        view.go(to: PDFDestination(page: second, at: CGPoint(x: 0, y: second.bounds(for: SyncPDFView.box).maxY)))
         let place = text.firstSelectedRange
         #expect(place.length == 0 && (lengths[0]..<lengths[0] + lengths[1]).contains(place.location))
         let third = lengths[0] + lengths[1]
@@ -331,11 +331,11 @@ struct PDFTests {
         #expect(view.currentSelection?.pages.first === view.document?.page(at: 2))
 
         controller.showLive(LivePage(page: 0, pdf: try #require(try textPDF(["needle"]).dataRepresentation())))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         let first = view.document?.page(at: 0)
         try await waitUntil { view.highlightedSelections?.count == 2 && view.highlightedSelections?.first?.pages.first === first }
         controller.showLive(LivePage(page: 1, pdf: try #require(try textPDF(["needle"]).dataRepresentation())))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
         try await waitUntil { find.text.pageStrings[1].contains("needle") }
         #expect(view.highlightedSelections == nil && find.isOpen && bar.window === window)
 
@@ -354,7 +354,7 @@ struct PDFTests {
         let far = ForwardLoc(page: 5, h: 72, v: 300, width: 100, height: 10, matches: [])
         controller.follow(far)
         let page = try #require(view.document?.page(at: 4))
-        let rect = view.convert(SyncTeXGeometry.highlightRect(far, pageBounds: page.bounds(for: view.displayBox)), from: page)
+        let rect = view.convert(SyncTeXGeometry.highlightRect(far, pageBounds: page.bounds(for: SyncPDFView.box)), from: page)
         #expect(try shown(view) != start && view.shownRect.contains(rect))
         #expect(view.mark == nil && view.currentSelection == nil)
     }
@@ -405,7 +405,7 @@ struct PDFTests {
         let url = try written(textPDF(pages))
         defer { try? FileManager.default.removeItem(at: url) }
         controller.showLive(LiveDocument(path: url.path(percentEncoded: false), changed: changed))
-        await controller.liveReading?.value
+        await controller.feed.reading?.value
     }
 
     private func shown(_ view: SyncPDFView) throws -> Place {
@@ -414,7 +414,7 @@ struct PDFTests {
     }
 
     private func atStart(_ view: SyncPDFView) throws -> Bool {
-        let place = try shown(view), top = try #require(view.document?.page(at: 0)).bounds(for: view.displayBox).maxY
+        let place = try shown(view), top = try #require(view.document?.page(at: 0)).bounds(for: SyncPDFView.box).maxY
         return place.page == 0 && abs(place.y - top) < 1
     }
 
