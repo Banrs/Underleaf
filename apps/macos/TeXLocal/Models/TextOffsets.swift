@@ -9,3 +9,9 @@ extension NSTextContentManager {
         return NSTextRange(location: start, end: end)
     }
 }
+
+extension SourceTextView {
+    func offset(_ location: any NSTextLocation) -> Int { textLayoutManager?.textContentManager?.offset(of: location) ?? 0 }
+
+    func textRange(_ range: NSRange) -> NSTextRange? { textLayoutManager?.textContentManager?.textRange(of: range) }
+}
