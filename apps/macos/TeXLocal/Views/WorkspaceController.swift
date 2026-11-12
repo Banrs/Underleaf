@@ -99,7 +99,7 @@ final class WorkspaceController: ThinSplitViewController {
         sourceItem.minimumThickness = ColumnMetrics.paneMinimum
         let pdfPane = NSViewController()
         pdfPane.view = NSView(frame: NSRect(x: 0, y: 0, width: pdfWidth, height: 0))
-        let empty = NSHostingView(rootView: Pane(project: project, content: PDFEmptyState(project: project)).environment(app).environment(window))
+        let empty = NSHostingView(rootView: pane(PDFEmptyState(project: project)))
         empty.sizingOptions = []
         pdfEmpty = empty
         for pane in [pdf.view, empty] as [NSView] {
@@ -121,8 +121,7 @@ final class WorkspaceController: ThinSplitViewController {
         columnsItem.minimumThickness = 200
         // The status bar moves with the columns and lets their content scroll beneath it.
         let bar = NSSplitViewItemAccessoryViewController()
-        bar.view = NSHostingView(rootView: Pane(project: project, content: StatusBar(project: project))
-            .environment(app).environment(window).environment(views))
+        bar.view = NSHostingView(rootView: pane(StatusBar(project: project)))
         bar.automaticallyAppliesContentInsets = false
         bar.preferredScrollEdgeEffectStyle = .hard
         columnsItem.addBottomAlignedAccessoryViewController(bar)
@@ -166,9 +165,12 @@ final class WorkspaceController: ThinSplitViewController {
         }
     }
 
+    private func pane(_ content: some View, mount: Mount? = nil) -> some View {
+        Pane(project: project, mount: mount, content: content).environment(app).environment(window).environment(views)
+    }
+
     private func host(_ content: some View, width: CGFloat = 0, height: CGFloat = 0, mount: Mount? = nil) -> NSViewController {
-        let host = NSHostingController(rootView: Pane(project: project, mount: mount, content: content)
-            .environment(app).environment(window).environment(views))
+        let host = NSHostingController(rootView: pane(content, mount: mount))
         host.sizingOptions = []
         host.view.frame.size = CGSize(width: width, height: height)
         return host
