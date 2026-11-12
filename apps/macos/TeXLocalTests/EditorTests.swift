@@ -233,29 +233,14 @@ struct EditorTests {
         #expect(!showing())
     }
 
-    @Test func switchingFilesKeepsEachFilesSelectionFoldsAndUndoUnlessItsTextChanged() {
-        let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
+    @Test func theCursorReportsUTF16AndDisplayedColumns() {
+        let (editor, window) = Self.editor("a\n\t😀😀x")
         defer { window.close() }
-        let text = editor.textView, undo = text.undo
-        Self.type("x", in: text)
-        text.selection = .caret(21)
-        text.foldAtCaret()
-        let (main, folded, selection) = (text.string, text.folds.ranges, text.selection)
-        #expect(folded == [NSRange(location: 17, length: 16)] && selection == .caret(16))
-        editor.open(path: "other.tex", source: SourceDocument(text: "other"))
-        let other = text.undo
-        #expect(other !== undo && text.folds.isEmpty)
-        text.selection = .caret(3)
-        editor.open(path: "main.tex", source: SourceDocument(text: main))
-        #expect(text.undo === undo && text.folds.ranges == folded && text.selection == selection)
-        editor.open(path: "other.tex", source: SourceDocument(text: "changed"))
-        #expect(text.undo !== other && text.selection == .caret(0))
-        editor.open(path: "glyphs.tex", source: SourceDocument(text: "a\n\t😀😀x"))
-        text.selection = .caret(8)
+        editor.textView.selection = .caret(8)
         #expect(editor.currentLine == 2 && editor.currentColumn == 6 && editor.shownColumn == 5)
         let joined = "e\u{301}👨‍👩‍👧x"
         editor.open(path: "joined.tex", source: SourceDocument(text: joined))
-        text.selection = .caret((joined as NSString).length)
+        editor.textView.selection = .caret((joined as NSString).length)
         #expect(editor.currentLine == 1 && editor.shownColumn == 4)
     }
 
@@ -526,7 +511,9 @@ struct EditorTests {
         editor.textView.scroll(toTop: editor.textView.document.lineStart(101))
         window.displayIfNeeded()
         let a = editor.textView, (text, selection, folds) = (a.string, a.selection, a.folds.ranges), top = try #require(a.shownTop)
+        #expect(folds == [NSRange(location: 17, length: 16)] && selection == .caret(16))
         editor.open(path: "b.tex", source: SourceDocument(text: (1...200).map { "b \($0)" }.joined(separator: "\n")))
+        #expect(editor.textView.undo !== undo && editor.textView.folds.isEmpty)
         window.displayIfNeeded()
         editor.textView.scroll(toTop: editor.textView.document.lineStart(150))
         editor.textView.selection = .caret(3)
@@ -558,6 +545,7 @@ struct EditorTests {
     @Test func aFileChangedWhileHiddenShowsItsNewTextFromTheStart() throws {
         let (editor, window) = Self.editor("\\begin{itemize}\n\\item a\n\\item b\n\\end{itemize}\nafter")
         defer { window.close() }
+        let undo = editor.textView.undo
         Self.type("x", in: editor.textView)
         editor.textView.selection = .caret(21)
         editor.textView.foldAtCaret()
@@ -566,7 +554,7 @@ struct EditorTests {
         window.displayIfNeeded()
         let text = editor.textView
         #expect(text.string == "changed on disk" && text.document.text == text.string)
-        #expect(text.selection == .caret(0) && text.folds.isEmpty && !text.undo.canUndo && text.shownTop?.offset == 0)
+        #expect(text.undo !== undo && text.selection == .caret(0) && text.folds.isEmpty && !text.undo.canUndo && text.shownTop?.offset == 0)
     }
 
     private static let typed = NSRange(location: NSNotFound, length: 0)
