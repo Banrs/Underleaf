@@ -371,10 +371,7 @@ pub fn write_ui(file: &Path, patch: UiPatch) -> Result<(), CoreError> {
     })
 }
 
-pub(crate) fn move_ui(
-    file: &Path,
-    moved: impl Fn(&str) -> Option<String>,
-) -> (Vec<String>, Vec<String>) {
+pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
     let before = read_device(file).ui;
     let mut state = before.clone();
     for folder in &mut state.expanded_folders {
@@ -396,9 +393,8 @@ pub(crate) fn move_ui(
     }
     if state != before {
         let _ = store_ui(file, |saved| {
-            *saved = state.clone();
+            *saved = state;
             Ok(())
         });
     }
-    (state.expanded_folders, state.folded_headings)
 }

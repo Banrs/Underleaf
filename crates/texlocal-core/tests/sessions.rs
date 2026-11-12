@@ -633,22 +633,6 @@ async fn a_rename_sends_its_paths_and_the_open_files_sections_before_the_reply()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_rename_replies_with_the_remapped_saved_rows() {
-    let rig = Rig::open(&[("main.tex", MAIN), ("ch/one.tex", CHAPTER)]).await;
-    let patch = json!({ "expandedFolders": ["ch", "ch/sub", "chapter"], "foldedHeadings": ["ch/one.tex\tChapter", "chapter.tex\tIntro"] });
-    rig.send(SESSION, "SetUiState", json!({ "patch": patch }));
-    let renamed = rig.call("Rename", json!({ "from": "ch", "to": "a" }));
-    assert_eq!(renamed["expandedFolders"], json!(["a", "a/sub", "chapter"]));
-    assert_eq!(
-        renamed["foldedHeadings"],
-        json!(["a/one.tex\tChapter", "chapter.tex\tIntro"])
-    );
-    let ui = &read_json(&rig.library.path("state/.ui/P.json"))["ui"];
-    assert_eq!(renamed["expandedFolders"], ui["expandedFolders"]);
-    assert_eq!(renamed["foldedHeadings"], ui["foldedHeadings"]);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_rename_saves_the_edits_first_and_one_that_cant_leaves_the_file_where_it_is() {
     let rig = project().await;
     let doc = rig.open_document("ch.tex");
