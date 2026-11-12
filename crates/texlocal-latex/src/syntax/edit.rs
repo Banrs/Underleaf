@@ -9,7 +9,7 @@ use super::scan::{blank_line, closing_brace};
 use super::style::TextStyles;
 use super::{
     INDENT, Insertion, Line, NEWLINE, SourceDocument, Text, TextEdit, TextRange, catalog, clamp,
-    comment_start, complete, edit, indentation, is, span, splice,
+    comment_start, complete, edit, headings, indentation, is, span, splice,
 };
 use crate::{FileKind, file_kind, utf16};
 
@@ -57,8 +57,8 @@ fn runs(text: &Text, selections: &[TextRange]) -> Vec<(usize, usize)> {
 }
 
 static HEADING: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\\(part|chapter|(?:sub){0,2}section|(?:sub)?paragraph)(\*?)\s*(\[[^\]]*\])?\s*\{")
-        .unwrap()
+    let names = headings::LEVELS.map(|level| level.0).join("|") + "|subparagraph";
+    Regex::new(&format!(r"\\({names})(\*?)\s*(\[[^\]]*\])?\s*\{{")).unwrap()
 });
 
 static BLANK_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n[ \t]*\n").unwrap());
