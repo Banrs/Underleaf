@@ -108,7 +108,7 @@ struct SearchResults: View {
             Text("\(Text(group.file.fileName).fontWeight(.medium)) \(Text(group.file.parentFolder.replacing("/", with: " ▸ ")).foregroundStyle(.secondary))")
                 .lineLimit(1)
         } icon: {
-            Image(systemName: project.tree.node(at: group.file)?.symbol ?? "text.document")
+            Image(systemName: project.files.node(at: group.file)?.symbol ?? "text.document")
         }
         .help(group.file)
         .accessibilityElement(children: .ignore)

@@ -53,8 +53,7 @@ struct ChromePixelTests {
             try #require(NSApp.isActive && window.isKeyWindow)
         }
 
-        project.store.apply(.tree(Self.tree))
-        project.tree.arrived()
+        project.handle(.section(.tree(Self.tree)))
         project.expandedFolders = ["chapters", "figures"]
         project.store.apply(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true)))
         views.pdf.show(try #require(PDFDocument(data: data)))

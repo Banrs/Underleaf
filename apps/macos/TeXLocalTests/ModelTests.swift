@@ -136,9 +136,9 @@ struct SectionTests {
         #expect(project.name == "Paper")
         #expect(project.settings?.mainFile == "main.tex")
         #expect(project.url("b.tex")?.path(percentEncoded: false) == "/tmp/Paper/b.tex")
-        #expect(project.tree.nodes.map(\.name) == ["figs", "b.tex", "main.tex"])
+        #expect(project.files.map(\.name) == ["figs", "b.tex", "main.tex"])
         project.handle(.section(.tree([treeFile("main.tex", main: true), treeFile("a.tex")])))
-        #expect(project.tree.nodes.map(\.name) == ["a.tex", "main.tex"] && project.tree.node(at: "b.tex") == nil)
+        #expect(project.files.map(\.name) == ["a.tex", "main.tex"] && project.files.node(at: "b.tex") == nil)
         #expect(project.saveFailure == "Another app changed “b.tex”.")
         project.handle(.section(.documents([DocumentState(path: "b.tex", error: Message(id: .diskFull, args: [:], text: "The disk is full."),
                                                           conflict: nil, asking: false)])))
@@ -496,7 +496,7 @@ struct ViewsTests {
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         let path = try #require(await project.createEntry(in: "", directory: false))
-        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.files.node(at: path) != nil }
         var trashed: String?
         defer { try? trashed.map(FileManager.default.removeItem(atPath:)) }
         let undo = UndoManager()
@@ -526,7 +526,7 @@ struct ViewsTests {
         let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         let path = try #require(await project.createEntry(in: "", directory: false))
-        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.tree.node(at: path) != nil }
+        let shown = { FileManager.default.fileExists(atPath: info.path + "/" + path) && project.files.node(at: path) != nil }
         let undo = try #require(host.undoManager)
         undo.groupsByEvent = false
         undo.beginUndoGrouping()

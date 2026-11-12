@@ -27,7 +27,7 @@ final class OpenQuickly: FloatingPanel {
     private init(project: ProjectModel) {
         self.project = project
         super.init(takesKeys: true)
-        let host = NSHostingView(rootView: QuickOpenView(field: field, rows: rows, tree: project.tree, search: { [unowned self] in search($0) },
+        let host = NSHostingView(rootView: QuickOpenView(field: field, rows: rows, project: project, search: { [unowned self] in search($0) },
                                                          open: { [unowned self] in open($0) }, close: { [unowned self] in close() }))
         host.sizingOptions = []
         contentView = host
@@ -72,7 +72,7 @@ final class OpenQuickly: FloatingPanel {
 private struct QuickOpenView: View {
     let field: FieldHandle
     let rows: ChoiceRows<QuickOpenItem>
-    let tree: FileTree
+    let project: ProjectModel
     let search: (String) -> Void
     let open: (Int) -> Void
     let close: @MainActor () -> Void
@@ -102,7 +102,7 @@ private struct QuickOpenView: View {
         let symbol = switch item.kind {
         case .heading: "list.bullet.indent"
         case .label: "tag"
-        case .file: tree.node(at: item.path)?.symbol ?? "document"
+        case .file: project.files.node(at: item.path)?.symbol ?? "document"
         }
         return HStack(spacing: 10) {
             Image(systemName: symbol).frame(width: 20)

@@ -28,6 +28,19 @@ nonisolated extension TreeNode: Identifiable {
 
 extension [TreeNode] {
     var flattened: [TreeNode] { flatMap { [$0] + ($0.children ?? []).flattened } }
+
+    var ordered: [TreeNode] {
+        map { node in
+            var node = node
+            node.children = node.children?.ordered
+            return node
+        }
+        .sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func node(at path: String) -> TreeNode? {
+        first { path.isWithin($0.path) }.flatMap { $0.path == path ? $0 : $0.children?.node(at: path) }
+    }
 }
 
 nonisolated extension String {

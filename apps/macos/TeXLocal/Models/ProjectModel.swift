@@ -25,7 +25,7 @@ protocol ProjectViews: AnyObject {
 @Observable
 final class ProjectModel {
     let id: String
-    let store: SessionStore
+    let store = SessionStore()
     let session: SessionClient
     private let listedName: String
     var name: String { store.project?.name ?? listedName }
@@ -46,7 +46,7 @@ final class ProjectModel {
         get { settings?.stopOnFirstError ?? false }
         set { setSettings(SettingsPatch(stopOnFirstError: newValue)) }
     }
-    let tree: FileTree
+    private(set) var files: [TreeNode] = []
     private(set) var initialLoadComplete = false
     var openPath: String? { store.openFile?.path }
     var openKind: FileKind? { store.openFile?.kind }
@@ -114,8 +114,6 @@ final class ProjectModel {
 
     init(id: String, window: WindowModel) {
         self.id = id
-        let store = SessionStore()
-        (self.store, tree) = (store, FileTree(store: store))
         session = SessionClient(core: window.app.core)
         listedName = window.app.projects.first { $0.id == id }?.name ?? id
         navigator = NavigatorModel(project: id, defaults: window.app.defaults)
@@ -226,7 +224,7 @@ final class ProjectModel {
         case .project(let now):
             if let error = now.problem, error != problem { window?.report(String(localized: "Couldn’t Read the Project’s Settings"), error.text) }
         case .lifecycle, .buildLog, .liveLog: break
-        case .tree: tree.arrived()
+        case .tree(let nodes): files = nodes.ordered
         case .openFile, .outline:
             if case .openFile(let file?) = section { navigator.opened(file.path) }
             // An analysis comes back after each edit. An observable property ignores a value equal to the one it holds, so the
@@ -271,7 +269,7 @@ final class ProjectModel {
         let folder = openPath?.parentFolder ?? ""
         let request = ImportFiles(dir: folder, paths: [url.path(percentEncoded: false)], conflict: .keepBoth)
         guard let made = await alerting("Couldn’t Add “\(url.lastPathComponent)”", { try await session.call(request) }),
-              let path = made.paths.first, tree.node(at: path) != nil else { return nil }
+              let path = made.paths.first, files.node(at: path) != nil else { return nil }
         return includeGraphics(path)
     }
 
@@ -392,7 +390,7 @@ final class ProjectModel {
         return (back ? trail.back : trail.forward).contains { $0 != at && exists($0) }
     }
 
-    private func exists(_ place: Place) -> Bool { tree.node(at: place.path) != nil }
+    private func exists(_ place: Place) -> Bool { files.node(at: place.path) != nil }
 
     func retrace(back: Bool) async {
         guard let at = caretPlace, let to = trail.step(back: back, from: at, exists: exists) else { return }

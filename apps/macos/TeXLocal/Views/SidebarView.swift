@@ -14,16 +14,16 @@ struct FilesList: View {
     }
 
     private var shownNodes: [TreeNode] {
-        let nodes = filtered(project.tree.nodes, \.children, by: project.navigator.fileFilter) { $0.name }
+        let nodes = filtered(project.files, \.children, by: project.navigator.fileFilter) { $0.name }
         guard project.navigator.showsOnlyRecentFiles else { return nodes }
         let recent = Set(project.navigator.recentFiles)
         return filtered(nodes, \.children) { !$0.isDirectory && recent.contains($0.path) }
     }
 
     @ViewBuilder private func emptyState(_ empty: Bool, filter: String, recentOnly: Bool) -> some View {
-        if empty, !filter.isEmpty || recentOnly, !project.tree.nodes.isEmpty {
+        if empty, !filter.isEmpty || recentOnly, !project.files.isEmpty {
             NoFilterResults()
-        } else if project.initialLoadComplete, project.tree.nodes.isEmpty {
+        } else if project.initialLoadComplete, project.files.isEmpty {
             ContentUnavailableView {
                 Label("No Files", systemImage: "text.document")
             } description: {
@@ -54,7 +54,7 @@ struct FilesList: View {
             }
             .overlay { emptyState(nodes.isEmpty, filter: filter, recentOnly: recentOnly) }
             .contextMenu(forSelectionType: String.self) { paths in
-                if let path = paths.first, let node = project.tree.node(at: path) {
+                if let path = paths.first, let node = project.files.node(at: path) {
                     if node.isDirectory {
                         Button(MenuCommand.fileNew.title) { create(NewEntry(directory: false, folder: node.path)) }
                         Button(MenuCommand.fileNewFolder.title) { create(NewEntry(directory: true, folder: node.path)) }
@@ -67,7 +67,7 @@ struct FilesList: View {
                     ItemMenuItems(actions: actions(node))
                 }
             } primaryAction: { paths in
-                guard let path = paths.first, project.tree.node(at: path)?.isDirectory == true else { return }
+                guard let path = paths.first, project.files.node(at: path)?.isDirectory == true else { return }
                 if project.expandedFolders.remove(path) == nil { project.expandedFolders.insert(path) }
             }
             .contextMenu {
@@ -77,7 +77,7 @@ struct FilesList: View {
                 Button(MenuCommand.fileUpload.title) { window.perform(.fileUpload, on: project) }
             }
             .onChange(of: selection) { _, path in
-                if let path, path != project.openPath, project.tree.node(at: path)?.isDirectory == false {
+                if let path, path != project.openPath, project.files.node(at: path)?.isDirectory == false {
                     Task {
                         await project.open(path, focus: false, jump: true)
                         if project.openPath != path, selection == path { selection = project.openPath }
@@ -89,12 +89,12 @@ struct FilesList: View {
                 if let path { showRow(path) }
             }
             .onKeyPress(.return) {
-                guard rename.id == nil, let node = selection.flatMap({ project.tree.node(at: $0) }) else { return .ignored }
+                guard rename.id == nil, let node = selection.flatMap({ project.files.node(at: $0) }) else { return .ignored }
                 Task { actions(node).rename?() }
                 return .handled
             }
             .focused($listFocused)
-            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.tree.node(at: path).map(actions) }
+            .offersActions(for: listFocused && rename.id == nil ? selection : nil) { path in project.files.node(at: path).map(actions) }
             .onChange(of: rename.id) { _, id in if let id { Task { proxy.scrollTo(id) } } }
             .onChange(of: window.newEntry, initial: true) { _, entry in
                 guard let entry, !project.closed else { return }
@@ -109,7 +109,7 @@ struct FilesList: View {
     }
 
     private var chosenFolder: String {
-        guard let path = selection, let node = project.tree.node(at: path) else { return "" }
+        guard let path = selection, let node = project.files.node(at: path) else { return "" }
         return node.folder
     }
 
@@ -178,7 +178,7 @@ struct FilesList: View {
         let path = node.path.parentFolder.appending(component: name)
         Task {
             await project.renameEntry(node.path, to: path)
-            if selection == node.path, project.tree.node(at: path) != nil { selection = path }
+            if selection == node.path, project.files.node(at: path) != nil { selection = path }
         }
     }
 }
