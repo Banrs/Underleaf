@@ -18,6 +18,17 @@ extension SourceTextView: NSTextContentStorageDelegate {
 
     var foldedLines: [Int: NSRange] { folds.headers(in: document) }
 
+    /// VoiceOver's actions offer what the gutter's chevron does for the caret's line.
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        let line = document.line(at: caret), folded = foldedLines[line] != nil
+        guard folded || foldable[line] != nil else { return super.accessibilityCustomActions() }
+        let toggle = NSAccessibilityCustomAction(name: folded ? String(localized: "Unfold") : String(localized: "Fold")) { [weak self] in
+            self?.toggleFold(line: line)
+            return self != nil
+        }
+        return (super.accessibilityCustomActions() ?? []) + [toggle]
+    }
+
     func foldAtCaret() {
         let line = document.line(at: caret)
         let over = foldable.values.filter { $0.line <= line && line <= $0.end && !folds.ranges.contains(hidden($0)) }

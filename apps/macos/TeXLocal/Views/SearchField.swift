@@ -27,7 +27,7 @@ struct FilterField<Toggles: View>: View {
                     // A plain menu button draws no indicator of its own.
                     HStack(spacing: -1) {
                         symbol
-                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).accessibilityHidden(true)
                     }
                     .padding(.trailing, -1)
                     .foregroundStyle(.filterSymbol)
@@ -38,7 +38,7 @@ struct FilterField<Toggles: View>: View {
             }
             // AppKit's placeholder colour, as Xcode's field has; SwiftUI's own prompt over glass came out a fifth brighter.
             TextField(text: $text, prompt: Text("Filter").foregroundStyle(Color(nsColor: .placeholderTextColor))) { Text("Filter") }
-                .textFieldStyle(.plain).help(help)
+                .textFieldStyle(.plain).help(help).accessibilityLabel("Filter")
             if !text.isEmpty { Button("Clear", systemImage: "xmark.circle.fill") { text = "" }.foregroundStyle(.filterSymbol) }
             toggles
         }
