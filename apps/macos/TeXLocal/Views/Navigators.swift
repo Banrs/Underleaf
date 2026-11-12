@@ -185,7 +185,7 @@ private struct IssueList: View {
                         Label {
                             Text("\(name) \(Text(Self.issues(rows.count)).foregroundStyle(.secondary))")
                         } icon: {
-                            Image(systemName: file.map { project.tree.node(at: $0)?.symbol ?? "text.document" } ?? "folder.fill")
+                            Image(systemName: file.map { project.files.node(at: $0)?.symbol ?? "text.document" } ?? "folder.fill")
                                 .overlay(alignment: .bottomLeading) {
                                     if errors {
                                         Image(systemName: "exclamationmark.octagon.fill")

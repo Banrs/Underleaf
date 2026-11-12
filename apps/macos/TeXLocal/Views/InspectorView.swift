@@ -7,7 +7,7 @@ struct InspectorView: View {
     var body: some View {
         Form {
             Section("Project") {
-                let texFiles = project.tree.nodes.flattened.filter { $0.kind == .tex }.map(\.path)
+                let texFiles = project.files.flattened.filter { $0.kind == .tex }.map(\.path)
                 let main = project.mainFile
                 Picker("Main File", selection: Bindable(project).mainFile) {
                     ForEach(texFiles, id: \.self) { Text($0).tag(Optional($0)) }

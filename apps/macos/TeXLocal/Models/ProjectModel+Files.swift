@@ -66,7 +66,7 @@ extension ProjectModel {
 
     func dropAction(for url: URL) -> DropAction? {
         guard let path = projectPath(url) else { return includeGraphics(url.lastPathComponent) == nil ? nil : .copy }
-        guard tree.node(at: path) != nil else { return nil }
+        guard files.node(at: path) != nil else { return nil }
         return includeGraphics(path).map(DropAction.insert) ?? .open(path)
     }
 

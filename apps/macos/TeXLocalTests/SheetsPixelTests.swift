@@ -185,8 +185,7 @@ struct SheetsPixelTests {
     private static func fill(_ project: ProjectModel) {
         let settings = ProjectSettings(mainFile: "main.tex", engine: .xelatex, stopOnFirstError: false, shellEscape: true)
         project.store.apply(.project(ProjectState(name: "Thesis", root: "/Users/Shared/Thesis", settings: settings, problem: nil)))
-        project.store.apply(.tree([treeFolder("chapters", [treeFile("chapters/intro.tex")]), treeFile("main.tex", main: true), treeFile("refs.bib", .bib)]))
-        project.tree.arrived()
+        project.handle(.section(.tree([treeFolder("chapters", [treeFile("chapters/intro.tex")]), treeFile("main.tex", main: true), treeFile("refs.bib", .bib)])))
     }
 
     /// Two named versions, the second adding a section and lengthening main.tex, and changes to main.tex since, so the
