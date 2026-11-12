@@ -18,6 +18,8 @@ use crate::sys;
 pub struct RenameResult {
     pub from: String,
     pub to: String,
+    pub expanded_folders: Vec<String>,
+    pub folded_headings: Vec<String>,
     #[serde(skip)]
     pub main_moved: bool,
 }
@@ -156,10 +158,12 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
             Err(rollback) => CoreError::internal(messages::rollback_failed(err, rollback)),
         });
     }
-    move_ui(&project.ui, moved);
+    let (expanded_folders, folded_headings) = move_ui(&project.ui, moved);
     Ok(RenameResult {
         from,
         to,
+        expanded_folders,
+        folded_headings,
         main_moved: moved_main.is_some(),
     })
 }
