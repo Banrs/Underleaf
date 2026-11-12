@@ -257,9 +257,13 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
         mathPreview.show(maths, size: fontSize, at: rect, of: self, edge: completions.offered != nil && completions.isAbove ? .maxY : .minY)
     }
 
-    private func popoverRect(at offset: Int) -> NSRect? {
+    func rect(of range: NSRange) -> NSRect? {
         guard let window else { return nil }
-        var rect = convert(window.convertFromScreen(firstRect(forCharacterRange: .caret(offset), actualRange: nil)), from: nil)
+        return convert(window.convertFromScreen(firstRect(forCharacterRange: range, actualRange: nil)), from: nil)
+    }
+
+    private func popoverRect(at offset: Int) -> NSRect? {
+        guard var rect = rect(of: .caret(offset)) else { return nil }
         rect.size.width = max(rect.width, 1)
         return rect
     }

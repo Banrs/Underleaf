@@ -59,7 +59,6 @@ extension View {
 
 /// Quick Help for the reference or citation the pointer rests on: shown after a pause, and closed once the pointer
 /// leaves both the key and the popover, or on a key press, click or scroll.
-@MainActor
 final class HoverHelp {
     private unowned let text: SourceTextView
     private let popover = NSPopover()
@@ -78,10 +77,7 @@ final class HoverHelp {
     func moved(to point: NSPoint) {
         if let anchor, anchor.rect.contains(point) { return }
         close()
-        resting = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            if !Task.isCancelled { self?.rested() }
-        }
+        restart(&resting, after: .milliseconds(500)) { [weak self] in self?.rested() }
     }
 
     /// Leaving the text view for the popover keeps it.
@@ -134,11 +130,10 @@ final class HoverHelp {
 extension SourceTextView {
     /// The label or citation key under `point`, if the pointer is on its text.
     func referenceKey(at point: NSPoint) -> (range: NSRange, rect: NSRect)? {
-        guard let window, point.x >= textContainerOrigin.x else { return nil }
+        guard window != nil, point.x >= textContainerOrigin.x else { return nil }
         let index = characterIndexForInsertion(at: point)
-        let rect = { (range: NSRange) in self.convert(window.convertFromScreen(self.firstRect(forCharacterRange: range, actualRange: nil)), from: nil) }
-        guard let at = [index, index - 1].first(where: { $0 >= 0 && $0 < length && rect(NSRange(location: $0, length: 1)).contains(point) }),
-              let range = document.reference(at: at) else { return nil }
-        return (range, rect(range).insetBy(dx: -2, dy: -2))
+        guard let at = [index, index - 1].first(where: { $0 >= 0 && $0 < length && rect(of: NSRange(location: $0, length: 1))?.contains(point) == true }),
+              let range = document.reference(at: at), let rect = rect(of: range) else { return nil }
+        return (range, rect.insetBy(dx: -2, dy: -2))
     }
 }
