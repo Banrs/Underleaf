@@ -9,6 +9,7 @@ final class IssueOverlay {
         let band: CGRect
         var message: (view: IssueMessageView, rect: CGRect, cut: Bool)?
         var tip: String?
+        var tokens: [CGRect] = []
     }
 
     private unowned let view: SourceTextView
@@ -105,6 +106,24 @@ final class IssueOverlay {
             issue.message = (message, rect, fit.cut)
         }
         if issue.message?.cut != false || said.count > 1 { issue.tip = said.joined(separator: "\n") }
+        if !reported.tokens.isEmpty, let textFont = view.font {
+            // Xcode 27.2's, measured at 2×: twice the font's underline thickness on whole pixels (3 px at 13 pt), from a
+            // whole number of pixels below the baseline at the font's underline position (2 px), unbroken by descenders.
+            let scale = view.window?.backingScaleFactor ?? 2
+            let thickness = view.onPixels(2 * textFont.underlineThickness)
+            let drop = (-textFont.underlinePosition * scale).rounded(.down) / scale
+            for token in reported.tokens {
+                for line in lines {
+                    let part = NSIntersectionRange(token.range, line.characterRange)
+                    guard part.length > 0 else { continue }
+                    let lineLeft = left + line.typographicBounds.minX
+                    let start = view.onPixels(lineLeft + line.locationForCharacter(at: part.location).x)
+                    let end = view.onPixels(lineLeft + line.locationForCharacter(at: NSMaxRange(part)).x)
+                    let baseline = view.onPixels(top + line.typographicBounds.minY + line.glyphOrigin.y)
+                    issue.tokens.append(CGRect(x: start, y: baseline + drop, width: end - start, height: thickness))
+                }
+            }
+        }
         return issue
     }
 
@@ -153,9 +172,12 @@ final class IssueOverlay {
 
     func draw(in rect: CGRect, currentLine: Int?) {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
-            guard issue.line != currentLine else { continue }
-            IssueBox.line(error: issue.error, live: issue.live).setFill()
-            NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
+            if issue.line != currentLine {
+                IssueBox.line(error: issue.error, live: issue.live).setFill()
+                NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
+            }
+            IssueBox.underlines[issue.error]?.setFill()
+            issue.tokens.forEach { $0.fill() }
         }
     }
 }
