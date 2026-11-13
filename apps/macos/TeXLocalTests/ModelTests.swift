@@ -490,20 +490,42 @@ struct ViewsTests {
         #expect(window.alert == nil && views.shown.count == 3)
     }
 
-    @Test func aFolderOpenedOrAHeadingFoldedWhileARenameIsPendingStaysThatWay() async throws {
+    @Test func aFolderOpenedOrAHeadingFoldedWhileARenameOrItsUndoIsPendingStaysThatWayAndIsSaved() async throws {
         let info = try await newProject()
-        let project = ProjectModel(id: info.id, window: defaults.window())
+        let window = defaults.window(), host = UndoHost()
+        window.controller = host
+        let undo = try #require(host.undoManager)
+        undo.groupsByEvent = false
+        let reopened = { () async throws -> (Set<String>, Set<String>) in
+            let project = ProjectModel(id: info.id, window: window)
+            try await project.load()
+            defer { _ = project.close() }
+            return (project.expandedFolders, project.foldedHeadings)
+        }
+        let project = ProjectModel(id: info.id, window: window)
         try await project.load()
         let folder = try #require(await project.createEntry(in: "", directory: true))
         project.expandedFolders = [folder]
         project.foldedHeadings = ["\(folder)/a.tex\tIntro"]
+        undo.beginUndoGrouping()
         let rename = Task.immediate { await project.renameEntry(folder, to: "moved") }
         project.expandedFolders.insert("other")
         project.foldedHeadings.insert("main.tex\tIntro")
         await rename.value
+        undo.endUndoGrouping()
         #expect(project.expandedFolders == ["moved", "other"])
         #expect(project.foldedHeadings == ["moved/a.tex\tIntro", "main.tex\tIntro"])
+
+        undo.undo()
+        project.expandedFolders.insert("more")
+        project.foldedHeadings.insert("main.tex\tMethod")
+        try await waitUntil { project.files.node(at: folder) != nil && project.expandedFolders.contains(folder) }
+        let expanded: Set = [folder, "other", "more"]
+        let folded: Set = ["\(folder)/a.tex\tIntro", "main.tex\tIntro", "main.tex\tMethod"]
+        #expect(project.expandedFolders == expanded && project.foldedHeadings == folded)
         #expect(await project.close().value)
+        let saved = try await reopened()
+        #expect(saved.0 == expanded && saved.1 == folded)
     }
 
     @Test func deletingAnEntryMovesItToTheTrashWithItsUndoOnTheWindow() async throws {
