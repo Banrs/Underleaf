@@ -145,6 +145,16 @@ struct ItemActions {
     let moveToTrash: (() -> Void)?
 }
 
+enum EditorCommand: Equatable {
+    case bold, italic, underline, math, displayMath, comment, moveLineUp, moveLineDown, duplicateLine, deleteLine
+    case fold, unfold, foldAll, unfoldAll
+    case heading(String)
+    case symbol(String)
+    case block(id: String, title: String? = nil)
+    case inline(template: String, title: String? = nil)
+    case cite(String)
+}
+
 enum PDFAction {
     case zoomIn, zoomOut, zoom(Zoom), goToPage(Int), find, inverseFromView
     case reveal(ForwardLoc, SyncSource?)

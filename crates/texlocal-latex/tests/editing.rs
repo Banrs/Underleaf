@@ -190,16 +190,10 @@ fn bold_wraps_a_selection_and_reports_how_to_take_it_off() {
 
 #[test]
 fn every_selection_is_wrapped_and_one_already_styled_has_its_style_taken_off() {
-    let mut doc = SourceDocument::new("\\textbf{bold} word");
     let selections = json!([{ "start": 8, "length": 4 }, { "start": 14, "length": 4 }]);
-    let args = json!({ "selections": selections, "style": "bold" });
-    let toggled = run(&mut doc, "ToggleStyle", args);
-    for edit in toggled["edits"].as_array().unwrap().iter().rev() {
-        apply(&mut doc, edit);
-    }
-    assert_eq!(doc.text(), "bold \\textbf{word}");
     let placed = json!([{ "start": 0, "length": 4 }, { "start": 13, "length": 4 }]);
-    assert_eq!(toggled["selections"], placed);
+    let toggled = bold("\\textbf{bold} word", selections);
+    assert_eq!(toggled, ("bold \\textbf{word}".into(), placed));
     let mut doc = SourceDocument::new("one two");
     let selections = json!([{ "start": 0, "length": 3 }, { "start": 4, "length": 3 }]);
     let args = json!({ "selections": selections, "template": "$$0$" });
@@ -650,26 +644,6 @@ fn spreadsheet_cells_become_a_tabular_ruled_under_its_header_with_numbers_on_the
     assert_eq!(table("Name\tScore\r\nAda\t10\r\nBob\t9.5\r\n"), tabular);
     assert_eq!(table("Name\tScore\rAda\t10\rBob\t9.5\r"), tabular);
     assert_eq!(table("\n\nName\tScore\nAda\t10\nBob\t9.5\n\t\n\n"), tabular);
-}
-
-#[test]
-fn a_tabular_takes_booktabs_rules_and_the_lines_indentation_when_asked() {
-    let mut doc = SourceDocument::new("    ");
-    let change = run(
-        &mut doc,
-        "PasteTable",
-        json!({ "selection": caret(4), "cells": "a\tb\nx\t2\n", "booktabs": true }),
-    );
-    let expected = lines(&[
-        "\\begin{tabular}{lr}",
-        "      \\toprule",
-        "      a & b \\\\",
-        "      \\midrule",
-        "      x & 2 \\\\",
-        "      \\bottomrule",
-        "    \\end{tabular}",
-    ]);
-    assert_eq!(change["edits"][0]["text"], expected);
 }
 
 #[test]

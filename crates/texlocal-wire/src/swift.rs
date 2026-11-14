@@ -95,59 +95,11 @@ fn swift(ty: &Ty, generic: &BTreeSet<&str>) -> String {
 }
 
 fn ident(name: &str) -> String {
-    const KEYWORDS: &[&str] = &[
-        "as",
-        "associatedtype",
-        "break",
-        "case",
-        "catch",
-        "class",
-        "continue",
-        "default",
-        "defer",
-        "deinit",
-        "do",
-        "else",
-        "enum",
-        "extension",
-        "fallthrough",
-        "false",
-        "fileprivate",
-        "for",
-        "func",
-        "guard",
-        "if",
-        "import",
-        "in",
-        "init",
-        "inout",
-        "internal",
-        "is",
-        "let",
-        "nil",
-        "open",
-        "operator",
-        "private",
-        "protocol",
-        "public",
-        "repeat",
-        "return",
-        "self",
-        "static",
-        "struct",
-        "subscript",
-        "super",
-        "switch",
-        "throw",
-        "throws",
-        "true",
-        "try",
-        "typealias",
-        "var",
-        "where",
-        "while",
-    ];
-    if KEYWORDS.contains(&name) {
+    const KEYWORDS: &str = "as associatedtype break case catch class continue default defer deinit do \
+        else enum extension fallthrough false fileprivate for func guard if import in init inout \
+        internal is let nil open operator private protocol public repeat return self static struct \
+        subscript super switch throw throws true try typealias var where while";
+    if KEYWORDS.split_whitespace().any(|keyword| keyword == name) {
         format!("`{name}`")
     } else {
         name.into()

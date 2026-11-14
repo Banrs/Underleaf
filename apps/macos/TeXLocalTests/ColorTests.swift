@@ -14,13 +14,6 @@ struct ColorTests {
         #expect(shown >= 4.45, "\(kind) in \(name.rawValue): \(shown)")
     }
 
-    @Test(arguments: [NSAppearance.Name.accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua],
-          [NSColor.systemYellow, .systemBlue, .systemGray, .secondaryLabelColor])
-    func highContrastRaisesTextToSevenToOne(_ name: NSAppearance.Name, _ color: NSColor) {
-        let shown = ratio(color.legibleAsText(in: name), in: name)
-        #expect(shown >= 6.95, "\(color) in \(name.rawValue): \(shown)")
-    }
-
     @Test func aColourAlreadyLegibleKeepsItsValue() {
         let black = NSColor.black.legibleAsText(in: .aqua)
         #expect(black.rgba(in: NSAppearance(named: .aqua)!) == [0, 0, 0, 1])

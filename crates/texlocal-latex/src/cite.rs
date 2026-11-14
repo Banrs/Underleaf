@@ -267,6 +267,22 @@ mod tests {
             doi("10.1000/a%28b%29").unwrap().1,
             "https://doi.org/10.1000/a%2528b%2529"
         );
+        for (text, path) in [
+            (
+                "https://doi.org/10.1103/PhysRevLett.116.061102?nols=y",
+                "10.1103/PhysRevLett.116.061102",
+            ),
+            ("https://doi.org/10.1000/a#section", "10.1000/a"),
+            (
+                "https://doi.org/10.1000/a%3Fb%23c?query#fragment",
+                "10.1000/a%3Fb%23c",
+            ),
+            ("10.1000/a?b#c%20", "10.1000/a%3Fb%23c%2520"),
+            ("https://example.org see 10.1000/a%20", "10.1000/a%2520"),
+        ] {
+            let url = format!("https://doi.org/{path}");
+            assert_eq!(doi(text).unwrap().1, url, "{text}");
+        }
         for id in [
             "1706.03762",
             "arXiv:1706.03762v5",

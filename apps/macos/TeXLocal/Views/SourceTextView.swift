@@ -23,6 +23,16 @@ final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCu
 
     var document = SourceDocument(text: "") { willSet { document.composing = false } }
     var source: NSString { textStorage?.mutableString ?? "" }
+
+    func offset(_ location: any NSTextLocation) -> Int {
+        textLayoutManager.map { $0.offset(from: $0.documentRange.location, to: location) } ?? 0
+    }
+
+    func textRange(_ range: NSRange) -> NSTextRange? {
+        guard let manager = textLayoutManager, let start = manager.location(manager.documentRange.location, offsetBy: range.location),
+              let end = manager.location(start, offsetBy: range.length) else { return nil }
+        return NSTextRange(location: start, end: end)
+    }
     var undo = UndoManager()
     var fileDrop: (URL) -> FileDrop? = { _ in nil }
     enum FileDrop { case open(() -> Void), insert(String), copy(() async -> String?) }
