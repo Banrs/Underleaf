@@ -668,6 +668,61 @@ struct ViewsTests {
         #expect(project.syncTask != nil)
     }
 
+    @Test func quietSyncDoesNotReopenAPaneHiddenWhileItsReplyIsPending() async throws {
+        let info = try await newProject()
+        let root = URL(filePath: info.path), build = root.appending(path: "build")
+        try "First paragraph.\n".write(to: root.appending(path: "main.tex"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try blankPDF(count: 1).write(to: build.appending(path: "main.pdf"))
+        try """
+        SyncTeX Version:1
+        Input:1:main.tex
+        Output:pdf
+        Magnification:1000
+        Unit:1
+        X Offset:0
+        Y Offset:0
+        Content:
+        {1
+        [1,1:4736286,46220574:26673152,41484288,0
+        (1,1:8799518,8865054:22609920,455111,0
+        g1,1:11475574,8865054
+        )
+        ]
+        }1
+        Postamble:
+
+        """.write(to: build.appending(path: "main.synctex"), atomically: true, encoding: .utf8)
+        let window = defaults.window(), host = UndoHost()
+        window.controller = host
+        let project = ProjectModel(id: info.id, window: window)
+        let views = Views(project)
+        try await project.load()
+        views.hasPDF = true
+        let loc = try await project.session.call(SynctexForward(file: "main.tex", line: 1))
+        let x = try #require(loc.h) + 1, y = try #require(loc.v) - #require(loc.height) / 2
+        for forward in [true, false] {
+            for quietly in [true, false] {
+                window.layout = .split
+                views.revealed = []
+                host.pdfActions = []
+                project.syncTask = nil
+                let syncing = Task.immediate {
+                    if forward { await project.forwardSync(quietly: quietly) }
+                    else { await project.inverseSync(page: 1, x: x, y: y, click: PageClick(text: "First paragraph.", at: 1), quietly: quietly) }
+                }
+                try #require(project.syncTask != nil)
+                window.layout = forward ? .source : .pdf
+                await syncing.value
+                #expect((forward ? window.showPDF : window.showSource) == !quietly)
+                #expect(host.pdfActions.count == (forward && !quietly ? 1 : 0))
+                #expect(views.revealed == (!forward && !quietly ? ["main.tex:1"] : []))
+                #expect(window.alert == nil)
+            }
+        }
+        #expect(await project.close().value)
+    }
+
     @Test func theLivePDFShowsWhileLivePreviewRunsUntilTheProjectCloses() async {
         let project = ProjectModel(id: "P", window: defaults.window())
         let live = { (phase: LivePhase) in
@@ -754,7 +809,8 @@ struct ViewsTests {
 
     private final class UndoHost: AppWindow {
         let undoManager: UndoManager? = UndoManager()
-        func performPDF(_ action: PDFAction) {}
+        var pdfActions: [PDFAction] = []
+        func performPDF(_ action: PDFAction) { pdfActions.append(action) }
         func revealSidebar() {}
         func focusSearch() {}
         func show() {}
