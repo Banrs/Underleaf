@@ -29,7 +29,7 @@ extension SourceTextView {
         gutter.drawnLine = current?.rect
         guard let current, current.rect.intersects(rect) else { return }
         NSColor.currentLine.setFill()
-        NSBezierPath(roundedRect: current.rect, xRadius: 4, yRadius: 4).fill()
+        NSBezierPath(roundedRect: current.rect, xRadius: Self.bandRadius, yRadius: Self.bandRadius).fill()
     }
 
     var currentLine: (number: Int, rect: CGRect)? {
@@ -51,7 +51,7 @@ extension SourceTextView {
         let top = onPixels(textContainerOrigin.y + frame.minY + (lines.first?.typographicBounds.minY ?? 0) - halfLineSpacing)
         let bottom = onPixels(textContainerOrigin.y + frame.minY + (lines.last?.typographicBounds.maxY ?? frame.height) + halfLineSpacing)
         // Xcode 27.2's line highlight is inset 14 pt and 8 pt on a 2× display.
-        let leading: CGFloat = 14, trailing: CGFloat = 8
+        let leading: CGFloat = 14, trailing = Self.bandTrailingInset
         return CGRect(x: leading, y: top, width: max(0, bounds.width - leading - trailing), height: bottom - top)
     }
 

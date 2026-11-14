@@ -1,6 +1,8 @@
 import AppKit
 
 final class SourceTextView: NSTextView, NSTextStorageDelegate, NSAccessibilityCustomRotorItemSearchDelegate {
+    static let bandTrailingInset: CGFloat = 8
+    static let bandRadius: CGFloat = 4
     static func plainDocument() -> SourceTextView {
         let view = SourceTextView(usingTextLayoutManager: true)
         view.isRichText = false
