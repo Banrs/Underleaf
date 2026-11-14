@@ -10,12 +10,11 @@ extension NSToolbarItem.Identifier {
     static let zoom = Self("zoom")
     static let compile = Self("compile")
     static let layout = Self("layout")
-    static let inspector = Self("inspector")
     static let share = Self("share")
 }
 
 final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePickerToolbarItemDelegate, NSMenuItemValidation {
-    let toolbar = NSToolbar(identifier: "Workspace 8")
+    let toolbar = NSToolbar(identifier: "Workspace 9")
     private(set) var compactCompile = false
     weak var workspace: WorkspaceController?
     private let window: WindowModel
@@ -49,7 +48,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .navigation, .flexibleSpace, .format, .math, .insert,
          .pdfSeparator, .flexibleSpace, .zoom, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .layout, .inspector]
+         .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -57,12 +56,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     }
 
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
-        [.toggleSidebar, .sidebarTrackingSeparator, .navigation, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, .navigation, .pdfSeparator, .compile, .layout, .inspectorTrackingSeparator, .toggleInspector]
     }
 
     func toolbarWillAddItem(_ notification: Notification) {
         guard let item = notification.userInfo?[NSToolbarUserInfoKey.itemKey] as? NSToolbarItem,
-              item.itemIdentifier == .toggleSidebar else { return }
+              [.toggleSidebar, .toggleInspector].contains(item.itemIdentifier) else { return }
         item.visibilityPriority = .high
     }
 
@@ -109,12 +108,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         case .layout:
             item = menuItem(id, "Editor Layout", window.layout.symbol, WorkspaceLayoutPicker(window: window))
             item.toolTip = "Choose Source Only, Source & PDF, or PDF Only"
-        case .inspector:
-            item = NSToolbarItem(itemIdentifier: id)
-            item.label = MenuCommand.viewToggleInspector.title
-            item.toolTip = "Show or hide the inspector"
-            item.image = NSImage(systemSymbolName: "sidebar.trailing", accessibilityDescription: item.label)
-            item.action = #selector(NSSplitViewController.toggleInspector(_:))
         case .share:
             let share = ShareItem(itemIdentifier: id)
             share.delegate = self
@@ -125,7 +118,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.autovalidates = false
         // Back and Forward stay in their menus and their keys, so they give way before a compact Compile in a narrow window.
         item.visibilityPriority = id == .compile ? compilePriority : id == .navigation ? .standard
-            : [.zoom, .layout, .inspector].contains(id) ? .high : .low
+            : [.zoom, .layout].contains(id) ? .high : .low
         if inserted { configure(item, state) }
         return item
     }
