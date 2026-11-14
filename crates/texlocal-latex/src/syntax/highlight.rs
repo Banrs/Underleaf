@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::catalog::CATALOG;
-use super::scan::{blank_line, find, inline_code_end};
+use super::scan::{blank_line, find, inline_code_end, tex_space};
 use super::stack::Stack;
 use super::{NAME, Text, ascii, is, letter};
 
@@ -224,9 +224,12 @@ fn math_environment(
     starred: bool,
 ) -> Option<HighlightKind> {
     let mut end = Stream { ..*s };
-    if end.eat("\\end{") && end.eat(name) && (!starred || end.eat("*")) && end.eat("}") {
-        state.mode = Mode::Normal;
-        return None;
+    if end.eat("\\end") {
+        end.eat_while(tex_space);
+        if end.eat("{") && end.eat(name) && (!starred || end.eat("*")) && end.eat("}") {
+            state.mode = Mode::Normal;
+            return None;
+        }
     }
     math(s, state, None)
 }
