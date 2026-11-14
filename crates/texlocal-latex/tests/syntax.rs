@@ -164,6 +164,21 @@ fn a_maths_environment_is_maths_until_its_own_end() {
 }
 
 #[test]
+fn a_spaced_maths_environment_end_restores_prose_colouring() {
+    for name in ["equation", "align*"] {
+        for space in [" ", "\t"] {
+            let text = format!("\\begin{{{name}}}\nx\n\\end{space}{{{name}}}\nAfter");
+            let mut doc = SourceDocument::new(&text);
+            let maths: Vec<_> = kinds(&mut doc)
+                .into_iter()
+                .filter(|(_, kind)| kind == "Maths")
+                .collect();
+            assert_eq!(maths, pairs(&[("x", "Maths")]), "{text:?}");
+        }
+    }
+}
+
+#[test]
 fn inline_code_and_text_in_maths_open_and_close_maths_where_the_scanner_does() {
     for (text, command) in [
         ("\\lstinline|a$b| c", "\\lstinline"),
