@@ -2079,6 +2079,42 @@ async fn a_fetched_citation_is_added_to_the_named_bibliography_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_fetched_citation_avoids_keys_typed_since_the_last_scan() {
+    let rig = Rig::open(&[
+        ("main.tex", "\\cite{x}\n\\bibliography{refs}\n"),
+        ("refs.bib", ""),
+    ])
+    .await;
+    rig.section("outline", |o| !o.is_null());
+    let doc = rig.open_document("refs.bib");
+    doc.edit(
+        0,
+        0,
+        "@book{lovelace1843notes,title={Existing}}",
+        None,
+        false,
+    )
+    .unwrap();
+    let added = rig.call(
+        "AddCitation",
+        json!({ "entry": "@misc{k,author={Ada Lovelace},title={Notes},year={1843}}" }),
+    );
+    assert_eq!(added["key"], "lovelace1843notesa");
+    let edit = &added["edits"]["edits"]["edits"][0];
+    doc.edit(
+        edit["start"].as_u64().unwrap() as u32,
+        0,
+        edit["text"].as_str().unwrap(),
+        None,
+        false,
+    )
+    .unwrap();
+    let bib = doc.with(|source| source.text());
+    assert_eq!(bib.matches("{lovelace1843notes,").count(), 1);
+    assert_eq!(bib.matches("{lovelace1843notesa,").count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_project_without_a_bibliography_gets_one_for_a_fetched_citation() {
     let rig = Rig::open(&[("main.tex", "Text.\n")]).await;
     rig.open_document("main.tex");
