@@ -663,6 +663,24 @@ fn spreadsheet_cells_paste_on_lines_of_their_own_at_the_current_lines_indentatio
 }
 
 #[test]
+fn a_table_replacing_multiple_lines_separates_the_surviving_suffix() {
+    for (length, ending) in [
+        (3, "\\end{tabular}\nd"),
+        (2, "\\end{tabular}\ncd"),
+        (4, "\\end{tabular}"),
+    ] {
+        let mut doc = SourceDocument::new("ab\ncd");
+        let change = run(
+            &mut doc,
+            "PasteTable",
+            json!({ "selection": { "start": 1, "length": length }, "cells": "x\ty", "booktabs": false }),
+        );
+        apply(&mut doc, &change["edits"][0]);
+        assert!(doc.text().ends_with(ending), "{}", doc.text());
+    }
+}
+
+#[test]
 fn a_single_row_is_ruled_above_and_below_and_aligned_by_its_own_cells() {
     let tabular = lines(&[
         "\\begin{tabular}{rl}",
