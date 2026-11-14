@@ -582,7 +582,7 @@ struct ViewsTests {
         #expect(await project.close().value)
     }
 
-    @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() {
+    @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() async throws {
         let window = defaults.window()
         window.app.syncAfterCompile = true
         let project = ProjectModel(id: "P", window: window)
@@ -595,6 +595,9 @@ struct ViewsTests {
         #expect(!project.syncsAfterBuild)
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         #expect(project.syncsAfterBuild)
+        project.handle(.buildFinished(BuildFinished(auto: false, announce: false)))
+        try await waitUntil { project.syncTask != nil }
+        await project.syncTask?.value
         build(true, true)
         #expect(!project.syncsAfterBuild)
         build(true, false)
