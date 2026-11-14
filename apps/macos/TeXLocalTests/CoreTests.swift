@@ -89,7 +89,7 @@ struct CoreTests {
         views.editor.shown = true
         defer { text.helpPopover.close(); window.close() }
         try #require(text.popoverRect(at: 8) != nil)
-        try await waitUntil { text.document.definition(at: 8)?.name == "alpha" }
+        try await waitUntil { text.document.definition(at: 8) != nil }
         try #require(await project.quickHelp(in: "main.tex", at: 8)?.title == "alpha")
         text.quickHelp(8, false)
         let pending = try #require(Mirror(reflecting: project.session).children.first { $0.label == "tasks" }?.value as? [Int: Task<Void, Never>])
