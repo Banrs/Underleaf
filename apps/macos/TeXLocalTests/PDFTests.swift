@@ -77,6 +77,17 @@ struct PDFTests {
         #expect(page.click(at: CGPoint(x: above.midX, y: above.maxY + 0.5)) == PageClick(text: text, at: word.location))
     }
 
+    @Test func aClickBesideABadBoxsBarPressesIt() {
+        let page = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 200)), overlay = PageOverlay(frame: page.bounds)
+        page.addSubview(overlay)
+        let area = ForwardLoc(page: 1, h: 72, v: 300, width: 300, height: 20, matches: [])
+        let mark = BadBoxMark(BadBoxArea(file: "main.tex", line: 4, tooWide: nil, message: "Underfull", area: area, overrun: 0)) { _ in }
+        mark.frame = NSRect(x: 100, y: 50, width: 3, height: 10)
+        overlay.addSubview(mark)
+        for x in [97.0, 101, 106] { #expect(overlay.hitTest(NSPoint(x: x, y: 55)) === mark) }
+        for point in [NSPoint(x: 95, y: 55), NSPoint(x: 108, y: 55), NSPoint(x: 106, y: 61)] { #expect(overlay.hitTest(point) == nil) }
+    }
+
     @Test func aZoomChosenWhileThePaneIsHiddenIsTheOneKept() {
         let controller = PDFController()
         controller.setScale(2)

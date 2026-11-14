@@ -295,7 +295,11 @@ final class PageOverlay: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) as? BadBoxMark }
+    /// A bad box's bar is 3 pt of ink at most, so a click within 4 pt of its sides presses it too.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let near = convert(point, from: superview)
+        return super.hitTest(point) as? BadBoxMark ?? subviews.first { $0 is BadBoxMark && $0.frame.insetBy(dx: -4, dy: 0).contains(near) }
+    }
 
     /// The cover is the whole page, so it keeps to the overlay, which PDFKit trims by a fraction of a point after a page is
     /// replaced in place.
