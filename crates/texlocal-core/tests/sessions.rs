@@ -1053,6 +1053,15 @@ async fn an_export_holds_the_sources_and_opens_as_a_new_project() {
         rig.call("ExportZip", json!({ "dest": inside, "forArxiv": false }));
     }
     assert_eq!(zip_names(&inside), ["ch.tex", "main.tex"]);
+
+    fs::remove_file(&inside).unwrap();
+    let alias = rig.library.path("Alias");
+    std::os::unix::fs::symlink(rig.root(), &alias).unwrap();
+    let dest = alias.join("Shared.zip");
+    for _ in 0..2 {
+        rig.call("ExportZip", json!({ "dest": dest, "forArxiv": false }));
+        assert_eq!(zip_names(&dest), ["ch.tex", "main.tex"]);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
