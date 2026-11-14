@@ -252,8 +252,10 @@ impl Actor {
             let sync = reader.of(&project, live.as_deref())?;
             let mut loc = synctex::inverse(&sync, &project, page, x, y, click, &text)?;
             // SyncTeX answers in the typeset text's lines, which edits since may have moved.
-            if let (Some(typeset), Some(doc)) = (typeset(&loc.file), docs.get(&loc.file)) {
-                loc.line = map_line(&doc.snapshot().0, typeset, loc.line);
+            if let Some(typeset) = typeset(&loc.file)
+                && let Some(text) = current_text(&docs, &project.root, &loc.file)
+            {
+                loc.line = map_line(&text, typeset, loc.line);
             }
             Ok(loc)
         });
