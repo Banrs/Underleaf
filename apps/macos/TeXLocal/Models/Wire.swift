@@ -229,8 +229,6 @@ nonisolated struct CreateProject: LibraryRequest {
 }
 
 nonisolated struct Definition: Decodable, Hashable, Sendable {
-    var kind: SymbolKind
-    var name: String
     var places: [FilePlace]
 }
 

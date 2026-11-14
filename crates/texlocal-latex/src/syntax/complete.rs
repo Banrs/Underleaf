@@ -135,8 +135,6 @@ pub(crate) struct SymbolName {
 
 #[derive(Serialize, JsonSchema)]
 pub(crate) struct Definition {
-    kind: SymbolKind,
-    name: String,
     places: Vec<FilePlace>,
 }
 
@@ -284,7 +282,7 @@ impl SourceDocument {
             .into_iter()
             .map(|(file, at)| at.in_file(file))
             .collect();
-        (!places.is_empty()).then_some(Definition { kind, name, places })
+        (!places.is_empty()).then_some(Definition { places })
     }
 
     pub(crate) fn symbol(&mut self, at: u32) -> Option<SymbolName> {

@@ -314,7 +314,6 @@ fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
     assert_eq!(run(&mut doc, "DefinitionAt", at.clone()), Value::Null);
     doc.set_symbols(scan(&[("main.tex", text)], Installed::default()).symbols);
     let answer = run(&mut doc, "DefinitionAt", at);
-    assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
 }
 
@@ -335,8 +334,6 @@ fn a_bibtex_cross_reference_after_a_blank_line_leads_to_its_parent() {
         "DefinitionAt",
         json!({ "at": text.find("parent").unwrap() + 1 }),
     );
-    assert_eq!(answer["kind"], "citation");
-    assert_eq!(answer["name"], "parent");
     assert_eq!(
         answer["places"],
         json!([{ "file": path, "line": 7, "column": 6, "length": 6 }])
