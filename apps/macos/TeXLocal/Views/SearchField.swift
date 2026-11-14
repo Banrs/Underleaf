@@ -36,7 +36,8 @@ struct FilterField<Toggles: View>: View {
                 .accessibilityValue("Active", isEnabled: hasActiveOptions)
                 .fixedSize()
             }
-            // AppKit's placeholder colour, as Xcode's field has; SwiftUI's own prompt over glass came out a fifth brighter.
+            // AppKit's placeholder colour, which inside glass draws at Xcode's placeholder brightness (white at 50% on the stroke
+            // cores); SwiftUI's own prompt inside glass draws at 64%.
             TextField(text: $text, prompt: Text("Filter").foregroundStyle(Color(nsColor: .placeholderTextColor))) { Text("Filter") }
                 .textFieldStyle(.plain).help(help).accessibilityLabel("Filter")
             if !text.isEmpty { Button("Clear", systemImage: "xmark.circle.fill") { text = "" }.foregroundStyle(.filterSymbol) }
@@ -57,19 +58,23 @@ struct FilterToggle: View {
     let symbol: String
     let label: LocalizedStringKey, help: LocalizedStringKey
     @Binding var isOn: Bool
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         Toggle(label, systemImage: symbol, isOn: $isOn)
             .symbolVariant(isOn ? .fill : .none)
-            // Off, Xcode 27.2 draws a filter's toggles in the tertiary label colour, a step quieter than the filter symbol.
-            .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(nsColor: .tertiaryLabelColor)))
+            // Off, Xcode 27.2's toggles draw at its placeholder's brightness while the window is active and drop to the tertiary
+            // label colour (the filter symbol and the placeholder stay) once it isn't, read off stroke cores at 2× in both states.
+            .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(activeState == .inactive ? Color(nsColor: .tertiaryLabelColor) : .filterSymbol))
             .help(help)
     }
 }
 
 private extension ShapeStyle where Self == Color {
-    /// The colour Xcode 27.2 draws a filter's symbol in; a hierarchical secondary style over glass comes out a quarter dimmer.
-    static var filterSymbol: Color { Color(nsColor: .secondaryLabelColor) }
+    /// The colour of the field's own placeholder, so the symbols match the text beside them: white at 50% inside glass, as
+    /// Xcode 27.2's placeholder and off toggles are. Xcode's filter symbol alone is at 55%, as a stock search field's magnifier
+    /// is; no system colour draws at that inside glass, where the hierarchical secondary style comes out at 39%.
+    static var filterSymbol: Color { Color(nsColor: .placeholderTextColor) }
 }
 
 final class FieldHandle {
