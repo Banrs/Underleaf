@@ -27,7 +27,8 @@ The source of TeXLocal, a macOS LaTeX editor. Rust backend in `crates/` (see `do
   `window.sendEvent` clicks.
 - Keep stock native behaviour (TextKit 2, AppKit, SwiftUI) over workarounds that copy Xcode's quirks. Keep the 18 pt
   rows (1.1× spacing at 13 pt); 16 pt rows are cramped.
-- Rejected chrome looks are listed in `docs/window-chrome.md`; don't repeat them without new evidence.
+- `docs/window-chrome.md` lists the chrome looks rejected on 2026-11-03 and which later commits overtook. Check it and
+  `git log` since then, and don't repeat a rejection still standing without new evidence.
 
 ## Measuring
 
