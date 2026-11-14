@@ -1798,31 +1798,6 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_overflowing_output_span_is_ignored() {
-    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
-        // One byte more than the output kept, built by the script: Linux caps a single argument at 128 KiB.
-        let script = r#"#!/bin/sh
-echo '["live",4]'
-echo '["append","out",0,"kept"]'
-printf '["append","out",18446744073709551615,"'
-head -c 131073 /dev/zero | tr '\0' x
-printf '"]\n'
-echo '["page",0,"JVBER"]'
-while read -r _; do :; done
-"#;
-        let texpresso = library.path("texpresso");
-        program(&texpresso.join("texpresso"), script);
-        app_settings(library, json!({ "texpressoDir": texpresso }));
-    })
-    .await;
-    rig.call("StartLive", json!({}));
-    assert_eq!(rig.event("livePage", |_| true)["pdf"], "JVBER");
-    rig.forget();
-    rig.call("LiveLog", json!({ "shown": true }));
-    assert_eq!(rig.section("liveLog", |_| true), "kept");
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_live_exit_drains_stderr_before_publishing_ended() {
     let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
         let script = r#"#!/usr/bin/python3

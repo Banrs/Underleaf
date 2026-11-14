@@ -579,6 +579,8 @@ mod tests {
         assert_eq!((out.base, out.text()), (20, "f".into()));
         out.append(1, b"near");
         assert_eq!((out.base, out.text()), (1, "near".into()));
+        out.append(u64::MAX, b"overflowing");
+        assert_eq!((out.base, out.text()), (1, "near".into()));
         let mut log = Output {
             max: MAX_LOG,
             ..Output::default()
