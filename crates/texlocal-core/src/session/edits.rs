@@ -83,17 +83,7 @@ impl Actor {
         if to.is_empty() || to.contains(|c: char| "{}%\\,".contains(c) || c.is_whitespace()) {
             return Err(CoreError::bad_request(bad_name()));
         }
-        let open = self.text_to_edit()?;
-        let texts = open.map(|open| (open.path, open.text));
-        let read = projects::scan_facts(
-            &self.core.project,
-            &self.tree.facts,
-            &texts.into_iter().collect(),
-        )?;
-        let defines = |name: &str| {
-            let mut files = read.values();
-            files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
-        };
+        let defines = self.defined(kind)?;
         if !defines(&from) {
             return Err(CoreError::not_found(undefined(&from)));
         }
@@ -173,7 +163,7 @@ impl Actor {
         }
     }
 
-    fn citation(&mut self, fetched: &str) -> Result<Citation, CoreError> {
+    fn defined(&mut self, kind: SymbolKind) -> Result<impl Fn(&str) -> bool + use<>, CoreError> {
         let open = self.text_to_edit()?;
         let texts = open.map(|open| (open.path, open.text));
         let read = projects::scan_facts(
@@ -181,6 +171,14 @@ impl Actor {
             &self.tree.facts,
             &texts.into_iter().collect(),
         )?;
+        Ok(move |name: &str| {
+            let mut files = read.values();
+            files.any(|facts| !syntax::definitions(&facts.defined, kind, name).is_empty())
+        })
+    }
+
+    fn citation(&mut self, fetched: &str) -> Result<Citation, CoreError> {
+        let taken = self.defined(SymbolKind::Citation)?;
         let scan = Arc::clone(
             &self
                 .tree
@@ -188,12 +186,6 @@ impl Actor {
                 .read()
                 .unwrap_or_else(PoisonError::into_inner),
         );
-        let taken = |key: &str| {
-            let mut files = read.values();
-            files.any(|facts| {
-                !syntax::definitions(&facts.defined, SymbolKind::Citation, key).is_empty()
-            })
-        };
         let tidied = cite::tidy(fetched, taken)
             .ok_or_else(|| CoreError::bad_request(messages::no_bibtex()))?;
         let mut bibs = (self.tree.main.as_deref())
