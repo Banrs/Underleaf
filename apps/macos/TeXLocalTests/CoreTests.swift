@@ -76,6 +76,30 @@ struct CoreTests {
         #expect(await project.close().value)
     }
 
+    @Test func quickHelpRejectsAnEditedSource() async throws {
+        let info = try await newProject(template: .blank)
+        try #"\label{alpha}\ref{alpha}"#.write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
+        let defaults = TestDefaults(), model = defaults.window()
+        let project = ProjectModel(id: info.id, window: model), views = WorkspaceViews(project: project)
+        try await project.load()
+        let text = views.editor.textView
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = views.editor.scrollView
+        views.editor.shown = true
+        defer { text.helpPopover.close(); window.close() }
+        try #require(text.popoverRect(at: 8) != nil)
+        try await waitUntil { text.document.definition(at: 8)?.name == "alpha" }
+        try #require(await project.quickHelp(in: "main.tex", at: 8)?.title == "alpha")
+        text.quickHelp(8, false)
+        let pending = try #require(Mirror(reflecting: project.session).children.first { $0.label == "tasks" }?.value as? [Int: Task<Void, Never>])
+        try #require(!pending.isEmpty)
+        text.insertText("% edited", replacementRange: .caret(text.length))
+        for task in pending.values { await task.value }
+        #expect(text.helpPopover.contentViewController == nil)
+        #expect(await project.close().value)
+    }
+
     @Test func anAcceptedEditSurvivesAnExternalReloadWithItsUndoAndAConflict() async throws {
         let info = try await newProject(template: .blank)
         let defaults = TestDefaults(), window = defaults.window()
