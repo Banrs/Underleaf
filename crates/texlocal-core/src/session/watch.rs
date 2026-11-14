@@ -132,17 +132,13 @@ impl Tree {
     }
 }
 
-pub(crate) struct Watching {
+struct Watching {
     watcher: RecommendedWatcher,
     paths: BTreeMap<PathBuf, bool>,
     links: Arc<Mutex<BTreeMap<PathBuf, PathBuf>>>,
 }
 
-pub(crate) fn watch(
-    project: &Project,
-    index: &TreeIndex,
-    tx: mpsc::UnboundedSender<Msg>,
-) -> Option<Watching> {
+fn watch(project: &Project, index: &TreeIndex, tx: mpsc::UnboundedSender<Msg>) -> Option<Watching> {
     let base = project.clone();
     let links = Arc::new(Mutex::new(BTreeMap::new()));
     let aliases = Arc::clone(&links);
@@ -172,7 +168,7 @@ pub(crate) fn watch(
 }
 
 impl Watching {
-    pub fn refresh(&mut self, project: &Project, index: &TreeIndex) {
+    fn refresh(&mut self, project: &Project, index: &TreeIndex) {
         let links = linked(project, index);
         let mut paths = BTreeMap::from([(project.root.clone(), true)]);
         for target in links
@@ -323,12 +319,7 @@ pub(crate) struct Meaning {
     pub listed: BTreeSet<String>,
 }
 
-pub(crate) fn classify(
-    project: &Project,
-    changes: &[Change],
-    index: &TreeIndex,
-    docs: &[String],
-) -> Meaning {
+fn classify(project: &Project, changes: &[Change], index: &TreeIndex, docs: &[String]) -> Meaning {
     let mut meaning = Meaning::default();
     for change in changes {
         let Some(rel) = relative(&project.root, &change.path) else {

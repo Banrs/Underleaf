@@ -133,7 +133,7 @@ impl Builds {
         result.flat_map(|result| result.errors.iter().chain(&result.warnings))
     }
 
-    pub fn waits(&mut self, cx: &Core, auto: bool) -> bool {
+    fn waits(&mut self, cx: &Core, auto: bool) -> bool {
         if auto && !*cx.service.tex_found.borrow() {
             self.waiting_for_tex = true;
         } else if self.busy() {

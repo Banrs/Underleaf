@@ -120,7 +120,7 @@ impl Service {
         projects::list_projects(self)
     }
 
-    pub(crate) fn publish_projects(&self) -> Result<(), CoreError> {
+    fn publish_projects(&self) -> Result<(), CoreError> {
         if self.hub.get().is_some() {
             let mut sent = lock(&self.sent);
             self.publish(&mut sent, LibrarySection::Projects(self.projects()?));

@@ -26,7 +26,7 @@ use crate::{messages, paths, synctex};
 mod sources;
 use sources::Sources;
 
-pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
+const MAX_FILE: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -98,7 +98,7 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    pub fn active(&self) -> bool {
+    fn active(&self) -> bool {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
     }
 

@@ -26,7 +26,7 @@ use crate::projects;
 use crate::stamp::Stamp;
 use crate::{CoreError, lf, lock, newline};
 
-pub(super) const MAX_EDITED: u64 = 64 << 20;
+const MAX_EDITED: u64 = 64 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -60,7 +60,7 @@ pub(crate) struct Doc {
 }
 
 impl Doc {
-    pub fn dirty(&self) -> bool {
+    fn dirty(&self) -> bool {
         self.force || self.doc.version() != self.saved
     }
 
