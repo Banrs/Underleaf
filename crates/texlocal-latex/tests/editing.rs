@@ -653,26 +653,6 @@ fn spreadsheet_cells_become_a_tabular_ruled_under_its_header_with_numbers_on_the
 }
 
 #[test]
-fn a_tabular_takes_booktabs_rules_and_the_lines_indentation_when_asked() {
-    let mut doc = SourceDocument::new("    ");
-    let change = run(
-        &mut doc,
-        "PasteTable",
-        json!({ "selection": caret(4), "cells": "a\tb\nx\t2\n", "booktabs": true }),
-    );
-    let expected = lines(&[
-        "\\begin{tabular}{lr}",
-        "      \\toprule",
-        "      a & b \\\\",
-        "      \\midrule",
-        "      x & 2 \\\\",
-        "      \\bottomrule",
-        "    \\end{tabular}",
-    ]);
-    assert_eq!(change["edits"][0]["text"], expected);
-}
-
-#[test]
 fn spreadsheet_cells_paste_on_lines_of_their_own_at_the_current_lines_indentation() {
     let cells = "Name\tScore\r\nAda\t10\r\n";
     let table = |indent: &str, rules: [&str; 3]| {
