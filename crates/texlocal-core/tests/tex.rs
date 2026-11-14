@@ -33,6 +33,7 @@ async fn latexmk_builds_a_pdf_with_its_bibliography_and_synctex_goes_from_a_line
         "the reference and citation resolve"
     );
     assert!(Path::new(result["pdf"].as_str().unwrap()).is_file());
+    assert!(rig.root().join("build/main.synctex").is_file());
     let forward = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 4 }));
     assert_eq!(forward["page"].as_f64(), Some(1.0));
     let (h, v) = (

@@ -1709,6 +1709,7 @@ async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-norc"));
+    assert!(args().lines().any(|a| a == "-synctex=-1"));
     assert!(!args().contains("-shell-escape"));
     rig.forget();
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
