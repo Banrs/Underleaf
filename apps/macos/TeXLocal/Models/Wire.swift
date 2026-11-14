@@ -1481,7 +1481,6 @@ nonisolated struct Tabbing: Decodable, Hashable, Sendable {
 nonisolated struct Template: Decodable, Hashable, Sendable {
     var title: String
     var body: String
-    var symbol: String?
     var inline: Bool
 }
 

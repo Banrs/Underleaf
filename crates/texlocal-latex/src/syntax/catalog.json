@@ -77,21 +77,21 @@
       {"title":"Aligned Equations","body":"align"}
     ],
     "insert": [
-      {"title":"Figure","body":"figure","symbol":"photo"},
-      {"title":"Table","body":"table","symbol":"tablecells"},
+      {"title":"Figure","body":"figure"},
+      {"title":"Table","body":"table"},
       {"title":"Code Block","body":"code"}
     ],
     "list": [
-      {"title":"Bulleted List","body":"itemize","symbol":"list.bullet"},
-      {"title":"Numbered List","body":"enumerate","symbol":"list.number"},
+      {"title":"Bulleted List","body":"itemize"},
+      {"title":"Numbered List","body":"enumerate"},
       {"title":"Description List","body":"description"}
     ],
     "references": [
-      {"title":"Reference","body":"\\ref{$0}","symbol":"number.sign","inline":true},
+      {"title":"Reference","body":"\\ref{$0}","inline":true},
       {"title":"Equation Reference","body":"\\eqref{$0}","inline":true},
-      {"title":"Citation","body":"\\cite{$0}","symbol":"text.quote","inline":true},
+      {"title":"Citation","body":"\\cite{$0}","inline":true},
       {"title":"Label","body":"\\label{$0}","inline":true},
-      {"title":"Link","body":"\\href{$0}{}","symbol":"link","inline":true},
+      {"title":"Link","body":"\\href{$0}{}","inline":true},
       {"title":"URL","body":"\\url{$0}","inline":true}
     ]
   },
