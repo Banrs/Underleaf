@@ -88,14 +88,11 @@ struct PDFTests {
         for point in [NSPoint(x: 95, y: 55), NSPoint(x: 108, y: 55), NSPoint(x: 106, y: 61)] { #expect(overlay.hitTest(point) == nil) }
     }
 
-    @Test func aBadBoxsBarIsLeftOfItsLinesAndOnThePage() throws {
-        let page = try #require(textPDF(count: 1).page(at: 0)), bounds = page.bounds(for: SyncPDFView.box)
-        let bar = { (h: Double) in
-            let area = ForwardLoc(page: 1, h: h, v: 100, width: bounds.width, height: 12, matches: [])
-            return BadBoxMark.rects(for: BadBoxArea(file: "main.tex", line: 4, tooWide: nil, message: "Underfull", area: area, overrun: 0), on: page)
-        }
-        #expect(bar(100).map(\.maxX) == [bounds.minX + 96])
-        #expect(bar(0).map(\.minX) == [bounds.minX + 2])
+    @Test func aBadBoxsBarStaysOnThePageWhereItsLineRunsOffIt() throws {
+        let page = try #require(textPDF(count: 1).page(at: 0)), edge = page.bounds(for: SyncPDFView.box).maxX
+        let area = ForwardLoc(page: 1, h: edge - 200, v: 100, width: 300, height: 12, matches: [])
+        let badBox = BadBoxArea(file: "main.tex", line: 4, tooWide: nil, message: "Underfull", area: area, overrun: 0)
+        #expect(BadBoxMark.rects(for: badBox, on: page).map(\.maxX) == [edge - 2])
     }
 
     @Test func aZoomChosenWhileThePaneIsHiddenIsTheOneKept() {

@@ -1,9 +1,8 @@
 import AppKit
 import PDFKit
 
-/// A bar in the left margin beside a bad box: red beside each line of an overfull box that runs past the text, orange
-/// beside an underfull one. LaTeX's draft option draws its rule at the line's right end, which a long line takes off the
-/// page. Clicking it goes to the box's source line.
+/// A bar in the margin beside a bad box, as LaTeX's draft option draws one: red beside each line of an overfull box that
+/// runs past the text, orange beside an underfull one. Clicking it goes to the box's source line.
 final class BadBoxMark: NSView {
     let badBox: BadBoxArea
     private let press: (BadBoxArea) -> Void
@@ -35,16 +34,16 @@ final class BadBoxMark: NSView {
         return true
     }
 
-    /// Where the bars go on `page`, in its coordinates: left of each line in the box's area whose text runs past the margin,
-    /// or left of the whole area when no line does, as for an underfull box or an overfull one of no text. The area reaches
+    /// Where the bars go on `page`, in its coordinates: beside each line in the box's area whose text runs past the margin,
+    /// or beside the whole area when no line does, as for an underfull box or an overfull one of no text. The area reaches
     /// as far as its lines run, `overrun` past the margin.
     static func rects(for badBox: BadBoxArea, on page: PDFPage) -> [CGRect] {
         let bounds = page.bounds(for: SyncPDFView.box)
         guard let area = SyncTeXGeometry.area(badBox.area, pageBounds: bounds) else { return [] }
-        // At least a click's height, as beside a thin rule, and on the page even where the text starts at its edge.
+        // At least a click's height, as beside a thin rule, and inside the page's edge where a line runs off it.
         let beside = { (rect: CGRect) in
             let height = max(rect.height, 8)
-            return CGRect(x: max(area.minX - 7, bounds.minX + 2), y: rect.midY - height / 2, width: 3, height: height)
+            return CGRect(x: min(rect.maxX + 2, bounds.maxX - 5), y: rect.midY - height / 2, width: 3, height: height)
         }
         guard badBox.tooWide != nil else { return [beside(area)] }
         let margin = area.maxX - badBox.overrun
