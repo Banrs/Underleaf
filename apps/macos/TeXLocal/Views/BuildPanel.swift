@@ -64,6 +64,7 @@ struct BuildPanelBar: View {
                 .frame(maxWidth: 182)
         }
         .font(.subheadline)
-        .padding(7)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 7)
     }
 }
