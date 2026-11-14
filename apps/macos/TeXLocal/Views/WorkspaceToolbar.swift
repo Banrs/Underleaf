@@ -125,7 +125,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
         item.autovalidates = false
         // Back and Forward stay in their menus and their keys, so they give way before a compact Compile in a narrow window.
         item.visibilityPriority = id == .compile ? compilePriority : id == .navigation ? .standard
-            : [.layout, .inspector].contains(id) ? .high : .low
+            : [.zoom, .layout, .inspector].contains(id) ? .high : .low
         if inserted { configure(item, state) }
         return item
     }
