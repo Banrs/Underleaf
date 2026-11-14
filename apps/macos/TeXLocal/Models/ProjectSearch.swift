@@ -21,7 +21,7 @@ final class ProjectSearch {
     private(set) var failure: String?
     private(set) var usages: Usages?
     var chosen: SearchHit.ID?
-    @ObservationIgnored private var generation = 0
+    @ObservationIgnored var generation = 0
 
     var hitCount: Int { groups?.reduce(0) { $0 + $1.hits.count } ?? 0 }
 

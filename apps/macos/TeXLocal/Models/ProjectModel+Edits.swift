@@ -30,9 +30,12 @@ extension ProjectModel {
     }
 
     func findUsages(in path: String, at offset: Int) async {
+        search.generation += 1
+        let started = search.generation
         guard let found = await alerting("Couldn’t Find Usages", {
             try await session.call(FindUsages(path: path, offset: offset))
         }) else { return }
+        guard search.generation == started else { return }
         guard let found else {
             views?.beep()
             return
