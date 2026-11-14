@@ -18,7 +18,7 @@ fn at(line: u32) -> SyncLines {
 
 fn first_area(synctex: &SyncTex, tag: i32, lines: RangeInclusive<u32>) -> Option<Shown> {
     synctex
-        .areas(tag, lines)
+        .areas(tag, lines, false)
         .into_iter()
         .next()
         .map(|(area, _)| area)
@@ -52,6 +52,26 @@ fn synctex_goes_from_a_line_to_its_page_and_back() {
         assert!(synctex.forward(9, &at(1)).is_empty());
     }
     assert!(SyncTex::read(b"not SyncTeX".to_vec()).is_none());
+}
+
+#[test]
+fn a_synctex_deeper_than_512_boxes_is_refused() {
+    for depth in [511, 512, 513] {
+        let boxes = "[1,1:0,0:100,100,0\n".repeat(depth);
+        let ends = "]\n".repeat(depth);
+        let text = format!(
+            "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{{1\n{boxes}g1,1:0,0\n{ends}}}1\n"
+        );
+        let synctex = SyncTex::read(text.into_bytes());
+        if depth > 512 {
+            assert!(synctex.is_none(), "{depth} boxes");
+        } else {
+            assert_eq!(
+                synctex.unwrap().inverse(1, 1000.0, 1000.0),
+                Some(("main.tex", 1))
+            );
+        }
+    }
 }
 
 #[test]
@@ -284,7 +304,7 @@ fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
 fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its_line_does() {
     // The log: Overfull \hbox (55.00122pt too wide) in paragraph at lines 5--14, the line on page 2.
     let synctex = SyncTex::read(include_bytes!("fixtures/overfull.synctex").to_vec()).unwrap();
-    let areas = synctex.areas(1, 5..=14);
+    let areas = synctex.areas(1, 5..=14, true);
     let pages: Vec<(i32, f32)> = areas
         .iter()
         .map(|(area, over)| (area.page, *over))
@@ -296,6 +316,20 @@ fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its
     let width = |page: usize| areas[page].0.width;
     assert!((width(1) - width(0) - pages[1].1).abs() < 0.5, "{areas:?}");
     assert_eq!(first_area(&synctex, 1, 5..=14).unwrap().page, 1);
+}
+
+#[test]
+fn a_bad_paragraphs_area_leaves_out_a_pages_foot_and_its_own_footnote() {
+    // The log: Underfull \hbox (badness 10000) in paragraph at lines 7--8. TeX ships page 1 on line 8, and the
+    // paragraph is the first of page 2, with another between it and its footnote.
+    let synctex = SyncTex::read(include_bytes!("fixtures/underfull.synctex").to_vec()).unwrap();
+    let areas = synctex.areas(1, 7..=8, true);
+    assert!(
+        matches!(&areas[..], [(area, _)] if area.page == 2 && area.height < 40.0),
+        "{areas:?}"
+    );
+    let kept = first_area(&synctex, 1, 7..=8).unwrap();
+    assert!(kept.page == 2 && kept.height > 400.0, "{kept:?}");
 }
 
 #[test]

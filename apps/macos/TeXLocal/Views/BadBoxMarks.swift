@@ -40,10 +40,10 @@ final class BadBoxMark: NSView {
     static func rects(for badBox: BadBoxArea, on page: PDFPage) -> [CGRect] {
         let bounds = page.bounds(for: SyncPDFView.box)
         guard let area = SyncTeXGeometry.area(badBox.area, pageBounds: bounds) else { return [] }
-        // At least a click's height, as beside a thin rule.
+        // At least a click's height, as beside a thin rule, and inside the page's edge where a line runs off it.
         let beside = { (rect: CGRect) in
             let height = max(rect.height, 8)
-            return CGRect(x: rect.maxX + 2, y: rect.midY - height / 2, width: 3, height: height)
+            return CGRect(x: min(rect.maxX + 2, bounds.maxX - 5), y: rect.midY - height / 2, width: 3, height: height)
         }
         guard badBox.tooWide != nil else { return [beside(area)] }
         let margin = area.maxX - badBox.overrun

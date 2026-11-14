@@ -59,7 +59,7 @@ final class IssueOverlay {
     func trailingInset(on number: Int) -> CGFloat {
         guard let (reported, live) = issue(on: number),
               let icon = fits(number, reported, live: live, issues: reported.others.count + 1).last else { return 0 }
-        return icon.width + gap + 8
+        return icon.width + gap + SourceTextView.bandTrailingInset
     }
 
     func place() {
@@ -210,7 +210,7 @@ final class IssueOverlay {
         for issue in rows where issue.band.maxY >= rect.minY && issue.band.minY <= rect.maxY {
             if issue.line != currentLine {
                 IssueBox.line(error: issue.error, live: issue.live).setFill()
-                NSBezierPath(roundedRect: issue.band, xRadius: 4, yRadius: 4).fill()
+                NSBezierPath(roundedRect: issue.band, xRadius: SourceTextView.bandRadius, yRadius: SourceTextView.bandRadius).fill()
             }
             IssueBox.underlines[issue.error]?.setFill()
             issue.tokens.forEach { $0.fill() }

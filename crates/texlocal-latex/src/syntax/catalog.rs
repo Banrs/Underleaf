@@ -44,8 +44,6 @@ pub(crate) struct Templates {
 pub(crate) struct Template {
     pub(crate) title: String,
     pub(crate) body: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) symbol: Option<String>,
     #[serde(default)]
     pub(crate) inline: bool,
 }

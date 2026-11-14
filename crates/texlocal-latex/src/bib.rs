@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -6,8 +7,6 @@ use crate::syntax::headings::{SPACES, plain_title};
 
 static BIB_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@([0-9A-Za-z_]+)\s*[{(]\s*([^,\s]+)\s*,").unwrap());
-pub(crate) static CROSSREF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?i)(?:^|,)\s*crossref\s*=\s*[{"]?\s*([^\s,{}"]+)"#).unwrap());
 
 pub(crate) fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>, &str)> {
     let mut found = BIB_KEY.captures_iter(source).peekable();
@@ -19,6 +18,38 @@ pub(crate) fn entries(source: &str) -> impl Iterator<Item = (regex::Captures<'_>
         let body = &source[entry.get_match().end()..next];
         Some((entry, body))
     })
+}
+
+/// Fields as written, so a month left as a macro (`month = jan`) stays one.
+pub(crate) fn raw_fields(body: &str) -> Vec<(&str, Range<usize>)> {
+    let (mut found, mut depth, mut quoted, mut from) = (Vec::new(), 0_usize, false, 0);
+    let mut push = |part: Range<usize>| {
+        if let Some((name, value)) = body[part.clone()].split_once('=') {
+            let start = part.end - value.trim_start().len();
+            let (name, value) = (name.trim(), value.trim());
+            if !name.is_empty() && !value.is_empty() {
+                found.push((name, start..start + value.len()));
+            }
+        }
+    };
+    for (i, c) in body.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' | ')' if depth == 0 && (c == '}' || !quoted) => {
+                push(from..i);
+                return found;
+            }
+            '}' => depth -= 1,
+            '"' if depth == 0 => quoted = !quoted,
+            ',' if depth == 0 && !quoted => {
+                push(from..i);
+                from = i + 1;
+            }
+            _ => {}
+        }
+    }
+    push(from..body.len());
+    found
 }
 
 pub(crate) fn fields(body: &str) -> Vec<(String, String)> {

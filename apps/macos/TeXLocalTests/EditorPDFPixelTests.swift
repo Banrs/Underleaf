@@ -80,8 +80,18 @@ struct EditorPDFPixelTests {
         try await write("sync-mark-\(suffix)", view)
         // The mark fades on a timer, which a slow run could see out before the next render.
         view.removeMark()
+        let board = NSPasteboard(name: .find), kept = (board.pasteboardItems ?? []).map { item in
+            item.types.reduce(into: NSPasteboardItem()) { $0.setData(item.data(forType: $1)!, forType: $1) }
+        }
+        defer { board.clearContents(); board.writeObjects(kept) }
         view.find.perform(.showFindInterface)
-        try await write("find-bar-\(suffix)", view)
+        let field = try #require(view.pageScrollView?.findBarView?.descendants(of: NSSearchField.self).first)
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.insertText("words", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        try await waitUntil { view.highlightedSelections?.count == 80 }
+        editor.setSelectedRange(NSRange())
+        #expect(field.stringValue == "words" && editor.string == "words" && editor.selectedRange() == NSRange())
+        view.displayIfNeeded(); try writeScaledPixels("find-bar-\(suffix)", of: view, in: view.bounds, to: folder)
         view.find.close()
     }
 

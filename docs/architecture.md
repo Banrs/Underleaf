@@ -62,8 +62,8 @@ and a test fails while it is stale.
 | `texlocal-events` | Writing each reply and event as JSON and calling the listener | The listener |
 | tokio's workers and blocking pool | Process I/O, compile waits, searches, SyncTeX reading (`Pending::spawn`, `spawn_blocking`) | Disk |
 
-The rules are at the top of `session/mod.rs`. The ones that matter most: an actor never waits on another actor
-or on the events thread, it sends and moves on; and a timer is a deadline in a map the actor's loop sleeps
+The rules are at the top of `session/mod.rs`. The ones that matter most: an actor never waits on the events thread;
+ordinary handlers send and move on, but shutdown drains the history worker; and a timer is a deadline in a map the actor's loop sleeps
 until, not a task, so a closed session leaves nothing running.
 
 A session's timers, in `session/actor.rs`:
@@ -83,17 +83,17 @@ timer alone, so it fires at most that often.
 
 ## What a keystroke goes through
 
-1. The editor asks `TypeText` what the key becomes (auto-pairing, closing an environment), on the UI thread.
+1. The editor asks `TypeText` or `InsertNewline` what the key becomes (auto-pairing, closing an environment), on the UI thread.
 2. It applies the edit with `tl_source_edit`. `SourceDocument` splices its UTF-16 text and line starts,
    and drops the tokenizer's states and the scan checkpoints from the edit on; nothing is scanned yet.
 3. It asks for the highlights of what is on screen. The tokenizer's state is kept at each line's start, so it
    resumes at the first line asked for, or at the edited line when that is earlier, and runs to the last line
    asked for. A call that needs what encloses a place (its environment, its maths) resumes from a scan
-   checkpoint, kept every 4096 units (`syntax/scans.rs`).
-4. The session gets `Msg::Edited`, marks the document dirty and arms Autosave and Symbols. If Live Preview is
+   checkpoint, kept roughly every 4096 units (`syntax/scans.rs`).
+4. The session gets `Msg::Edited`, marks the document dirty and arms Autosave. If Live Preview is
    running, the edit is sent to TeXpresso as a patch.
-5. 150 ms after the last edit, the file's facts are read again and the project is checked; the checks are
-   published as a section. 700 ms after it, the file is written.
+5. 700 ms after the last edit, the file is written; 150 ms after saving, all open sources' facts are read again,
+   closed sources use the file cache, and the project is checked; the checks are published as a section.
 
 ## What a build goes through
 
@@ -127,7 +127,7 @@ folder as `live.pdf.N.pdf` with `live.pdf.N.synctex` beside it, and TeXpresso re
 ## Caches
 
 All are `Kept<T>` (`stamp.rs`): a value per path, valid while the file's identity, size and modification time
-are unchanged, with the least recently used dropped past a capacity.
+are unchanged and the timestamp is not a whole second, with the least recently used dropped past a capacity.
 
 | Cache | Holds | Bound |
 | --- | --- | --- |
@@ -185,9 +185,9 @@ What follows from the numbers:
 
 ## Checking a change
 
-`zsh tools/check.sh` runs what CI runs: `cargo fmt --check`, clippy with warnings as errors, the tests,
-`cargo shear` and a typecheck of the Swift. CI also builds the crates on Linux and `texlocal-latex` for a
-browser.
+`zsh tools/check.sh` runs `cargo fmt --check`, clippy with warnings as errors, the tests,
+`cargo shear` when installed and a typecheck of the Swift. CI builds and tests Swift instead of typechecking it,
+and also checks the crates on Linux and `texlocal-latex` for a browser.
 
 Tests that need TeX are ignored by default. With a TeX distribution on the `PATH`:
 
@@ -201,3 +201,24 @@ and with `TEXLOCAL_TEXPRESSO` set to a built `texpresso` (`tools/texpresso/build
 House rules the checks don't catch: a commit message is one sentence saying what now happens and what it
 replaces; a comment says why (a workaround, a measured number), never what the next line does; and a number in
 a comment or in this file is one somebody measured.
+
+## Things that look removable and are not
+
+- `sys/linux.rs`: Linux support was deliberately restored and has its own CI checks; `a3bb5a56`.
+- Wire message id and named arguments: an intentional contract beside English text, with generated ids; `41a19eaa`, `33bd6615`.
+- Shared `SymbolKind` for rename: unsupported kinds are rejected without a separate enum and conversion; `93560811`.
+- SyncTeX's synthetic boundaries and weighted geometry: preserve TeX Live's selection rules; `3db54488`.
+- Raw BibTeX expressions beside normalized metadata: writing must preserve macros, braces and concatenation; `a1f37945`.
+- Persistent syntax stacks, iterative drop and checkpoint reach: cheap copies, bounded stack use and valid lookahead; `35b4b2e9`, `5512f02d`.
+- Retaining history objects after an unreadable record: its references are unknown, so collection could lose them; `3b270d44`.
+
+## Known gaps, left on purpose
+
+Found by the review of 14 Nov 2026 and not fixed, each because the fix costs more than the gap does.
+
+- A version saved straight after a project-wide replace can miss that replace in the file shown: the editor applies its edits after the history queue has moved on. The next version holds it. Closing it needs an acknowledgement from the editor that history waits on, about 200 lines and a new way to stall history.
+- A file that could not be read at its first snapshot stays out of history until it changes or the app restarts: `HASHES` keeps the skip, and a permission change doesn't move the file's stamp.
+- History fails quietly: a snapshot that can't be written and a record that can't be read are skipped without a warning; `b4dc16a4`, `3b270d44`.
+- A project folder moved or deleted while open keeps its old tree in the window with no alert.
+- A selected file that can't be reopened with its project shows No File Open without the reason; opening it by hand gives the reason.
+- A SyncTeX file is read whole with no size ceiling. Nesting is capped at 512 open boxes.

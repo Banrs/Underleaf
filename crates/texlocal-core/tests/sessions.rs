@@ -428,6 +428,7 @@ async fn closing_saves_and_ends_the_session() {
 async fn the_open_file_is_one_at_a_time_and_a_closed_documents_edits_are_refused() {
     let rig = project().await;
     let ch = rig.open_document("ch.tex");
+    rig.forget();
     rig.open_document("main.tex");
     rig.section("openFile", |f| {
         f["path"] == "main.tex" && f["kind"] == "tex"
@@ -448,12 +449,15 @@ async fn the_open_file_is_one_at_a_time_and_a_closed_documents_edits_are_refused
 #[tokio::test(flavor = "multi_thread")]
 async fn an_open_that_a_later_one_supersedes_is_dropped() {
     let rig = project().await;
-    assert_eq!(rig.call("CloseProject", json!({})), true);
+    let doc = rig.open_document("ch.tex");
     rig.forget();
-    let again = 2;
-    let open = json!({ "id": rig.id, "autoCompile": false });
-    rig.send(again, "OpenProject", open);
-    let opens = ["ch.tex", "main.tex"].map(|path| rig.send(again, "Open", json!({ "path": path })));
+    let (save, opens) = doc.with(|_| {
+        let save = rig.send(SESSION, "Save", json!({ "reporting": true }));
+        let opens =
+            ["ch.tex", "main.tex"].map(|path| rig.send(SESSION, "Open", json!({ "path": path })));
+        (save, opens)
+    });
+    rig.reply(save).unwrap();
     let opened = opens.map(|id| rig.reply(id).unwrap());
     assert_eq!(opened, [Value::Null, json!("main.tex")]);
     assert_eq!(said_of(&rig, &["openFile"]), ["openFile"]);
@@ -1049,6 +1053,15 @@ async fn an_export_holds_the_sources_and_opens_as_a_new_project() {
         rig.call("ExportZip", json!({ "dest": inside, "forArxiv": false }));
     }
     assert_eq!(zip_names(&inside), ["ch.tex", "main.tex"]);
+
+    fs::remove_file(&inside).unwrap();
+    let alias = rig.library.path("Alias");
+    std::os::unix::fs::symlink(rig.root(), &alias).unwrap();
+    let dest = alias.join("Shared.zip");
+    for _ in 0..2 {
+        rig.call("ExportZip", json!({ "dest": dest, "forArxiv": false }));
+        assert_eq!(zip_names(&dest), ["ch.tex", "main.tex"]);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1219,6 +1232,60 @@ async fn a_build_sends_its_sections_and_its_log_before_it_finishes_and_its_pdf_f
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_main_change_rejects_a_late_success_from_the_previous_target() {
+    let files = [
+        ("main.tex", MAIN),
+        ("ch.tex", CHAPTER),
+        ("build/ch.pdf", "pdf"),
+    ];
+    let rig = Rig::open_with(&files, |library| {
+        stub_tex(library);
+        let script = format!(
+            "{}{}",
+            LATEXMK.split_once("line=$(grep").unwrap().0,
+            r#"mkfifo "$out/$stem.log"
+echo $$ > "$out/$stem.pid"
+echo "./$main:3: Undefined control sequence."
+"#
+        );
+        program(&library.path("tex/bin/latexmk"), &script);
+    })
+    .await;
+    rig.section("outline", |o| !o.is_null());
+    rig.call("Compile", json!({}));
+    let build_dir = rig.root().join("build");
+    let pid = build_dir.join("main.pid");
+    wait_until("the old compiler exits before its log is read", || {
+        pid.exists() && !alive(&pid)
+    });
+    rig.forget();
+    rig.call("SetSettings", json!({ "patch": { "mainFile": "ch.tex" } }));
+    let pdf = rig.section("shownPdf", |_| true);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(build_dir.join("main.log"))
+        .unwrap();
+    let finished = rig.event("buildFinished", |_| true);
+    let said = rig.said();
+    let pid = build_dir.join("ch.pid");
+    wait_until(
+        "the replacement compiler exits before its log is read",
+        || pid.exists() && !alive(&pid),
+    );
+    rig.forget();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(build_dir.join("ch.log"))
+        .unwrap();
+    assert_eq!(rig.event("buildFinished", |_| true)["announce"], true);
+    assert!(pdf["path"].as_str().unwrap().ends_with("build/ch.pdf"));
+    assert!(!said.iter().any(|kind| kind == "build"));
+    assert_eq!(finished["announce"], false);
+    assert!(!said.iter().any(|kind| kind == "buildLog"));
+    assert_eq!(said.iter().filter(|kind| *kind == "shownPdf").count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
     let rig = Rig::open_with(&[("main.tex", BROKEN)], stub_tex).await;
     let doc = rig.open_document("main.tex");
@@ -1246,6 +1313,23 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
         (&edited["outdated"], &edited["lines"]),
         (&json!(true), &json!({}))
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overflowing_edit_range_keeps_an_earlier_live_issue() {
+    let (rig, preview) = Rig::previewing(&[("main.tex", BROKEN)], |_| {}).await;
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    *preview.log.lock().unwrap() =
+        "./main.tex:3: Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    preview.typeset(Path::new("live.pdf"), 1, preview.revision());
+    rig.section("live", |l| l["lines"]["main.tex"][0]["line"] == 3);
+    rig.forget();
+    doc.edit(u32::MAX, 1, "", None, false);
+    doc.edit(0, 0, "% more\n", None, false);
+    rig.call("LiveLog", json!({ "shown": true }));
+    let live = rig.section("live", |_| true);
+    assert_eq!(live["lines"]["main.tex"][0]["line"], 4);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1307,6 +1391,61 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
         "y": picture["v"].as_f64().unwrap() - picture["height"].as_f64().unwrap() / 2.0 });
     let back = rig.call("SynctexInverse", at);
     assert_eq!((&back["line"], &back["column"]), (&json!(7), &json!(0)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_follow_for_a_superseded_pdf_is_dropped() {
+    let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
+    let [first, next] = ["first.pdf", "next.pdf"].map(|name| rig.library.path(name));
+    fs::write(first.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let changed = PICTURED_SYNCTEX
+        .replace("{2\n", "{3\n")
+        .replace("}2\n", "}3\n");
+    fs::write(next.with_extension("synctex"), changed).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.typeset(&first, 2, preview.revision());
+    rig.event("liveDocument", |_| true);
+    rig.forget();
+    let start = PICTURED.find("Last paragraph.").unwrap();
+    doc.select(
+        TextRange {
+            start: start as u32,
+            length: 0,
+        },
+        false,
+    );
+    doc.with(|_| {
+        wait_until("the caret settles after the follow starts", || {
+            *preview.caret.lock().unwrap() == Some(start)
+        });
+        preview.typeset(&next, 3, preview.revision());
+        rig.event("liveDocument", |_| true);
+    });
+    assert_eq!(rig.event("liveFollow", |_| true)["page"], 3.0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_live_source_maps_inverse_sync_against_its_saved_text() {
+    let (rig, preview) =
+        Rig::previewing(&[("main.tex", PICTURED), ("ch.tex", CHAPTER)], |_| {}).await;
+    let pdf = rig.library.path("live.pdf");
+    fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.typeset(&pdf, 2, preview.revision());
+    rig.event("liveDocument", |_| true);
+    let last = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 10 }));
+    doc.edit(0, 0, &"% comment\n".repeat(20), None, false);
+    rig.open_document("ch.tex");
+    assert!(rig.sessions.document(SESSION, "main.tex").is_none());
+    let at = json!({ "page": last["page"], "x": last["h"].as_f64().unwrap() + 1.0,
+        "y": last["v"].as_f64().unwrap() - last["height"].as_f64().unwrap() / 2.0 });
+    let back = rig.call("SynctexInverse", at);
+    assert_eq!(
+        (&back["file"], &back["line"]),
+        (&json!("main.tex"), &json!(30))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1659,6 +1798,69 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_overflowing_output_span_is_ignored() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        // One byte more than the output kept, built by the script: Linux caps a single argument at 128 KiB.
+        let script = r#"#!/bin/sh
+echo '["live",4]'
+echo '["append","out",0,"kept"]'
+printf '["append","out",18446744073709551615,"'
+head -c 131073 /dev/zero | tr '\0' x
+printf '"]\n'
+echo '["page",0,"JVBER"]'
+while read -r _; do :; done
+"#;
+        let texpresso = library.path("texpresso");
+        program(&texpresso.join("texpresso"), script);
+        app_settings(library, json!({ "texpressoDir": texpresso }));
+    })
+    .await;
+    rig.call("StartLive", json!({}));
+    assert_eq!(rig.event("livePage", |_| true)["pdf"], "JVBER");
+    rig.forget();
+    rig.call("LiveLog", json!({ "shown": true }));
+    assert_eq!(rig.section("liveLog", |_| true), "kept");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_exit_drains_stderr_before_publishing_ended() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        let script = r#"#!/usr/bin/python3
+import os, sys, time
+print('["live",4]', flush=True)
+print('["page",0,"JVBER"]', flush=True)
+while not os.path.exists("finish"): time.sleep(0.01)
+parent = os.getpid()
+read, write = os.pipe()
+if os.fork() == 0:
+    os.setsid()
+    os.write(write, b"x")
+    while os.getppid() == parent: time.sleep(0.01)
+    time.sleep(0.1)
+    print("fatal-final", file=sys.stderr, flush=True)
+    os._exit(0)
+os.read(read, 1)
+os._exit(1)
+"#;
+        let texpresso = library.path("texpresso");
+        program(&texpresso.join("texpresso"), script);
+        app_settings(library, json!({ "texpressoDir": texpresso }));
+    })
+    .await;
+    rig.call("StartLive", json!({}));
+    rig.event("livePage", |_| true);
+    rig.call("LiveLog", json!({ "shown": true }));
+    rig.listen(Duration::from_millis(250));
+    rig.forget();
+    fs::write(rig.root().join("finish"), "").unwrap();
+    rig.section("live", |l| l["phase"] == "stopped");
+    rig.listen(Duration::from_millis(250));
+    assert!(rig.heard("liveLog"));
+    let log = rig.section("liveLog", |_| true);
+    assert!(log.as_str().unwrap().contains("fatal-final"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn live_preview_runs_texpresso_on_the_tex_path_so_it_reaches_kpsewhich_in_another_folder() {
     let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
         stub_tex(library);
@@ -1708,6 +1910,7 @@ async fn a_projects_latexmkrc_is_read_only_with_shell_escape_granted() {
     rig.call("Compile", json!({}));
     rig.event("buildFinished", |_| true);
     assert!(args().lines().any(|a| a == "-norc"));
+    assert!(args().lines().any(|a| a == "-synctex=-1"));
     assert!(!args().contains("-shell-escape"));
     rig.forget();
     rig.call("SetSettings", json!({ "patch": { "shellEscape": true } }));
@@ -1911,6 +2114,42 @@ async fn a_fetched_citation_is_added_to_the_named_bibliography_once() {
         rig.refuse("AddCitation", json!({ "entry": "<html>" })),
         ErrorKind::Invalid
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fetched_citation_avoids_keys_typed_since_the_last_scan() {
+    let rig = Rig::open(&[
+        ("main.tex", "\\cite{x}\n\\bibliography{refs}\n"),
+        ("refs.bib", ""),
+    ])
+    .await;
+    rig.section("outline", |o| !o.is_null());
+    let doc = rig.open_document("refs.bib");
+    doc.edit(
+        0,
+        0,
+        "@book{lovelace1843notes,title={Existing}}",
+        None,
+        false,
+    )
+    .unwrap();
+    let added = rig.call(
+        "AddCitation",
+        json!({ "entry": "@misc{k,author={Ada Lovelace},title={Notes},year={1843}}" }),
+    );
+    assert_eq!(added["key"], "lovelace1843notesa");
+    let edit = &added["edits"]["edits"]["edits"][0];
+    doc.edit(
+        edit["start"].as_u64().unwrap() as u32,
+        0,
+        edit["text"].as_str().unwrap(),
+        None,
+        false,
+    )
+    .unwrap();
+    let bib = doc.with(|source| source.text());
+    assert_eq!(bib.matches("{lovelace1843notes,").count(), 1);
+    assert_eq!(bib.matches("{lovelace1843notesa,").count(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

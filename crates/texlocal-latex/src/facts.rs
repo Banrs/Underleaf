@@ -213,12 +213,20 @@ impl Facts {
                 detail: bib::detail(&bib::fields(body)),
                 ..cited(entry.get(2).expect("an entry has a key").range())
             });
-            if let Some(parent) = bib::CROSSREF
-                .captures(body)
-                .and_then(|parent| parent.get(1))
+            if let Some((_, at)) = bib::raw_fields(body)
+                .into_iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("crossref"))
             {
-                let at = start + parent.start()..start + parent.end();
-                facts.uses.push(cited(at));
+                let value = &body[at.clone()];
+                let value = value.strip_prefix(['{', '"']).unwrap_or(value).trim_start();
+                let key = value
+                    .split(|c: char| c.is_whitespace() || ",{}\"".contains(c))
+                    .next()
+                    .expect("a part at least");
+                if !key.is_empty() {
+                    let from = start + at.end - value.len();
+                    facts.uses.push(cited(from..from + key.len()));
+                }
             }
         }
         facts.defined = Arc::new(defined);

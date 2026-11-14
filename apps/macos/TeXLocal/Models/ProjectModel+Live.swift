@@ -57,7 +57,7 @@ extension ProjectModel {
                     defer { signposts.endInterval("sync.forward", interval) }
                     loc = try await session.call(request)
                 }
-                guard !Task.isCancelled, openPath == path, views?.shownPDF === shown else { return }
+                guard !Task.isCancelled, openPath == path, views?.shownPDF === shown, !quietly || window?.showPDF == true else { return }
                 window?.requestPDF(.reveal(loc, SyncSource(session: session, file: path, line: line, column: column, wordOnly: wordOnly)))
             } catch {
                 if !quietly, !Task.isCancelled { reportSync(error, "Couldn’t Find This Line in the PDF") }
@@ -70,7 +70,7 @@ extension ProjectModel {
         await restart(&syncTask) { [self] in
             do {
                 let loc = try await session.call(SynctexInverse(page: Double(page), x: x, y: y, click: click))
-                guard !Task.isCancelled, !quietly || loc.column != nil else { return }
+                guard !Task.isCancelled, !quietly || loc.column != nil, !quietly || window?.showSource == true else { return }
                 await open(loc.file, line: loc.line, column: loc.column, jump: true)
             } catch {
                 if !quietly, !Task.isCancelled { reportSync(error, "Couldn’t Find This Spot in the Source") }

@@ -237,7 +237,7 @@ fn object(schema: &Value) -> &Map<String, Value> {
     schema
 }
 
-pub fn ty(schema: &Value) -> Ty {
+fn ty(schema: &Value) -> Ty {
     let schema = object(schema);
     if let Some(Value::String(reference)) = schema.get("$ref") {
         let name = reference

@@ -31,6 +31,8 @@ class AppWindowController: NSWindowController, NSWindowDelegate, AppWindow {
 
     func windowDidBecomeMain(_ notification: Notification) { model.isMain = true }
     func windowDidResignMain(_ notification: Notification) { model.isMain = false }
+    func windowDidBecomeKey(_ notification: Notification) { model.isKey = true }
+    func windowDidResignKey(_ notification: Notification) { model.isKey = false }
 
     func windowWillClose(_ notification: Notification) {
         model.isMain = false

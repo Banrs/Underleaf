@@ -30,9 +30,12 @@ extension ProjectModel {
     }
 
     func findUsages(in path: String, at offset: Int) async {
+        search.generation += 1
+        let started = search.generation
         guard let found = await alerting("Couldn’t Find Usages", {
             try await session.call(FindUsages(path: path, offset: offset))
         }) else { return }
+        guard search.generation == started else { return }
         guard let found else {
             views?.beep()
             return
@@ -94,7 +97,10 @@ extension ProjectModel {
     private func applying(_ edits: ProjectEdits, named name: String) async throws {
         if apply(edits.edits, named: name) { return }
         if let snapshot = edits.snapshot, !edits.written.isEmpty {
-            try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
+            let restored = try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
+            if let refused = restored.edits, !apply(refused, named: name) {
+                throw AppFailure(String(localized: "“\(refused.path)” couldn’t be restored; changes remain. Recover from version \(snapshot)."))
+            }
         }
         throw Self.unchanged
     }

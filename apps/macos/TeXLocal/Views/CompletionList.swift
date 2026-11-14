@@ -65,7 +65,6 @@ final class CompletionList {
         look.typed = editor.caret - offered.start
         look.boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         look.height = (font.ascender - font.descender + font.leading).rounded(.up) + 8
-        rows.reveal()
         let opening = !panel.isVisible
         fit()
         place(under: start, on: screen.visibleFrame, over: window, animated: true)

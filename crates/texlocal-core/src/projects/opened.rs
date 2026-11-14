@@ -16,7 +16,7 @@ use crate::service::Service;
 use crate::settings::write_settings;
 use crate::{BUILD_DIR, SETTINGS_FILE, import, lock};
 
-pub(crate) const STORE: &str = ".opened";
+const STORE: &str = ".opened";
 const FOLDER: &str = "folder.json";
 const SIDECAR: &str = "project.json";
 

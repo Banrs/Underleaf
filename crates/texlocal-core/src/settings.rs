@@ -215,7 +215,7 @@ pub(crate) struct AppSettings {
     rest: Map<String, Value>,
 }
 
-pub(crate) const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
+const APP_SETTINGS_FILE: &str = ".texlocal-app.json";
 
 impl AppSettings {
     pub(crate) fn read(dir: &Path) -> Self {

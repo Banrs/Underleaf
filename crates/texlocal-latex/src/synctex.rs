@@ -255,6 +255,9 @@ impl SyncTex {
             if !reader.record(line) {
                 break;
             }
+            if reader.pending.len() > 513 {
+                return None;
+            }
         }
         let mut s = reader.s;
         s.unlink_refs();
@@ -781,12 +784,26 @@ impl SyncTex {
     /// there run past the width TeX set them to, as an overfull one's contents do. Only lines of type that show
     /// something count, and only those mostly set from `lines`, unless none is: a line that a paragraph runs into, as
     /// one before a display does, takes the paragraph's lines along, and an environment's first line can bring an
-    /// empty box from before a float.
-    pub fn areas(&self, tag: i32, lines: RangeInclusive<u32>) -> Vec<(Shown, f32)> {
+    /// empty box from before a float. What TeX set as it shipped a page from one of `lines`, a foot or a running head,
+    /// isn't theirs, and nor is a footnote in a `paragraph` they are all of.
+    pub fn areas(
+        &self,
+        tag: i32,
+        lines: RangeInclusive<u32>,
+        paragraph: bool,
+    ) -> Vec<(Shown, f32)> {
         let ids: Vec<u32> = (lines.clone())
             .filter_map(|line| self.hits(tag, line))
             .flatten()
             .collect();
+        // The page's own box has the line TeX was on as it shipped the page, and so has all it set then.
+        let shipped = |mut id: u32| {
+            let boxed = |up: &u32| self.node(*up).kind != Kind::Sheet;
+            while let Some(parent) = self.node(id).parent.filter(boxed) {
+                id = parent;
+            }
+            (self.node(id).tag, self.node(id).line)
+        };
         let held = |id: &&u32| {
             let node = self.settled(**id);
             let (line, at) = (self.mean_line(node), self.node(node).at);
@@ -794,8 +811,15 @@ impl SyncTex {
             shows
                 && self.node(node).kind.is_hbox()
                 && u32::try_from(line).is_ok_and(|line| lines.contains(&line))
+                && (self.node(node).tag, line) != shipped(node)
         };
         let mut boxes: Vec<u32> = ids.iter().filter(held).copied().collect();
+        // TeX sets a paragraph's lines as it ends, on the last of `lines`; a footnote in it was set before.
+        let ended =
+            |id: &u32| u32::try_from(self.node(self.settled(*id)).line).ok() == Some(*lines.end());
+        if paragraph && boxes.iter().any(ended) {
+            boxes.retain(ended);
+        }
         if boxes.is_empty() {
             boxes = ids;
         }

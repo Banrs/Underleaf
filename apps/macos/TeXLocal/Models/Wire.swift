@@ -229,8 +229,6 @@ nonisolated struct CreateProject: LibraryRequest {
 }
 
 nonisolated struct Definition: Decodable, Hashable, Sendable {
-    var kind: SymbolKind
-    var name: String
     var places: [FilePlace]
 }
 
@@ -1483,7 +1481,6 @@ nonisolated struct Tabbing: Decodable, Hashable, Sendable {
 nonisolated struct Template: Decodable, Hashable, Sendable {
     var title: String
     var body: String
-    var symbol: String?
     var inline: Bool
 }
 

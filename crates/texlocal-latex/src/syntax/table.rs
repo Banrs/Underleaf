@@ -16,7 +16,7 @@ impl SourceDocument {
         let indent = String::from_utf16_lossy(&contents[..indentation(contents)]);
         let table = tabular(cells, &indent, booktabs)?;
         let before = &text.units[line.start..start];
-        let after = &text.units[end..line.next.max(end)];
+        let after = &text.units[end..text.around(end).next];
         let blank = |units: &[u16]| {
             units
                 .iter()

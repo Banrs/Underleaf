@@ -20,7 +20,7 @@ struct IssueBox: View, Equatable {
 
     var body: some View {
         // The corners of the row's highlight beneath it.
-        let shape = RoundedRectangle(cornerRadius: 4, style: .circular)
+        let shape = RoundedRectangle(cornerRadius: SourceTextView.bandRadius, style: .circular)
         HStack {
             if issues > 1 { Text(verbatim: "\(issues)").monospacedDigit() }
             Image(systemName: isError ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)

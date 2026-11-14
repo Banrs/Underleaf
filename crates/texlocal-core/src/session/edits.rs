@@ -159,13 +159,28 @@ impl Actor {
     pub fn add_citation(&mut self, fetched: String, reply: Pending<AddedCitation>) {
         match self.citation(&fetched) {
             Ok(Citation::Had(found)) => reply.send(Ok(found)),
-            Ok(Citation::Add(then)) => self.before(Reason::AddCitation, Ok(then), reply),
+            Ok(Citation::Add(_)) => self.before(
+                Reason::AddCitation,
+                Ok(Box::new(move |actor, snapshot| {
+                    match actor.citation(&fetched)? {
+                        Citation::Had(found) => Ok(found),
+                        Citation::Add(then) => then(actor, snapshot),
+                    }
+                })),
+                reply,
+            ),
             Err(err) => reply.send(Err(err)),
         }
     }
 
     fn citation(&mut self, fetched: &str) -> Result<Citation, CoreError> {
-        self.text_to_edit()?;
+        let open = self.text_to_edit()?;
+        let texts = open.map(|open| (open.path, open.text));
+        let read = projects::scan_facts(
+            &self.core.project,
+            &self.tree.facts,
+            &texts.into_iter().collect(),
+        )?;
         let scan = Arc::clone(
             &self
                 .tree
@@ -174,7 +189,7 @@ impl Actor {
                 .unwrap_or_else(PoisonError::into_inner),
         );
         let taken = |key: &str| {
-            let mut files = scan.facts.values();
+            let mut files = read.values();
             files.any(|facts| {
                 !syntax::definitions(&facts.defined, SymbolKind::Citation, key).is_empty()
             })

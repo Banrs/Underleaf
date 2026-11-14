@@ -58,7 +58,7 @@ Single-hit replacement checks current text.
 
 `MenuCommand` in `Commands.swift` supplies titles, shortcuts and an optional `EditorCommand` or `PDFAction`. Menus in
 `AppCommands.swift`, toolbar and context menus reach `WindowModel.perform(_:on:)`; `AppModel.isEnabled` is their shared
-rule. Menu-bar editing commands also require the source to have the keyboard.
+rule. `CommandItem` menu items and Inline Math also require the source to have the keyboard.
 
 Bold goes through `ProjectViews` to `SourceEditor.swift`, which asks `SourceDocument` for core edits and uses
 `SourceTextView.apply(_:named:)`. Compile sends a session request that saves before building; sections and the finished
@@ -217,6 +217,19 @@ The reviews kept these workarounds and measured choices; the commits record thei
 | PDF resize pinning, `lastPlace` and `pendingReveal` | Keeps the viewport stable and defers reveals until sized, including collapsed panes; `cab54660`, `d8381c91`, `f263cbee` |
 | `wordOnly` and `hideLinkBorders` | Quiet double-clicks need a matched word; hyperref boxes should not show; `6bda0fc2`, `d03a2c77` |
 | `markedBadBoxes` beside the view's marks | Build sections repeat; asking for areas again costs a core call; `b713c9cf` |
+| Log's native text view inside the SwiftUI build panel | Keeps selection, copy, find and tail following; `1be944ed` |
+| Status bar's secondary resting ink | Hover and press promote it to primary; `cab54660` |
+| Filter placeholder, symbol and off-toggle inks | Measured active/inactive glass treatment; `e9081772` |
+| Standard sidebar rows and Outline's extra 6 pt | Preserve native row sizing and align iconless headings; `0e72ce76`, `473f9115` |
+| Native two-line Settings and Inspector labels | Replaced forwarding initialisers with SwiftUI's own labels; `acdcba4d` |
+| Live rename remapping beside saved UI remapping | Keeps folder/fold changes made while the request waits; `249aa009` |
+| Source restoration after a failed editor call | Recovers the core's copy from the shown text; `74d1c7fa` |
+| SessionClient's owned tasks and late-reply checks | Closing cancels work and refuses late results; `4636bf12` |
+| Replace All's displayed query and options | Must act on the displayed search, which may trail the field; `88fecc05` |
+| Announcement-only failures while an alert is up | Deliberate per-window presentation policy; `787f70f9`, `8fb98f91` |
+| Completion's longest-detail measurement | Details truncate before commands and remain whole in help and VoiceOver; `1142b729` |
+| Zoom's font-sized measurement and padding calculation | Keeps native sizing without label-driven movement; `65c74548`, `5afdaf18` |
+| File-drop URL validation before dropping | Filters files and chooses copy or move before accepting them; `b709c0ef` |
 
 ## Checking a change
 

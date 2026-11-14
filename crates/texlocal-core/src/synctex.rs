@@ -188,22 +188,22 @@ pub(crate) fn forward(
 pub(crate) type PageArea = (ForwardLoc, f64);
 
 /// Finds where lines of a file were typeset, as one box on each page they're on from the first, matching the
-/// SyncTeX's inputs to the project's files once for every lookup.
+/// SyncTeX's inputs to the project's files once for every lookup. The lines can be all of one paragraph.
 pub(crate) fn areas(
     sync: Arc<SyncTex>,
     project: &Project,
-) -> impl Fn(&str, RangeInclusive<u32>) -> Vec<PageArea> + use<> {
+) -> impl Fn(&str, RangeInclusive<u32>, bool) -> Vec<PageArea> + use<> {
     let mut tags = HashMap::new();
     for (tag, name) in sync.inputs() {
         if let Some(file) = source_file(project, name) {
             tags.entry(file).or_insert(tag);
         }
     }
-    move |file: &str, lines| {
+    move |file: &str, lines, paragraph| {
         let Some(&tag) = tags.get(file) else {
             return Vec::new();
         };
-        let areas = sync.areas(tag, lines).into_iter();
+        let areas = sync.areas(tag, lines, paragraph).into_iter();
         let shown = areas.filter(|(shown, _)| shown.page >= 1);
         shown
             .map(|(shown, over)| (located(shown), f64::from(over)))

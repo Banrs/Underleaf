@@ -26,7 +26,7 @@ use crate::{messages, paths, synctex};
 mod sources;
 use sources::Sources;
 
-pub(crate) const MAX_FILE: u64 = 8 * 1024 * 1024;
+const MAX_FILE: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -98,7 +98,7 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    pub fn active(&self) -> bool {
+    fn active(&self) -> bool {
         matches!(self.phase, LivePhase::Starting | LivePhase::Running)
     }
 
@@ -466,6 +466,8 @@ impl Live {
                 if pages > 0 {
                     show(cx, Some(PathBuf::from(&path)));
                     self.typeset.clone_from(&self.sources.read);
+                    self.follows += 1;
+                    self.follow_soon(cx);
                     cx.pdf.synctex.warm_live(PathBuf::from(&path));
                     cx.publish_pdf();
                     cx.emit(Event::LiveDocument(LiveDocument { path, changed }));
@@ -561,7 +563,7 @@ impl Live {
             if !ours(issue) {
                 return true;
             }
-            if edit.start + edit.length <= issue.at {
+            if edit.start.saturating_add(edit.length) <= issue.at {
                 issue.at = issue.at - edit.length + inserted;
                 let line = Some(doc.with(|source| source.line_at(issue.at)));
                 moved |= issue.item.line != line;

@@ -40,6 +40,9 @@ struct FieldPixelTests {
             window.setContentSize(box.frame.size)
             try await settlePixelLayout(passes: 5, interval: .milliseconds(30))
             let fields = view.descendants(of: NSSearchField.self)
+            if pressing {
+                try #require(fields.contains { ($0.cell as? NSSearchFieldCell)?.searchButtonCell != nil })
+            }
             if pressing { for field in fields { (field.cell as? NSSearchFieldCell)?.searchButtonCell?.isHighlighted = true } }
             for field in fields { field.needsDisplay = true }
             written += try writeNativePixels("\(name)-\(suffix)", of: box, scale: scale, to: folder)
@@ -54,7 +57,6 @@ struct FieldPixelTests {
                 try await shot("bar-\(navigator)-\(text.isEmpty ? "empty" : "text")", bar, height: bar.intrinsicContentSize.height)
             }
             project.navigator[keyPath: navigator.filterText] = ""
-            try await shot("bar-\(navigator)-pressed", bar, height: bar.intrinsicContentSize.height, pressing: true)
         }
         project.navigator.shown = .issues
         project.navigator.hiddenIssueKinds = [.badBox]

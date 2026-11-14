@@ -4,7 +4,7 @@ use common::{apply, caret, run, scan};
 use serde_json::{Value, json};
 use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
-use texlocal_latex::syntax::{Installed, Source, SourceDocument, Syntax};
+use texlocal_latex::syntax::{Installed, Source, SourceDocument, SymbolKind, Syntax, usages};
 use texlocal_latex::utf16;
 
 fn free(command: &str, args: Value) -> Value {
@@ -63,6 +63,36 @@ fn typing_an_opener_inserts_its_closer() {
         );
         assert_eq!(answer["edit"]["text"], inserted, "{typed}");
         assert_eq!(answer["selection"], caret(2), "{typed}");
+    }
+}
+
+#[test]
+fn selection_wrapping_keeps_escaped_delimiters_balanced() {
+    for (typed, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+        for prefix in [r"\", r"\\"] {
+            let start = prefix.len() as u32;
+            let slash = if start % 2 == 1 { "\\" } else { "" };
+            let mut doc = SourceDocument::new(&format!("{prefix}alpha"));
+            let wrapped = run(
+                &mut doc,
+                "TypeText",
+                json!({ "selection": { "start": start, "length": 5 }, "text": typed, "autoPair": true }),
+            );
+            apply(&mut doc, &wrapped["edit"]);
+            assert_eq!(doc.text(), format!("{prefix}{typed}alpha{slash}{close}"));
+            assert_eq!(
+                wrapped["selection"],
+                json!({ "start": start + 1, "length": 5 })
+            );
+            let over = run(
+                &mut doc,
+                "TypeText",
+                json!({ "selection": caret(start + 6), "text": close, "autoPair": true }),
+            );
+            assert!(over["edit"].is_null());
+            assert_eq!(over["selection"], caret(start + 7 + slash.len() as u32));
+            assert_eq!(over["completions"], "close");
+        }
     }
 }
 
@@ -314,7 +344,6 @@ fn a_reference_leads_to_its_label_once_a_scan_has_read_it() {
     assert_eq!(run(&mut doc, "DefinitionAt", at.clone()), Value::Null);
     doc.set_symbols(scan(&[("main.tex", text)], Installed::default()).symbols);
     let answer = run(&mut doc, "DefinitionAt", at);
-    assert_eq!(answer["kind"], "label");
     assert_eq!(answer["places"][0]["column"], 7);
 }
 
@@ -335,12 +364,32 @@ fn a_bibtex_cross_reference_after_a_blank_line_leads_to_its_parent() {
         "DefinitionAt",
         json!({ "at": text.find("parent").unwrap() + 1 }),
     );
-    assert_eq!(answer["kind"], "citation");
-    assert_eq!(answer["name"], "parent");
     assert_eq!(
         answer["places"],
         json!([{ "file": path, "line": 7, "column": 6, "length": 6 }])
     );
+}
+
+#[test]
+fn citation_rename_ignores_crossref_text_inside_field_values() {
+    for title in [
+        "{É 😀 {A}, crossref=parent}",
+        "\"É 😀 {A}, crossref=parent\"",
+    ] {
+        let text = format!(
+            "@book{{parent,title={{Parent}}}}\n@book{{child,title={title},crossref={{parent}}}}"
+        );
+        let facts = Facts::read(&text, file_kind("refs.bib"));
+        let places = usages(&facts, "refs.bib", SymbolKind::Citation, "parent", |_| None);
+        assert_eq!(
+            places
+                .iter()
+                .map(|place| (place.line, place.column, place.length))
+                .collect::<Vec<_>>(),
+            [(1, 6, 6), (2, 56, 6)],
+            "{title}"
+        );
+    }
 }
 
 #[test]
@@ -660,6 +709,24 @@ fn spreadsheet_cells_paste_on_lines_of_their_own_at_the_current_lines_indentatio
         );
     }
     assert_eq!(paste(8, 0, "one column\nonly", false), Value::Null);
+}
+
+#[test]
+fn a_table_replacing_multiple_lines_separates_the_surviving_suffix() {
+    for (length, ending) in [
+        (3, "\\end{tabular}\nd"),
+        (2, "\\end{tabular}\ncd"),
+        (4, "\\end{tabular}"),
+    ] {
+        let mut doc = SourceDocument::new("ab\ncd");
+        let change = run(
+            &mut doc,
+            "PasteTable",
+            json!({ "selection": { "start": 1, "length": length }, "cells": "x\ty", "booktabs": false }),
+        );
+        apply(&mut doc, &change["edits"][0]);
+        assert!(doc.text().ends_with(ending), "{}", doc.text());
+    }
 }
 
 #[test]

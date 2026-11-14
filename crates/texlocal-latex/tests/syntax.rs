@@ -164,6 +164,21 @@ fn a_maths_environment_is_maths_until_its_own_end() {
 }
 
 #[test]
+fn a_spaced_maths_environment_end_restores_prose_colouring() {
+    for name in ["equation", "align*"] {
+        for space in [" ", "\t"] {
+            let text = format!("\\begin{{{name}}}\nx\n\\end{space}{{{name}}}\nAfter");
+            let mut doc = SourceDocument::new(&text);
+            let maths: Vec<_> = kinds(&mut doc)
+                .into_iter()
+                .filter(|(_, kind)| kind == "Maths")
+                .collect();
+            assert_eq!(maths, pairs(&[("x", "Maths")]), "{text:?}");
+        }
+    }
+}
+
+#[test]
 fn inline_code_and_text_in_maths_open_and_close_maths_where_the_scanner_does() {
     for (text, command) in [
         ("\\lstinline|a$b| c", "\\lstinline"),
@@ -392,6 +407,33 @@ fn a_snippet_tabs_from_field_to_field_until_it_ends() {
     assert_eq!(run(&mut doc, "EndSnippet", json!({})), true);
     assert_eq!(run(&mut doc, "EndSnippet", json!({})), false);
     assert_eq!(tab(&mut doc, 1)["field"], Value::Null);
+}
+
+#[test]
+fn a_single_field_completion_preserves_the_enclosing_snippet() {
+    let mut doc = SourceDocument::new("");
+    for (at, text) in [(0, "\\frac"), (6, "\\sqrt")] {
+        typed(&mut doc, at, 0, text);
+        let item = complete(&mut doc, at as usize + text.len())["items"][0].clone();
+        assert_eq!(item["label"], text);
+        apply(
+            &mut doc,
+            &json!({ "start": at, "length": text.len(), "text": item["text"] }),
+        );
+        let field = run(
+            &mut doc,
+            "StartSnippet",
+            json!({ "fields": item["fields"], "at": at }),
+        );
+        assert_eq!(field, caret(at + 6));
+    }
+    let tab = run(
+        &mut doc,
+        "InsertTab",
+        json!({ "selections": [caret(12)], "step": 1 }),
+    );
+    assert_eq!(tab, json!({ "field": caret(15), "edits": [] }));
+    assert_eq!(doc.text(), "\\frac{\\sqrt{}}{}");
 }
 
 #[test]

@@ -193,7 +193,10 @@ impl Actor {
                     }
                     let sync = reader.of(&project, live.as_deref()).ok()?;
                     let areas = synctex::areas(sync, &project);
-                    areas(file, lines).into_iter().next().map(|(area, _)| area)
+                    areas(file, lines, false)
+                        .into_iter()
+                        .next()
+                        .map(|(area, _)| area)
                 }),
                 _ => None,
             };
@@ -252,8 +255,10 @@ impl Actor {
             let sync = reader.of(&project, live.as_deref())?;
             let mut loc = synctex::inverse(&sync, &project, page, x, y, click, &text)?;
             // SyncTeX answers in the typeset text's lines, which edits since may have moved.
-            if let (Some(typeset), Some(doc)) = (typeset(&loc.file), docs.get(&loc.file)) {
-                loc.line = map_line(&doc.snapshot().0, typeset, loc.line);
+            if let Some(typeset) = typeset(&loc.file)
+                && let Some(text) = current_text(&docs, &project.root, &loc.file)
+            {
+                loc.line = map_line(&text, typeset, loc.line);
             }
             Ok(loc)
         });
@@ -281,7 +286,7 @@ impl Actor {
                 let Some(bad) = bad_box(&item.message.text) else {
                     continue;
                 };
-                let mut pages = areas(&file, bad.lines);
+                let mut pages = areas(&file, bad.lines, item.message.text.contains("in paragraph"));
                 let runs_over = |&(_, overrun): &PageArea| overrun > 0.5;
                 if bad.too_wide.is_some() && pages.iter().any(runs_over) {
                     pages.retain(runs_over);

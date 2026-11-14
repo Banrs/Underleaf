@@ -118,11 +118,20 @@ impl SourceDocument {
         }
         let close = closing_of(key).or(dollar.then_some('$'));
         if let Some(close) = close.filter(|_| auto_pair) {
+            let slash = if !dollar && escaped(units, start) {
+                "\\"
+            } else {
+                ""
+            };
             if length > 0 {
                 let selected = String::from_utf16_lossy(&units[start..end]);
                 typing.pending = Some((start, end + 1));
                 return Keystroke {
-                    edit: Some(splice(start, length, format!("{typed}{selected}{close}"))),
+                    edit: Some(splice(
+                        start,
+                        length,
+                        format!("{typed}{selected}{slash}{close}"),
+                    )),
                     selection: Some(span(start + 1, length)),
                     ..Keystroke::default()
                 };
@@ -134,7 +143,6 @@ impl SourceDocument {
                     || units[..start].last().is_some_and(|&u| is(u, '$'))
                         && !escaped(units, start - 1));
             if next.is_none_or(|n| char::from_u32(n.into()).is_some_and(before)) && !literal {
-                let slash = if escaped(units, start) { "\\" } else { "" };
                 typing.pending = Some((start, start + 1));
                 return Keystroke {
                     edit: Some(splice(start, 0, format!("{typed}{slash}{close}"))),

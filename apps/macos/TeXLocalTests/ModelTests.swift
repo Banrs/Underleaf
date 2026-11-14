@@ -582,7 +582,47 @@ struct ViewsTests {
         #expect(await project.close().value)
     }
 
-    @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() {
+    @Test func rollbackRestoresAFileOpenedBeforeCompensation() async throws {
+        for refusing in [false, true] {
+            let info = try await newProject()
+            let window = defaults.window()
+            let project = ProjectModel(id: info.id, window: window)
+            let workspace = WorkspaceViews(project: project), views = Views(project)
+            project.session.heard = { project.handle($0); workspace.heard($0) }
+            try await project.load()
+            let chapter = info.path + "/ch.tex", text = workspace.editor.textView
+            try "first\n".write(toFile: chapter, atomically: true, encoding: .utf8)
+            let snapshot = try #require(try await project.session.call(SaveVersion(name: "First")))
+            try "second\n".write(toFile: chapter, atomically: true, encoding: .utf8)
+            text.insertText("% mine\n", replacementRange: .caret(0))
+            views.onApply = { edits, name in
+                if edits.path == "main.tex" {
+                    project.session.send(Open(path: "ch.tex"))
+                    return false
+                }
+                if refusing { text.insertText("% newer\n", replacementRange: .caret(0)) }
+                return workspace.apply(edits, named: name)
+            }
+            let error = await #expect(throws: AppFailure.self) { try await project.restoreVersion(snapshot, paths: nil) }
+            let expected = refusing ? "% newer\nfirst\n" : "second\n"
+            #expect(project.openPath == "ch.tex" && workspace.editor.path == "ch.tex")
+            #expect(text.string == expected && text.document.text == expected)
+            #expect(await project.save())
+            #expect(try String(contentsOfFile: chapter, encoding: .utf8) == expected)
+            if refusing {
+                let recovery = try #require(try await project.session.call(ListVersions()).last { $0.reason == .restore })
+                #expect(error?.localizedDescription.contains("ch.tex") == true)
+                #expect(error?.localizedDescription.contains(recovery.id) == true)
+                #expect(error?.localizedDescription.contains("changes remain") == true)
+            } else {
+                #expect(error?.localizedDescription == "The file shown changed meanwhile, so nothing was changed. Try again.")
+                #expect(text.undo.undoActionName == "Restore")
+            }
+            #expect(await project.close().value)
+        }
+    }
+
+    @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() async throws {
         let window = defaults.window()
         window.app.syncAfterCompile = true
         let project = ProjectModel(id: "P", window: window)
@@ -595,6 +635,9 @@ struct ViewsTests {
         #expect(!project.syncsAfterBuild)
         project.handle(.section(.openFile(OpenFile(path: "main.tex", kind: .tex, text: true))))
         #expect(project.syncsAfterBuild)
+        project.handle(.buildFinished(BuildFinished(auto: false, announce: false)))
+        try await waitUntil { project.syncTask != nil }
+        await project.syncTask?.value
         build(true, true)
         #expect(!project.syncsAfterBuild)
         build(true, false)
@@ -626,6 +669,61 @@ struct ViewsTests {
         #expect(project.syncTask == nil)
         await project.inverseSync(page: 0, x: 0, y: 0)
         #expect(project.syncTask != nil)
+    }
+
+    @Test func quietSyncDoesNotReopenAPaneHiddenWhileItsReplyIsPending() async throws {
+        let info = try await newProject()
+        let root = URL(filePath: info.path), build = root.appending(path: "build")
+        try "First paragraph.\n".write(to: root.appending(path: "main.tex"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try blankPDF(count: 1).write(to: build.appending(path: "main.pdf"))
+        try """
+        SyncTeX Version:1
+        Input:1:main.tex
+        Output:pdf
+        Magnification:1000
+        Unit:1
+        X Offset:0
+        Y Offset:0
+        Content:
+        {1
+        [1,1:4736286,46220574:26673152,41484288,0
+        (1,1:8799518,8865054:22609920,455111,0
+        g1,1:11475574,8865054
+        )
+        ]
+        }1
+        Postamble:
+
+        """.write(to: build.appending(path: "main.synctex"), atomically: true, encoding: .utf8)
+        let window = defaults.window(), host = UndoHost()
+        window.controller = host
+        let project = ProjectModel(id: info.id, window: window)
+        let views = Views(project)
+        try await project.load()
+        views.hasPDF = true
+        let loc = try await project.session.call(SynctexForward(file: "main.tex", line: 1))
+        let x = try #require(loc.h) + 1, y = try #require(loc.v) - #require(loc.height) / 2
+        for forward in [true, false] {
+            for quietly in [true, false] {
+                window.layout = .split
+                views.revealed = []
+                host.pdfActions = []
+                project.syncTask = nil
+                let syncing = Task.immediate {
+                    if forward { await project.forwardSync(quietly: quietly) }
+                    else { await project.inverseSync(page: 1, x: x, y: y, click: PageClick(text: "First paragraph.", at: 1), quietly: quietly) }
+                }
+                try #require(project.syncTask != nil)
+                window.layout = forward ? .source : .pdf
+                await syncing.value
+                #expect((forward ? window.showPDF : window.showSource) == !quietly)
+                #expect(host.pdfActions.count == (forward && !quietly ? 1 : 0))
+                #expect(views.revealed == (!forward && !quietly ? ["main.tex:1"] : []))
+                #expect(window.alert == nil)
+            }
+        }
+        #expect(await project.close().value)
     }
 
     @Test func theLivePDFShowsWhileLivePreviewRunsUntilTheProjectCloses() async {
@@ -679,6 +777,7 @@ struct ViewsTests {
         var ui: UiState?
         var shown: [String] = [], revealed: [String] = [], moved: [String] = [], refused: [String] = []
         var hasPDF = false, attention = 0
+        var onApply: ((DocumentEdits, String) -> Bool)?
 
         init(_ project: ProjectModel) {
             self.project = project
@@ -698,6 +797,7 @@ struct ViewsTests {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
         func apply(_ edits: DocumentEdits, named name: String) -> Bool {
+            if let onApply { return onApply(edits, name) }
             refused.append(edits.path)
             return false
         }
@@ -712,7 +812,8 @@ struct ViewsTests {
 
     private final class UndoHost: AppWindow {
         let undoManager: UndoManager? = UndoManager()
-        func performPDF(_ action: PDFAction) {}
+        var pdfActions: [PDFAction] = []
+        func performPDF(_ action: PDFAction) { pdfActions.append(action) }
         func revealSidebar() {}
         func focusSearch() {}
         func show() {}

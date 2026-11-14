@@ -77,6 +77,24 @@ struct PDFTests {
         #expect(page.click(at: CGPoint(x: above.midX, y: above.maxY + 0.5)) == PageClick(text: text, at: word.location))
     }
 
+    @Test func aClickBesideABadBoxsBarPressesIt() {
+        let page = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 200)), overlay = PageOverlay(frame: page.bounds)
+        page.addSubview(overlay)
+        let area = ForwardLoc(page: 1, h: 72, v: 300, width: 300, height: 20, matches: [])
+        let mark = BadBoxMark(BadBoxArea(file: "main.tex", line: 4, tooWide: nil, message: "Underfull", area: area, overrun: 0)) { _ in }
+        mark.frame = NSRect(x: 100, y: 50, width: 3, height: 10)
+        overlay.addSubview(mark)
+        for x in [97.0, 101, 106] { #expect(overlay.hitTest(NSPoint(x: x, y: 55)) === mark) }
+        for point in [NSPoint(x: 95, y: 55), NSPoint(x: 108, y: 55), NSPoint(x: 106, y: 61)] { #expect(overlay.hitTest(point) == nil) }
+    }
+
+    @Test func aBadBoxsBarStaysOnThePageWhereItsLineRunsOffIt() throws {
+        let page = try #require(textPDF(count: 1).page(at: 0)), edge = page.bounds(for: SyncPDFView.box).maxX
+        let area = ForwardLoc(page: 1, h: edge - 200, v: 100, width: 300, height: 12, matches: [])
+        let badBox = BadBoxArea(file: "main.tex", line: 4, tooWide: nil, message: "Underfull", area: area, overrun: 0)
+        #expect(BadBoxMark.rects(for: badBox, on: page).map(\.maxX) == [edge - 2])
+    }
+
     @Test func aZoomChosenWhileThePaneIsHiddenIsTheOneKept() {
         let controller = PDFController()
         controller.setScale(2)
@@ -232,8 +250,10 @@ struct PDFTests {
         let live = try #require(await PDFController.loadPages([0: try typedPage()], covering: view.coverPages))
         #expect(live.covers[0] != nil)
         controller.replace(live)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(view.descendants(of: PageOverlay.self).contains { $0.covered })
+        let overlay = try #require(view.descendants(of: PageOverlay.self).first { $0.covered })
+        overlay.setFrameSize(NSSize(width: 611.94, height: 791.74))
+        #expect(overlay.covered)
+        try await waitUntil { !overlay.covered }
     }
 
     @Test func findReadsEachPageAsAStringEndingInASearchBoundary() async throws {
