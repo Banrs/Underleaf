@@ -90,10 +90,10 @@ timer alone, so it fires at most that often.
    resumes at the first line asked for, or at the edited line when that is earlier, and runs to the last line
    asked for. A call that needs what encloses a place (its environment, its maths) resumes from a scan
    checkpoint, kept every 4096 units (`syntax/scans.rs`).
-4. The session gets `Msg::Edited`, marks the document dirty and arms Autosave and Symbols. If Live Preview is
+4. The session gets `Msg::Edited`, marks the document dirty and arms Autosave. If Live Preview is
    running, the edit is sent to TeXpresso as a patch.
-5. 150 ms after the last edit, the file's facts are read again and the project is checked; the checks are
-   published as a section. 700 ms after it, the file is written.
+5. 700 ms after the last edit, autosave writes the file; a successful write arms Symbols, which starts
+   scanning and project checks 150 ms later.
 
 ## What a build goes through
 
@@ -126,8 +126,8 @@ folder as `live.pdf.N.pdf` with `live.pdf.N.synctex` beside it, and TeXpresso re
 
 ## Caches
 
-All are `Kept<T>` (`stamp.rs`): a value per path, valid while the file's identity, size and modification time
-are unchanged, with the least recently used dropped past a capacity.
+All are `Kept<T>` (`stamp.rs`): values per path, reused only with matching identity, size and modification time
+and a non-whole-second timestamp; the least recently used are dropped past capacity.
 
 | Cache | Holds | Bound |
 | --- | --- | --- |
