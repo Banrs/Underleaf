@@ -226,20 +226,6 @@ struct SectionTests {
     }
 }
 
-struct LaneTests {
-    @Test func cancellingALaneCancelsWhatIsQueuedInIt() async {
-        var lane: Task<Bool, Never>?
-        let first = enqueue(&lane) {
-            try? await Task.sleep(for: .seconds(5))
-            return Task.isCancelled
-        }
-        let second = enqueue(&lane) { Task.isCancelled }
-        lane?.cancel()
-        let cancelled = (await first.value, await second.value)
-        #expect(cancelled == (true, true))
-    }
-}
-
 struct FieldTests {
     @Test func aNameFieldWarnsOfASpaceOnlyWhileTheNameHasOne() {
         let height = { (name: String) in

@@ -8,7 +8,8 @@ extension UndoManager {
                                               work: @escaping @MainActor () async -> Bool) {
         registerUndo(withTarget: target) { [weak self] _ in
             reversal()
-            _ = enqueue(&undoLane) { if await !work() { self?.removeAllActions(withTarget: target) } }
+            let previous = undoLane
+            undoLane = Task { await previous?.value; if await !work() { self?.removeAllActions(withTarget: target) } }
         }
         setActionName(actionName)
     }
