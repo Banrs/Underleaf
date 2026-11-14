@@ -67,6 +67,36 @@ fn typing_an_opener_inserts_its_closer() {
 }
 
 #[test]
+fn selection_wrapping_keeps_escaped_delimiters_balanced() {
+    for (typed, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+        for prefix in [r"\", r"\\"] {
+            let start = prefix.len() as u32;
+            let slash = if start % 2 == 1 { "\\" } else { "" };
+            let mut doc = SourceDocument::new(&format!("{prefix}alpha"));
+            let wrapped = run(
+                &mut doc,
+                "TypeText",
+                json!({ "selection": { "start": start, "length": 5 }, "text": typed, "autoPair": true }),
+            );
+            apply(&mut doc, &wrapped["edit"]);
+            assert_eq!(doc.text(), format!("{prefix}{typed}alpha{slash}{close}"));
+            assert_eq!(
+                wrapped["selection"],
+                json!({ "start": start + 1, "length": 5 })
+            );
+            let over = run(
+                &mut doc,
+                "TypeText",
+                json!({ "selection": caret(start + 6), "text": close, "autoPair": true }),
+            );
+            assert!(over["edit"].is_null());
+            assert_eq!(over["selection"], caret(start + 7 + slash.len() as u32));
+            assert_eq!(over["completions"], "close");
+        }
+    }
+}
+
+#[test]
 fn typing_over_an_inserted_closer_closes_the_completions() {
     let mut doc = SourceDocument::new("\\ref");
     let typed = run(
