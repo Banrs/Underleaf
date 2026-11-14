@@ -96,7 +96,7 @@ impl Core {
     }
 }
 
-pub(crate) struct Built(String, BuildFinished);
+pub(crate) struct Built(Option<String>, BuildFinished);
 
 #[derive(Default)]
 pub(crate) struct Builds {
@@ -104,6 +104,7 @@ pub(crate) struct Builds {
     pub clock: u64,
     edited_at: HashMap<String, u64>,
     compiling: bool,
+    superseded: bool,
     compile: Tree,
     queued: Option<bool>,
     auto: bool,
@@ -146,6 +147,7 @@ impl Builds {
 
     pub fn start(&mut self, cx: &mut Core, docs: &Docs, auto: bool) {
         (self.compiling, self.auto) = (true, auto);
+        self.superseded = false;
         self.built = self.clock;
         self.publish(cx, docs);
         let (compile, build) = cx.compiler.compile(cx.project.clone(), auto);
@@ -177,30 +179,33 @@ impl Builds {
             errors: vec![LogItem::error(err.message)],
             ..CompileResult::default()
         });
-        let mut spelt: HashMap<String, String> = HashMap::new();
-        let items = result.errors.iter_mut().chain(&mut result.warnings);
-        let files = items
-            .chain(&mut result.bad_boxes)
-            .filter_map(|item| item.file.as_mut());
-        for file in files {
-            let disk = || disk_spelling(&cx.project.root, file).unwrap_or_else(|| file.clone());
-            *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
-        }
-        if let Some(pdf) = &result.pdf {
-            if result.pdf_changed {
-                cx.pdf.synctex.warm_built(pdf.into());
-            }
-            cx.pdf.built = Some(pdf.clone());
-            cx.pdf.version += u64::from(result.pdf_changed);
-            self.outdated = self.clock != self.built;
-        } else {
-            cx.pdf.built = built_pdf(&cx.project);
-        }
         let before = self.result.as_ref().map_or(0, |result| result.errors.len());
         let auto = self.auto;
-        let announce = !result.stopped && (!auto || result.errors.len() != before);
-        let log = std::mem::take(&mut result.log);
-        (self.result, self.result_edits) = (Some(result), self.built);
+        let announce =
+            !self.superseded && !result.stopped && (!auto || result.errors.len() != before);
+        let log = (!self.superseded).then(|| std::mem::take(&mut result.log));
+        if !self.superseded {
+            let mut spelt: HashMap<String, String> = HashMap::new();
+            let items = result.errors.iter_mut().chain(&mut result.warnings);
+            let files = items
+                .chain(&mut result.bad_boxes)
+                .filter_map(|item| item.file.as_mut());
+            for file in files {
+                let disk = || disk_spelling(&cx.project.root, file).unwrap_or_else(|| file.clone());
+                *file = spelt.entry(file.clone()).or_insert_with(disk).clone();
+            }
+            if let Some(pdf) = &result.pdf {
+                if result.pdf_changed {
+                    cx.pdf.synctex.warm_built(pdf.into());
+                }
+                cx.pdf.built = Some(pdf.clone());
+                cx.pdf.version += u64::from(result.pdf_changed);
+                self.outdated = self.clock != self.built;
+            } else {
+                cx.pdf.built = built_pdf(&cx.project);
+            }
+            (self.result, self.result_edits) = (Some(result), self.built);
+        }
         self.compiling = false;
         if !self.cleaners.is_empty() {
             self.start_clean(cx);
@@ -211,7 +216,9 @@ impl Builds {
 
     pub fn announce(&mut self, cx: &mut Core, docs: &Docs, Built(log, finished): Built) {
         self.publish(cx, docs);
-        cx.publish(SessionSection::BuildLog(log));
+        if let Some(log) = log {
+            cx.publish(SessionSection::BuildLog(log));
+        }
         cx.publish_pdf();
         cx.emit(Event::BuildFinished(finished));
     }
@@ -270,6 +277,7 @@ impl Builds {
     }
 
     pub fn main_changed(&mut self, cx: &mut Core) {
+        self.superseded = true;
         cx.pdf.built = built_pdf(&cx.project);
         cx.publish_pdf();
         let building = self.compiling;

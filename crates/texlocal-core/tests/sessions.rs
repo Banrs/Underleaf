@@ -1223,6 +1223,60 @@ async fn a_build_sends_its_sections_and_its_log_before_it_finishes_and_its_pdf_f
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_main_change_rejects_a_late_success_from_the_previous_target() {
+    let files = [
+        ("main.tex", MAIN),
+        ("ch.tex", CHAPTER),
+        ("build/ch.pdf", "pdf"),
+    ];
+    let rig = Rig::open_with(&files, |library| {
+        stub_tex(library);
+        let script = format!(
+            "{}{}",
+            LATEXMK.split_once("line=$(grep").unwrap().0,
+            r#"mkfifo "$out/$stem.log"
+echo $$ > "$out/$stem.pid"
+echo "./$main:3: Undefined control sequence."
+"#
+        );
+        program(&library.path("tex/bin/latexmk"), &script);
+    })
+    .await;
+    rig.section("outline", |o| !o.is_null());
+    rig.call("Compile", json!({}));
+    let build_dir = rig.root().join("build");
+    let pid = build_dir.join("main.pid");
+    wait_until("the old compiler exits before its log is read", || {
+        pid.exists() && !alive(&pid)
+    });
+    rig.forget();
+    rig.call("SetSettings", json!({ "patch": { "mainFile": "ch.tex" } }));
+    let pdf = rig.section("shownPdf", |_| true);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(build_dir.join("main.log"))
+        .unwrap();
+    let finished = rig.event("buildFinished", |_| true);
+    let said = rig.said();
+    let pid = build_dir.join("ch.pid");
+    wait_until(
+        "the replacement compiler exits before its log is read",
+        || pid.exists() && !alive(&pid),
+    );
+    rig.forget();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(build_dir.join("ch.log"))
+        .unwrap();
+    assert_eq!(rig.event("buildFinished", |_| true)["announce"], true);
+    assert!(pdf["path"].as_str().unwrap().ends_with("build/ch.pdf"));
+    assert!(!said.iter().any(|kind| kind == "build"));
+    assert_eq!(finished["announce"], false);
+    assert!(!said.iter().any(|kind| kind == "buildLog"));
+    assert_eq!(said.iter().filter(|kind| *kind == "shownPdf").count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
     let rig = Rig::open_with(&[("main.tex", BROKEN)], stub_tex).await;
     let doc = rig.open_document("main.tex");
