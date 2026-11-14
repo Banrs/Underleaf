@@ -38,6 +38,13 @@ pub fn citation_source(text: &str) -> Option<CitationSource> {
     }
     let found = DOI.find(text)?;
     let mut doi = found.as_str();
+    let in_url = text[..found.start()]
+        .rsplit(|c: char| c.is_whitespace() || "\"<>".contains(c))
+        .next()
+        .is_some_and(|token| token.contains("://"));
+    if in_url {
+        doi = doi.split(['?', '#']).next().unwrap();
+    }
     // Punctuation after a DOI in prose, but not a bracket the DOI opened, as in `10.1002/(SICI)1097-4636(199907)`.
     loop {
         let unopened = |close: char, open: char| {
@@ -50,7 +57,7 @@ pub fn citation_source(text: &str) -> Option<CitationSource> {
         }
     }
     let mut encoded = percent_encoded(doi.as_bytes());
-    if text[..found.start()].contains("://") {
+    if in_url {
         encoded = ESCAPED_TWICE.replace_all(&encoded, "%$1").into_owned();
     }
     Some(CitationSource {

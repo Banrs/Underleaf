@@ -1,3 +1,4 @@
+use texlocal_latex::cite::citation_source;
 use texlocal_latex::diff::{
     self,
     DiffLine::{Added, Removed, Same, Skipped},
@@ -6,6 +7,29 @@ use texlocal_latex::logparse::{aux_inputs, label_number};
 use texlocal_latex::search::{Query, score};
 use texlocal_latex::syntax::{Installed, TextEdit};
 use texlocal_latex::utf16;
+
+#[test]
+fn doi_links_exclude_query_and_fragment_but_keep_encoded_path_characters() {
+    for (text, path) in [
+        (
+            "https://doi.org/10.1103/PhysRevLett.116.061102?nols=y",
+            "10.1103/PhysRevLett.116.061102",
+        ),
+        ("https://doi.org/10.1000/a#section", "10.1000/a"),
+        (
+            "https://doi.org/10.1000/a%3Fb%23c?query#fragment",
+            "10.1000/a%3Fb%23c",
+        ),
+        ("10.1000/a?b#c%20", "10.1000/a%3Fb%23c%2520"),
+        ("https://example.org see 10.1000/a%20", "10.1000/a%2520"),
+    ] {
+        assert_eq!(
+            citation_source(text).unwrap().url,
+            format!("https://doi.org/{path}"),
+            "{text}"
+        );
+    }
+}
 
 #[test]
 fn a_diff_shows_three_lines_around_each_change() {
