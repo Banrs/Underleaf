@@ -1368,6 +1368,38 @@ async fn a_delayed_live_document_maps_new_lines_against_the_source_that_produced
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_follow_for_a_superseded_pdf_is_dropped() {
+    let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
+    let [first, next] = ["first.pdf", "next.pdf"].map(|name| rig.library.path(name));
+    fs::write(first.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let changed = PICTURED_SYNCTEX
+        .replace("{2\n", "{3\n")
+        .replace("}2\n", "}3\n");
+    fs::write(next.with_extension("synctex"), changed).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.typeset(&first, 2, preview.revision());
+    rig.event("liveDocument", |_| true);
+    rig.forget();
+    let start = PICTURED.find("Last paragraph.").unwrap();
+    doc.select(
+        TextRange {
+            start: start as u32,
+            length: 0,
+        },
+        false,
+    );
+    doc.with(|_| {
+        wait_until("the caret settles after the follow starts", || {
+            *preview.caret.lock().unwrap() == Some(start)
+        });
+        preview.typeset(&next, 3, preview.revision());
+        rig.event("liveDocument", |_| true);
+    });
+    assert_eq!(rig.event("liveFollow", |_| true)["page"], 3.0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typeset_nothing() {
     let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
     fs::create_dir(rig.library.path("live")).unwrap();
