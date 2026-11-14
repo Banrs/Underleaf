@@ -428,6 +428,7 @@ async fn closing_saves_and_ends_the_session() {
 async fn the_open_file_is_one_at_a_time_and_a_closed_documents_edits_are_refused() {
     let rig = project().await;
     let ch = rig.open_document("ch.tex");
+    rig.forget();
     rig.open_document("main.tex");
     rig.section("openFile", |f| {
         f["path"] == "main.tex" && f["kind"] == "tex"
