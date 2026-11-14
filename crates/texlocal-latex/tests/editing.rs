@@ -190,16 +190,10 @@ fn bold_wraps_a_selection_and_reports_how_to_take_it_off() {
 
 #[test]
 fn every_selection_is_wrapped_and_one_already_styled_has_its_style_taken_off() {
-    let mut doc = SourceDocument::new("\\textbf{bold} word");
     let selections = json!([{ "start": 8, "length": 4 }, { "start": 14, "length": 4 }]);
-    let args = json!({ "selections": selections, "style": "bold" });
-    let toggled = run(&mut doc, "ToggleStyle", args);
-    for edit in toggled["edits"].as_array().unwrap().iter().rev() {
-        apply(&mut doc, edit);
-    }
-    assert_eq!(doc.text(), "bold \\textbf{word}");
     let placed = json!([{ "start": 0, "length": 4 }, { "start": 13, "length": 4 }]);
-    assert_eq!(toggled["selections"], placed);
+    let toggled = bold("\\textbf{bold} word", selections);
+    assert_eq!(toggled, ("bold \\textbf{word}".into(), placed));
     let mut doc = SourceDocument::new("one two");
     let selections = json!([{ "start": 0, "length": 3 }, { "start": 4, "length": 3 }]);
     let args = json!({ "selections": selections, "template": "$$0$" });
