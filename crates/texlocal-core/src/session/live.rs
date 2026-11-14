@@ -466,6 +466,8 @@ impl Live {
                 if pages > 0 {
                     show(cx, Some(PathBuf::from(&path)));
                     self.typeset.clone_from(&self.sources.read);
+                    self.follows += 1;
+                    self.follow_soon(cx);
                     cx.pdf.synctex.warm_live(PathBuf::from(&path));
                     cx.publish_pdf();
                     cx.emit(Event::LiveDocument(LiveDocument { path, changed }));
