@@ -9,6 +9,7 @@ final class WorkspaceViews: ProjectViews {
     let pdf = PDFController()
     var inspectorShown = false
     @ObservationIgnored private var watches: [Task<Void, Never>] = []
+    @ObservationIgnored private var helpRequest = 0
 
     init(project: ProjectModel) {
         self.project = project
@@ -221,8 +222,12 @@ final class WorkspaceViews: ProjectViews {
     /// Hovering, only a reference or citation has help worth showing unasked.
     private func quickHelp(at offset: Int, hovering: Bool) {
         guard let path = editor.path else { return }
+        if !hovering { helpRequest += 1 }
+        let request = helpRequest
+        let document = editor.textView.document, version = document.version
         project.session.task { [self] in
             guard let help = await project.quickHelp(in: path, at: offset), editor.path == path,
+                  editor.textView.document === document, document.version == version, hovering || helpRequest == request,
                   !hovering || [.label, .citation].contains(help.kind) else { return }
             let scale = editor.textView.window?.backingScaleFactor ?? 2
             let picture = help.shown.flatMap { pdf.picture(of: $0, scale: scale) }
