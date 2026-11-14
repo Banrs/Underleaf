@@ -295,6 +295,15 @@ struct WindowTests {
         for split in [ColumnsSplitView(), DraggedSplitView()] { #expect(!split.gestureRecognizers.isEmpty) }
     }
 
+    @Test func newRowsInAChoiceListRevealTheFirst() {
+        let rows = ChoiceRows<Int> { _ in [] }
+        rows.items = Array(0..<30)
+        rows.move(20)
+        let revealed = rows.revealed
+        rows.items = [0, 1]
+        #expect(rows.selection == 0 && rows.revealed == revealed + 1)
+    }
+
     @Test func aSearchFieldHandsReturnArrowsAndEscapeToItsActions() {
         var heard: [String] = []
         let field = SearchField(text: .constant(""), prompt: "Open Quickly", step: { heard.append("step \($0)") },

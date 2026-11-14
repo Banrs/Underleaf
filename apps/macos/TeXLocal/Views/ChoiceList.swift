@@ -86,7 +86,7 @@ struct ChoiceList<Item, Row: View>: View {
 }
 
 @Observable final class ChoiceRows<Item> {
-    var items: [Item] = [] { didSet { selection = 0 } }
+    var items: [Item] = [] { didSet { selection = 0; reveal() } }
     var selection = 0
     private(set) var revealed = 0
     @ObservationIgnored private let spoken: (Item) -> [String?]
