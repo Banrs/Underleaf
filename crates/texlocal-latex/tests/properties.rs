@@ -253,7 +253,7 @@ fn random_edits_and_calls_never_panic_and_keep_the_text() {
                 let call = *rng.pick(&calls);
                 let args = args(&mut rng, call, len);
                 let apart = in_order(&given(&args), len);
-                let answer = Source::call(&mut doc, call, args).unwrap_or_default();
+                let answer = run(&mut doc, call, args);
                 let edits = edits(call, &answer);
                 let edited = edited(len, &edits);
                 let within = selected_ends(&answer).iter().all(|&end| end <= edited);
