@@ -115,6 +115,9 @@ impl Output {
         }
     }
     fn append(&mut self, offset: u64, text: &[u8]) {
+        if offset.checked_add(text.len() as u64).is_none() {
+            return;
+        }
         self.truncate(offset);
         if offset > self.end() {
             self.bytes.clear();

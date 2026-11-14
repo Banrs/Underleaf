@@ -1303,6 +1303,23 @@ async fn a_failed_builds_error_is_listed_and_marks_its_line_in_one_section() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_overflowing_edit_range_keeps_an_earlier_live_issue() {
+    let (rig, preview) = Rig::previewing(&[("main.tex", BROKEN)], |_| {}).await;
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    *preview.log.lock().unwrap() =
+        "./main.tex:3: Undefined control sequence.\nl.3 \\undefinedcommand\n".into();
+    preview.typeset(Path::new("live.pdf"), 1, preview.revision());
+    rig.section("live", |l| l["lines"]["main.tex"][0]["line"] == 3);
+    rig.forget();
+    doc.edit(u32::MAX, 1, "", None, false);
+    doc.edit(0, 0, "% more\n", None, false);
+    rig.call("LiveLog", json!({ "shown": true }));
+    let live = rig.section("live", |_| true);
+    assert_eq!(live["lines"]["main.tex"][0]["line"], 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn live_pages_show_the_live_pdf_and_its_errors_mark_their_lines() {
     let (rig, preview) = Rig::previewing(&[("main.tex", BROKEN)], |_| {}).await;
     let doc = rig.open_document("main.tex");
@@ -1742,6 +1759,31 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
     let stored = read_json(&rig.library.path("state/.texlocal-app.json"));
     let expected = json!({ "later": true, "texDir": tex, "texpressoDir": texpresso });
     assert_eq!(stored, expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overflowing_output_span_is_ignored() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        let append = json!(["append", "out", u64::MAX, "x".repeat(131073)]);
+        let script = format!(
+            r#"#!/bin/sh
+echo '["live",4]'
+echo '["append","out",0,"kept"]'
+echo '{append}'
+echo '["page",0,"JVBER"]'
+while read -r _; do :; done
+"#
+        );
+        let texpresso = library.path("texpresso");
+        program(&texpresso.join("texpresso"), &script);
+        app_settings(library, json!({ "texpressoDir": texpresso }));
+    })
+    .await;
+    rig.call("StartLive", json!({}));
+    assert_eq!(rig.event("livePage", |_| true)["pdf"], "JVBER");
+    rig.forget();
+    rig.call("LiveLog", json!({ "shown": true }));
+    assert_eq!(rig.section("liveLog", |_| true), "kept");
 }
 
 #[tokio::test(flavor = "multi_thread")]
