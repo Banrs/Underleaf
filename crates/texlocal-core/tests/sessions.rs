@@ -1823,6 +1823,44 @@ while read -r _; do :; done
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_live_exit_drains_stderr_before_publishing_ended() {
+    let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
+        let script = r#"#!/usr/bin/python3
+import os, sys, time
+print('["live",4]', flush=True)
+print('["page",0,"JVBER"]', flush=True)
+while not os.path.exists("finish"): time.sleep(0.01)
+parent = os.getpid()
+read, write = os.pipe()
+if os.fork() == 0:
+    os.setsid()
+    os.write(write, b"x")
+    while os.getppid() == parent: time.sleep(0.01)
+    time.sleep(0.1)
+    print("fatal-final", file=sys.stderr, flush=True)
+    os._exit(0)
+os.read(read, 1)
+os._exit(1)
+"#;
+        let texpresso = library.path("texpresso");
+        program(&texpresso.join("texpresso"), script);
+        app_settings(library, json!({ "texpressoDir": texpresso }));
+    })
+    .await;
+    rig.call("StartLive", json!({}));
+    rig.event("livePage", |_| true);
+    rig.call("LiveLog", json!({ "shown": true }));
+    rig.listen(Duration::from_millis(250));
+    rig.forget();
+    fs::write(rig.root().join("finish"), "").unwrap();
+    rig.section("live", |l| l["phase"] == "stopped");
+    rig.listen(Duration::from_millis(250));
+    assert!(rig.heard("liveLog"));
+    let log = rig.section("liveLog", |_| true);
+    assert!(log.as_str().unwrap().contains("fatal-final"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn live_preview_runs_texpresso_on_the_tex_path_so_it_reaches_kpsewhich_in_another_folder() {
     let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
         stub_tex(library);

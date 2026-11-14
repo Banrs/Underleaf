@@ -352,13 +352,20 @@ impl Preview for Manager {
             (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let weak = Arc::downgrade(&session);
         tokio::spawn(write_lines(stdin.unwrap(), queued, weak.clone()));
-        tokio::spawn(read_output(stdout.unwrap(), Arc::clone(&session), true));
-        tokio::spawn(read_output(stderr.unwrap(), Arc::clone(&session), false));
+        let mut stdout = tokio::spawn(read_output(stdout.unwrap(), Arc::clone(&session), true));
+        let mut stderr = tokio::spawn(read_output(stderr.unwrap(), Arc::clone(&session), false));
         let exit = async move {
-            match tree.ended(&mut child).await {
+            let error = match tree.ended(&mut child).await {
                 Ok(status) if status.success() => None,
                 result => Some(result.map_or_else(|e| e.to_string(), |s| s.to_string())),
-            }
+            };
+            let drain = async {
+                let _ = tokio::join!(&mut stdout, &mut stderr);
+            };
+            let _ = tokio::time::timeout(Duration::from_secs(2), drain).await;
+            stdout.abort();
+            stderr.abort();
+            error
         };
         tokio::spawn(stop_on_exit(exit, weak));
         Ok(session)
