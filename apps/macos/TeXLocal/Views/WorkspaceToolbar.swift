@@ -47,8 +47,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .navigation, .flexibleSpace, .format, .math, .insert,
-         .pdfSeparator, .flexibleSpace, .zoom, .compile,
-         .inspectorTrackingSeparator, .flexibleSpace, .layout, .toggleInspector]
+         .pdfSeparator, .flexibleSpace, .zoom, .compile, .layout,
+         .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
