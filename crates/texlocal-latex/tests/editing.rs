@@ -4,7 +4,7 @@ use common::{apply, caret, run, scan};
 use serde_json::{Value, json};
 use texlocal_latex::facts::Facts;
 use texlocal_latex::file_kind;
-use texlocal_latex::syntax::{Installed, Source, SourceDocument, Syntax};
+use texlocal_latex::syntax::{Installed, Source, SourceDocument, SymbolKind, Syntax, usages};
 use texlocal_latex::utf16;
 
 fn free(command: &str, args: Value) -> Value {
@@ -368,6 +368,28 @@ fn a_bibtex_cross_reference_after_a_blank_line_leads_to_its_parent() {
         answer["places"],
         json!([{ "file": path, "line": 7, "column": 6, "length": 6 }])
     );
+}
+
+#[test]
+fn citation_rename_ignores_crossref_text_inside_field_values() {
+    for title in [
+        "{É 😀 {A}, crossref=parent}",
+        "\"É 😀 {A}, crossref=parent\"",
+    ] {
+        let text = format!(
+            "@book{{parent,title={{Parent}}}}\n@book{{child,title={title},crossref={{parent}}}}"
+        );
+        let facts = Facts::read(&text, file_kind("refs.bib"));
+        let places = usages(&facts, "refs.bib", SymbolKind::Citation, "parent", |_| None);
+        assert_eq!(
+            places
+                .iter()
+                .map(|place| (place.line, place.column, place.length))
+                .collect::<Vec<_>>(),
+            [(1, 6, 6), (2, 56, 6)],
+            "{title}"
+        );
+    }
 }
 
 #[test]

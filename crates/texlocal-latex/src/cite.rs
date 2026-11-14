@@ -6,7 +6,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::bib::{entries, field, fields, surnames};
+use crate::bib::{entries, field, fields, raw_fields, surnames};
 use crate::percent_encoded;
 
 #[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
@@ -136,7 +136,7 @@ pub fn tidy(source: &str, taken: impl Fn(&str) -> bool) -> Option<Tidied> {
         .expect("a free key");
     let lines: Vec<String> = raw
         .iter()
-        .map(|(name, value)| format!("  {name} = {value}"))
+        .map(|(name, at)| format!("  {name} = {}", &body[at.clone()]))
         .collect();
     let entry = format!("@{kind}{{{key},\n{}\n}}\n", lines.join(",\n"));
     Some(Tidied {
@@ -176,37 +176,6 @@ pub fn find_entry(source: &str, doi: Option<&str>, eprint: Option<&str>) -> Opti
 const STOP_WORDS: [&str; 15] = [
     "a", "an", "the", "on", "of", "in", "for", "and", "to", "with", "from", "at", "by", "is", "are",
 ];
-
-/// Fields as written, so a month left as a macro (`month = jan`) stays one.
-fn raw_fields(body: &str) -> Vec<(String, String)> {
-    let (mut found, mut depth, mut quoted, mut from) = (Vec::new(), 0_usize, false, 0);
-    let mut push = |part: &str| {
-        if let Some((name, value)) = part.split_once('=') {
-            let (name, value) = (name.trim(), value.trim());
-            if !name.is_empty() && !value.is_empty() {
-                found.push((name.to_owned(), value.to_owned()));
-            }
-        }
-    };
-    for (i, c) in body.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' | ')' if depth == 0 && (c == '}' || !quoted) => {
-                push(&body[from..i]);
-                return found;
-            }
-            '}' => depth -= 1,
-            '"' if depth == 0 => quoted = !quoted,
-            ',' if depth == 0 && !quoted => {
-                push(&body[from..i]);
-                from = i + 1;
-            }
-            _ => {}
-        }
-    }
-    push(&body[from..]);
-    found
-}
 
 /// Lower-case ASCII letters, with accents dropped, whether written as TeX (`{\"o}`) or as Unicode (`ö`).
 fn ascii_word(text: &str) -> String {
