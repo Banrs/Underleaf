@@ -47,6 +47,30 @@ struct SearchTests {
 }
 
 struct SearchIntegrationTests {
+    @Test(arguments: [false, true])
+    func aPendingUsagesReplyCannotReplaceANewerSearchOrUsages(showUsages: Bool) async throws {
+        let info = try await newProject(template: .blank)
+        try #"\label{alpha}\ref{alpha}\label{beta}\ref{beta}"#.write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
+        let defaults = TestDefaults(), window = defaults.window()
+        let project = ProjectModel(id: info.id, window: window)
+        try await project.load()
+        let current = try await project.session.call(Search(query: "beta", matchCase: false, wholeWord: false))
+        let chosen = try #require(current.first?.hits.first?.id)
+        let old = Task.immediate { await project.findUsages(in: "main.tex", at: 8) }
+        if showUsages {
+            project.search.show(Usages(name: "beta", groups: current))
+        } else {
+            project.search.query = "beta"
+            _ = Task.immediate { await project.search.run { _ in current } }
+        }
+        project.search.chosen = chosen
+        project.navigator.shown = .files
+        await old.value
+        #expect(project.search.query == "beta" && project.search.groups == current && project.search.chosen == chosen)
+        #expect(project.navigator.shown == .files && window.alert == nil)
+        #expect(await project.close().value)
+    }
+
     @Test(arguments: [
         ("needle", "done", "b.tex", 0),
         ("needleneedle", "", "a.tex", 0),
