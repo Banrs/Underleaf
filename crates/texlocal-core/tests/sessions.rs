@@ -449,12 +449,15 @@ async fn the_open_file_is_one_at_a_time_and_a_closed_documents_edits_are_refused
 #[tokio::test(flavor = "multi_thread")]
 async fn an_open_that_a_later_one_supersedes_is_dropped() {
     let rig = project().await;
-    assert_eq!(rig.call("CloseProject", json!({})), true);
+    let doc = rig.open_document("ch.tex");
     rig.forget();
-    let again = 2;
-    let open = json!({ "id": rig.id, "autoCompile": false });
-    rig.send(again, "OpenProject", open);
-    let opens = ["ch.tex", "main.tex"].map(|path| rig.send(again, "Open", json!({ "path": path })));
+    let (save, opens) = doc.with(|_| {
+        let save = rig.send(SESSION, "Save", json!({ "reporting": true }));
+        let opens =
+            ["ch.tex", "main.tex"].map(|path| rig.send(SESSION, "Open", json!({ "path": path })));
+        (save, opens)
+    });
+    rig.reply(save).unwrap();
     let opened = opens.map(|id| rig.reply(id).unwrap());
     assert_eq!(opened, [Value::Null, json!("main.tex")]);
     assert_eq!(said_of(&rig, &["openFile"]), ["openFile"]);
