@@ -94,7 +94,10 @@ extension ProjectModel {
     private func applying(_ edits: ProjectEdits, named name: String) async throws {
         if apply(edits.edits, named: name) { return }
         if let snapshot = edits.snapshot, !edits.written.isEmpty {
-            try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
+            let restored = try await session.call(RestoreVersion(id: snapshot, paths: edits.written.map(\.file)))
+            if let refused = restored.edits, !apply(refused, named: name) {
+                throw AppFailure(String(localized: "“\(refused.path)” couldn’t be restored; changes remain. Recover from version \(snapshot)."))
+            }
         }
         throw Self.unchanged
     }

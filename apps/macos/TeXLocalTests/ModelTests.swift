@@ -582,6 +582,46 @@ struct ViewsTests {
         #expect(await project.close().value)
     }
 
+    @Test func rollbackRestoresAFileOpenedBeforeCompensation() async throws {
+        for refusing in [false, true] {
+            let info = try await newProject()
+            let window = defaults.window()
+            let project = ProjectModel(id: info.id, window: window)
+            let workspace = WorkspaceViews(project: project), views = Views(project)
+            project.session.heard = { project.handle($0); workspace.heard($0) }
+            try await project.load()
+            let chapter = info.path + "/ch.tex", text = workspace.editor.textView
+            try "first\n".write(toFile: chapter, atomically: true, encoding: .utf8)
+            let snapshot = try #require(try await project.session.call(SaveVersion(name: "First")))
+            try "second\n".write(toFile: chapter, atomically: true, encoding: .utf8)
+            text.insertText("% mine\n", replacementRange: .caret(0))
+            views.onApply = { edits, name in
+                if edits.path == "main.tex" {
+                    project.session.send(Open(path: "ch.tex"))
+                    return false
+                }
+                if refusing { text.insertText("% newer\n", replacementRange: .caret(0)) }
+                return workspace.apply(edits, named: name)
+            }
+            let error = await #expect(throws: AppFailure.self) { try await project.restoreVersion(snapshot, paths: nil) }
+            let expected = refusing ? "% newer\nfirst\n" : "second\n"
+            #expect(project.openPath == "ch.tex" && workspace.editor.path == "ch.tex")
+            #expect(text.string == expected && text.document.text == expected)
+            #expect(await project.save())
+            #expect(try String(contentsOfFile: chapter, encoding: .utf8) == expected)
+            if refusing {
+                let recovery = try #require(try await project.session.call(ListVersions()).last { $0.reason == .restore })
+                #expect(error?.localizedDescription.contains("ch.tex") == true)
+                #expect(error?.localizedDescription.contains(recovery.id) == true)
+                #expect(error?.localizedDescription.contains("changes remain") == true)
+            } else {
+                #expect(error?.localizedDescription == "The file shown changed meanwhile, so nothing was changed. Try again.")
+                #expect(text.undo.undoActionName == "Restore")
+            }
+            #expect(await project.close().value)
+        }
+    }
+
     @Test func aCleanBuildOfTheShownTeXSyncsThePDFAndAFailedCompileAsksForAttention() async throws {
         let window = defaults.window()
         window.app.syncAfterCompile = true
@@ -682,6 +722,7 @@ struct ViewsTests {
         var ui: UiState?
         var shown: [String] = [], revealed: [String] = [], moved: [String] = [], refused: [String] = []
         var hasPDF = false, attention = 0
+        var onApply: ((DocumentEdits, String) -> Bool)?
 
         init(_ project: ProjectModel) {
             self.project = project
@@ -701,6 +742,7 @@ struct ViewsTests {
             revealed.append(path + (line.map { ":\($0)" } ?? ""))
         }
         func apply(_ edits: DocumentEdits, named name: String) -> Bool {
+            if let onApply { return onApply(edits, name) }
             refused.append(edits.path)
             return false
         }
