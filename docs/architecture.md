@@ -211,3 +211,14 @@ a comment or in this file is one somebody measured.
 - Raw BibTeX expressions beside normalized metadata: writing must preserve macros, braces and concatenation; `a1f37945`.
 - Persistent syntax stacks, iterative drop and checkpoint reach: cheap copies, bounded stack use and valid lookahead; `35b4b2e9`, `5512f02d`.
 - Retaining history objects after an unreadable record: its references are unknown, so collection could lose them; `3b270d44`.
+
+## Known gaps, left on purpose
+
+Found by the review of 14 Nov 2026 and not fixed, each because the fix costs more than the gap does.
+
+- A version saved straight after a project-wide replace can miss that replace in the file shown: the editor applies its edits after the history queue has moved on. The next version holds it. Closing it needs an acknowledgement from the editor that history waits on, about 200 lines and a new way to stall history.
+- A file that could not be read at its first snapshot stays out of history until it changes or the app restarts: `HASHES` keeps the skip, and a permission change doesn't move the file's stamp.
+- History fails quietly: a snapshot that can't be written and a record that can't be read are skipped without a warning; `b4dc16a4`, `3b270d44`.
+- A project folder moved or deleted while open keeps its old tree in the window with no alert.
+- A selected file that can't be reopened with its project shows No File Open without the reason; opening it by hand gives the reason.
+- A SyncTeX file is read whole with no size ceiling. Nesting is capped at 512 open boxes.
