@@ -232,8 +232,10 @@ struct PDFTests {
         let live = try #require(await PDFController.loadPages([0: try typedPage()], covering: view.coverPages))
         #expect(live.covers[0] != nil)
         controller.replace(live)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(view.descendants(of: PageOverlay.self).contains { $0.covered })
+        let overlay = try #require(view.descendants(of: PageOverlay.self).first { $0.covered })
+        overlay.setFrameSize(NSSize(width: 611.94, height: 791.74))
+        #expect(overlay.covered)
+        try await waitUntil { !overlay.covered }
     }
 
     @Test func findReadsEachPageAsAStringEndingInASearchBoundary() async throws {
