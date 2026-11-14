@@ -395,6 +395,33 @@ fn a_snippet_tabs_from_field_to_field_until_it_ends() {
 }
 
 #[test]
+fn a_single_field_completion_preserves_the_enclosing_snippet() {
+    let mut doc = SourceDocument::new("");
+    for (at, text) in [(0, "\\frac"), (6, "\\sqrt")] {
+        typed(&mut doc, at, 0, text);
+        let item = complete(&mut doc, at as usize + text.len())["items"][0].clone();
+        assert_eq!(item["label"], text);
+        apply(
+            &mut doc,
+            &json!({ "start": at, "length": text.len(), "text": item["text"] }),
+        );
+        let field = run(
+            &mut doc,
+            "StartSnippet",
+            json!({ "fields": item["fields"], "at": at }),
+        );
+        assert_eq!(field, caret(at + 6));
+    }
+    let tab = run(
+        &mut doc,
+        "InsertTab",
+        json!({ "selections": [caret(12)], "step": 1 }),
+    );
+    assert_eq!(tab, json!({ "field": caret(15), "edits": [] }));
+    assert_eq!(doc.text(), "\\frac{\\sqrt{}}{}");
+}
+
+#[test]
 fn typing_in_a_completed_environment_mirrors_its_name() {
     let mut doc = SourceDocument::new("\\begin");
     let item = complete(&mut doc, 6)["items"][0].clone();

@@ -140,7 +140,15 @@ impl SourceDocument {
                 self.typing.closers.insert(field.start);
             }
         }
-        self.typing.snippet = (snippet.fields.len() > 1).then_some(snippet);
+        if snippet.fields.len() != 1
+            || !self.typing.snippet.as_ref().is_some_and(|s| {
+                s.fields
+                    .iter()
+                    .any(|f| f.index == s.active && f.holds(first.start, first.end()))
+            })
+        {
+            self.typing.snippet = (snippet.fields.len() > 1).then_some(snippet);
+        }
         Some(span(first.start, first.length))
     }
 
