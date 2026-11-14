@@ -1800,18 +1800,18 @@ async fn tex_folders_chosen_together_both_land_and_keep_what_the_file_already_ha
 #[tokio::test(flavor = "multi_thread")]
 async fn an_overflowing_output_span_is_ignored() {
     let rig = Rig::open_with(&[("main.tex", MAIN)], |library| {
-        let append = json!(["append", "out", u64::MAX, "x".repeat(131073)]);
-        let script = format!(
-            r#"#!/bin/sh
+        // One byte more than the output kept, built by the script: Linux caps a single argument at 128 KiB.
+        let script = r#"#!/bin/sh
 echo '["live",4]'
 echo '["append","out",0,"kept"]'
-echo '{append}'
+printf '["append","out",18446744073709551615,"'
+head -c 131073 /dev/zero | tr '\0' x
+printf '"]\n'
 echo '["page",0,"JVBER"]'
 while read -r _; do :; done
-"#
-        );
+"#;
         let texpresso = library.path("texpresso");
-        program(&texpresso.join("texpresso"), &script);
+        program(&texpresso.join("texpresso"), script);
         app_settings(library, json!({ "texpressoDir": texpresso }));
     })
     .await;
