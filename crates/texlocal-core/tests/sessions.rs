@@ -1417,6 +1417,29 @@ async fn a_follow_for_a_superseded_pdf_is_dropped() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_closed_live_source_maps_inverse_sync_against_its_saved_text() {
+    let (rig, preview) =
+        Rig::previewing(&[("main.tex", PICTURED), ("ch.tex", CHAPTER)], |_| {}).await;
+    let pdf = rig.library.path("live.pdf");
+    fs::write(pdf.with_extension("synctex"), PICTURED_SYNCTEX).unwrap();
+    let doc = rig.open_document("main.tex");
+    rig.call("StartLive", json!({}));
+    preview.typeset(&pdf, 2, preview.revision());
+    rig.event("liveDocument", |_| true);
+    let last = rig.call("SynctexForward", json!({ "file": "main.tex", "line": 10 }));
+    doc.edit(0, 0, &"% comment\n".repeat(20), None, false);
+    rig.open_document("ch.tex");
+    assert!(rig.sessions.document(SESSION, "main.tex").is_none());
+    let at = json!({ "page": last["page"], "x": last["h"].as_f64().unwrap() + 1.0,
+        "y": last["v"].as_f64().unwrap() - last["height"].as_f64().unwrap() / 2.0 });
+    let back = rig.call("SynctexInverse", at);
+    assert_eq!(
+        (&back["file"], &back["line"]),
+        (&json!("main.tex"), &json!(30))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn live_preview_follows_the_caret_and_edits_but_not_from_lines_that_typeset_nothing() {
     let (rig, preview) = Rig::previewing(&[("main.tex", PICTURED)], |_| {}).await;
     fs::create_dir(rig.library.path("live")).unwrap();
