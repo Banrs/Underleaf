@@ -563,7 +563,7 @@ impl Live {
             if !ours(issue) {
                 return true;
             }
-            if edit.start + edit.length <= issue.at {
+            if edit.start.saturating_add(edit.length) <= issue.at {
                 issue.at = issue.at - edit.length + inserted;
                 let line = Some(doc.with(|source| source.line_at(issue.at)));
                 moved |= issue.item.line != line;
