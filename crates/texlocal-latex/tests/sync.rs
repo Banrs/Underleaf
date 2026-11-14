@@ -55,6 +55,26 @@ fn synctex_goes_from_a_line_to_its_page_and_back() {
 }
 
 #[test]
+fn a_synctex_deeper_than_512_boxes_is_refused() {
+    for depth in [511, 512, 513] {
+        let boxes = "[1,1:0,0:100,100,0\n".repeat(depth);
+        let ends = "]\n".repeat(depth);
+        let text = format!(
+            "SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{{1\n{boxes}g1,1:0,0\n{ends}}}1\n"
+        );
+        let synctex = SyncTex::read(text.into_bytes());
+        if depth > 512 {
+            assert!(synctex.is_none(), "{depth} boxes");
+        } else {
+            assert_eq!(
+                synctex.unwrap().inverse(1, 1000.0, 1000.0),
+                Some(("main.tex", 1))
+            );
+        }
+    }
+}
+
+#[test]
 fn a_live_synctex_keeps_the_inputs_read_after_one_has_ended() {
     let live = b"SyncTeX Version:1\nInput:1:sub/main.tex\nInput:2:article.cls\n/2\nInput:3:part.tex\n/3\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n!100\n{1\n[1,4:4736287,46220575:26673152,41484288,0\n(1,4:8799519,8865055:22609920,469238,127139\ng3,1:10492314,8865055\n)\n]\n}1\nPostamble:\n";
     let synctex = SyncTex::read(live.to_vec()).unwrap();

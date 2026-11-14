@@ -255,6 +255,9 @@ impl SyncTex {
             if !reader.record(line) {
                 break;
             }
+            if reader.pending.len() > 513 {
+                return None;
+            }
         }
         let mut s = reader.s;
         s.unlink_refs();
