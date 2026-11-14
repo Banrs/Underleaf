@@ -15,6 +15,7 @@ final class WindowModel {
     var exporting: ExportFile?
     var chosenItem: ItemActions?
     var isMain = false { didSet { if isMain { app.cameForward(self) } } }
+    var isKey = false
     @ObservationIgnored weak var controller: (any AppWindow)?
 
     var showSource: Bool { didSet { keepLayout() } }

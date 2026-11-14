@@ -205,7 +205,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private static let sourceTools: Set<NSToolbarItem.Identifier> = [.format, .math, .insert]
 
     private nonisolated struct State: Equatable {
-        let sourceTools, hasPDF, canShare, compiling, canCompile, open: Bool
+        let sourceTools, hasPDF, canShare, compiling, canCompile, open, key: Bool
         let layout: WorkspaceLayout
         let zoomLabel: String
         let canZoomIn, canZoomOut, canGoBack, canGoForward: Bool
@@ -214,7 +214,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
     private var state: State {
         State(sourceTools: project.sourceToolsEnabled, hasPDF: project.hasPDF, canShare: project.buildPDF != nil, compiling: project.compiling,
               canCompile: window.app.isEnabled(project.compiling ? .compileStop : .compileRun, on: project), open: project.isOpen,
-              layout: window.layout, zoomLabel: pdf.zoomLabel,
+              key: window.isKey, layout: window.layout, zoomLabel: pdf.zoomLabel,
               canZoomIn: window.app.isEnabled(.viewZoomIn, on: project), canZoomOut: window.app.isEnabled(.viewZoomOut, on: project),
               canGoBack: window.app.isEnabled(.goBack, on: project), canGoForward: window.app.isEnabled(.goForward, on: project))
     }
@@ -287,7 +287,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate, NSSharingServicePicke
             let title = (state.compiling ? MenuCommand.compileStop : .compileRun).title
             update(item, \.label, title)
             update(item.menuFormRepresentation, \.title, title)
-            update(item, \.style, state.compiling ? .plain : .prominent)
+            update(item, \.style, state.compiling || !state.key ? .plain : .prominent)
             update(item, \.isEnabled, state.canCompile)
             update(item, \.visibilityPriority, compilePriority)
             guard item.view === compileButton else { return }
