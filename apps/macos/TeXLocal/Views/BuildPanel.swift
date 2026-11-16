@@ -64,7 +64,8 @@ struct BuildPanelBar: View {
                 .frame(maxWidth: 182)
         }
         .font(.subheadline)
-        .padding(.vertical, 10)
         .padding(.horizontal, 7)
+        // Xcode 27.2's console bar: a row as tall as the status bar, which centres its filter 18 pt above the window's edge.
+        .frame(height: BarMetrics.height)
     }
 }
