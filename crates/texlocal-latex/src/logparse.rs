@@ -533,9 +533,7 @@ fn parse(log: &str, main_file: &str, ours: Option<Ours>) -> (Vec<LogItem>, Vec<L
     for (i, &line) in lines.iter().enumerate() {
         match entry(&lines, i) {
             Some((Entry::Diagnostic(mut found), end)) => {
-                if found.error {
-                    quiet_until = end;
-                }
+                quiet_until = quiet_until.max(end);
                 if found.summary && items.iter().any(|item| item.kind == Severity::Error) {
                     continue;
                 }
@@ -727,14 +725,23 @@ mod tests {
 
     #[test]
     fn undefined_references_and_citations_are_warnings_on_their_lines() {
-        let log = "(./main.tex\nLaTeX Warning: Reference `fig:x' on page 1 undefined on input line 7.\n\nLaTeX Warning: Citation `knuth' on page 1 undefined on input line 9.\n)";
+        let log = "(./main.tex\n(./chapters/intro.tex\n\
+            LaTeX Warning: Reference `fig:x)' on page 1 undefined on input line 7.\n\n\
+            LaTeX Warning: Citation `knuth' on page 1 undefined on input line 9.\n)\n\
+            LaTeX Warning: Citation `lamport' on page 1 undefined on input line 10.\n)";
         let found = found(log, Severity::Warning);
-        assert_eq!(found.len(), 2);
+        let places: Vec<_> = found
+            .iter()
+            .map(|item| (item.file.as_deref(), item.line))
+            .collect();
         assert_eq!(
-            (found[0].file.as_deref(), found[0].line),
-            (Some("main.tex"), Some(7))
+            places,
+            [
+                (Some("chapters/intro.tex"), Some(7)),
+                (Some("chapters/intro.tex"), Some(9)),
+                (Some("main.tex"), Some(10)),
+            ]
         );
-        assert_eq!(found[1].line, Some(9));
     }
 
     #[test]

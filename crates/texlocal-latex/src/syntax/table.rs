@@ -42,11 +42,20 @@ impl SourceDocument {
 /// Cells as Numbers, Excel and Google Sheets copy them, tab-separated, or as a CSV file holds them, as a tabular whose
 /// lines after the first start with `indent`. Text of fewer than two columns isn't a table.
 fn tabular(text: &str, indent: &str, booktabs: bool) -> Option<String> {
-    let rows = ['\t', ',']
-        .into_iter()
-        .map(|separator| rows(text, separator))
-        .find(|rows| widest(rows) >= 2)?;
-    let width = widest(&rows);
+    let mut tables = ['\t', ','].into_iter().filter_map(|separator| {
+        let (rows, valid_quotes) = rows(text, separator);
+        let width = widest(&rows);
+        (width >= 2).then_some((rows, width, valid_quotes))
+    });
+    let first = tables.next()?;
+    // A tab can look like a separator if the surrounding quotes belong to a CSV field.
+    let (rows, width, _) = if first.2 {
+        first
+    } else {
+        tables
+            .find(|(_, _, valid_quotes)| *valid_quotes)
+            .unwrap_or(first)
+    };
     let body = if rows.len() > 1 { &rows[1..] } else { &rows };
     let columns: String = (0..width)
         .map(|column| {
@@ -85,9 +94,9 @@ fn widest(rows: &[Vec<String>]) -> usize {
 
 /// Fields may be quoted as spreadsheets and CSV files quote them, `""` standing for a quote, to hold separators and
 /// line breaks. A cell's line breaks and runs of spaces become one space, and blank rows around the table go.
-fn rows(text: &str, separator: char) -> Vec<Vec<String>> {
+fn rows(text: &str, separator: char) -> (Vec<Vec<String>>, bool) {
     let (mut rows, mut row, mut cell) = (vec![], vec![], String::new());
-    let (mut quoted, mut fresh) = (false, true);
+    let (mut quoted, mut fresh, mut valid_quotes) = (false, true, true);
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         if quoted {
@@ -97,6 +106,9 @@ fn rows(text: &str, separator: char) -> Vec<Vec<String>> {
                 cell.push('"');
             } else {
                 quoted = false;
+                valid_quotes &= chars
+                    .peek()
+                    .is_none_or(|&c| c == separator || matches!(c, '\r' | '\n'));
             }
             continue;
         }
@@ -118,6 +130,7 @@ fn rows(text: &str, separator: char) -> Vec<Vec<String>> {
                 true
             }
             c => {
+                valid_quotes &= c != '"';
                 cell.push(c);
                 false
             }
@@ -137,7 +150,7 @@ fn rows(text: &str, separator: char) -> Vec<Vec<String>> {
     }
     let leading = rows.iter().take_while(|row| blank(row)).count();
     rows.drain(..leading);
-    rows
+    (rows, valid_quotes && !quoted)
 }
 
 fn words(cell: &str) -> String {
