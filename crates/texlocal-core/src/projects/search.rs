@@ -179,17 +179,21 @@ pub(crate) fn replace_in_files(
 fn replaced(file: &str, places: &[Place], to: &str) -> String {
     let to = &to.replace('\n', newline(file));
     let byte = |s: &str, units: u32| utf16::byte_offset(s, units as usize).unwrap_or(s.len());
-    let (mut out, mut line, mut start, mut copied) = (String::new(), 1, 0, 0);
+    let mut out = String::with_capacity(file.len());
+    let (mut line, mut column, mut copied) = (1, 0, 0);
     for place in places {
+        let mut start = copied;
         while line < place.line {
             let end = start + file[start..].find(['\r', '\n']).expect("the place's line");
             start = end + 1 + usize::from(file[end..].starts_with("\r\n"));
             line += 1;
+            column = 0;
         }
-        let at = start + byte(&file[start..], place.column);
+        let at = start + byte(&file[start..], place.column - column);
         out.push_str(&file[copied..at]);
         out.push_str(to);
         copied = at + byte(&file[at..], place.length);
+        column = place.column + place.length;
     }
     out.push_str(&file[copied..]);
     out

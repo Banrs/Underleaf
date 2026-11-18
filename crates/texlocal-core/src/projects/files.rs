@@ -164,13 +164,6 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
     })
 }
 
-pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreError> {
-    if is_under(&read_settings(&project.settings).main_file, rel) {
-        return Err(CoreError::conflict(messages::main_file_inside()));
-    }
-    sys::trash(&safe_path(&project.root, rel)?).map(drop)
-}
-
 pub(crate) fn untrash(trashed: &Path, to: &Path) -> Result<(), CoreError> {
     fs::create_dir_all(to.parent().unwrap_or(to))?;
     sys::put_back(trashed, to).map_err(|err| match err.kind() {

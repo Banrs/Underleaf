@@ -83,10 +83,12 @@ impl Actor {
         let compared = move |history: &History| {
             let text = |bytes| lf(lossy_string(bytes));
             let old = history.files(&id, |p| p == path)?.pop();
-            let new = match (edited, fs::read(abs)) {
-                (Some(edited), _) => edited,
-                (None, Err(err)) if err.kind() == ErrorKind::NotFound => String::new(),
-                (None, read) => text(read?),
+            let new = match edited {
+                Some(text) => text,
+                None => match fs::read(abs) {
+                    Err(err) if err.kind() == ErrorKind::NotFound => String::new(),
+                    read => text(read?),
+                },
             };
             Ok(compare(
                 &old.map_or(String::new(), |(_, bytes)| text(bytes)),

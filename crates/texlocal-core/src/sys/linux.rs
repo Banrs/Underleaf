@@ -58,14 +58,16 @@ fn trash_in(trash: &Path, path: &Path) -> io::Result<PathBuf> {
         };
         let to = files.join(&free);
         let moved = write!(info, "[Trash Info]\nPath={from}\nDeletionDate={date}\n")
-            .and_then(|()| fs::rename(path, &to));
-        return match moved {
-            Ok(()) => Ok(to),
+            .and_then(|()| rename_exclusive(path, &to));
+        match moved {
+            Ok(()) => return Ok(to),
             Err(err) => {
                 let _ = fs::remove_file(reserved);
-                Err(err)
+                if err.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(err);
+                }
             }
-        };
+        }
     }
 }
 
@@ -100,8 +102,11 @@ pub(crate) fn copy_xattrs(from: &Path, to: &File) {
             let name = name.as_ptr().cast();
             let mut value = sized(libc::fgetxattr(from, name, std::ptr::null_mut(), 0));
             let read = libc::fgetxattr(from, name, value.as_mut_ptr().cast(), value.len());
-            if let Ok(read) = usize::try_from(read) {
-                libc::fsetxattr(to, name, value.as_ptr().cast(), read, 0);
+            // A zero-length buffer returns the current size without reading the value.
+            if let Ok(read) = usize::try_from(read)
+                && let Some(value) = value.get(..read)
+            {
+                libc::fsetxattr(to, name, value.as_ptr().cast(), value.len(), 0);
             }
         }
     }
@@ -146,6 +151,24 @@ mod tests {
     }
 
     #[test]
+    fn trash_preserves_a_payload_without_a_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let (trash, file) = (dir.path().join("Trash"), dir.path().join("draft.tex"));
+        let orphan = trash.join("files/draft.tex");
+        fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+        fs::write(&orphan, "older").unwrap();
+        fs::write(&file, "newer").unwrap();
+
+        let trashed = trash_in(&trash, &file).unwrap();
+        assert_eq!(trashed, trash.join("files/draft.tex.1"));
+        assert_eq!(fs::read_to_string(&orphan).unwrap(), "older");
+        assert_eq!(fs::read_to_string(&trashed).unwrap(), "newer");
+        assert!(!record(&trash, file.file_name().unwrap()).exists());
+        put_back(&trashed, &file).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "newer");
+    }
+
+    #[test]
     fn a_files_attributes_are_copied_where_the_volume_keeps_them() {
         let dir = tempfile::tempdir().unwrap();
         let (from, to) = (dir.path().join("from"), dir.path().join("to"));
@@ -165,7 +188,12 @@ mod tests {
             );
             return;
         }
+        let empty = c"user.texlocal.empty".as_ptr();
+        let set = unsafe { libc::setxattr(path.as_ptr(), empty, value.as_ptr().cast(), 0, 0) };
+        assert_eq!(set, 0);
         copy_xattrs(&from, &to);
+        let length = unsafe { libc::fgetxattr(to.as_raw_fd(), empty, std::ptr::null_mut(), 0) };
+        assert_eq!(length, 0);
         let mut read = [0_u8; 8];
         let length = unsafe {
             let read = read.as_mut_ptr().cast();

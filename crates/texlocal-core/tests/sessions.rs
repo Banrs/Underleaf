@@ -195,12 +195,22 @@ async fn a_setting_lands_in_an_opened_folders_own_file_without_its_ui() {
     let opened = rig.ask_library("OpenPath", json!({ "path": folder }));
     let id = opened.unwrap()["project"]["id"].clone();
     rig.call_to(2, "OpenProject", json!({ "id": id, "autoCompile": false }));
+    let settings = folder.join(".texlocal.json");
+    fs::set_permissions(&settings, fs::Permissions::from_mode(0o444)).unwrap();
+    for on in [true, false] {
+        rig.forget();
+        rig.call_to(2, "SetSettings", json!({ "patch": { "shellEscape": on } }));
+        let project = rig.section_in(2, "project", |_| true);
+        assert_eq!(project["settings"]["shellEscape"], on);
+        assert_eq!(fs::read_to_string(&settings).unwrap(), own);
+    }
+    fs::set_permissions(&settings, fs::Permissions::from_mode(0o644)).unwrap();
     rig.call_to(
         2,
         "SetSettings",
         json!({ "patch": { "engine": "xelatex" } }),
     );
-    let file = read_json(&folder.join(".texlocal.json"));
+    let file = read_json(&settings);
     assert_eq!(file["engine"], "xelatex");
     assert_eq!(file["mainFile"], "main.tex");
     assert!(file["ui"].is_null(), "{file}");
@@ -385,6 +395,38 @@ async fn a_project_or_a_folder_in_or_around_it_opens_in_one_session_at_a_time() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_folder_moved_while_open_cannot_open_in_a_second_session() {
+    let rig = project().await;
+    let folder = rig.library.path("Thesis");
+    write(&folder, &[("main.tex", MAIN)]);
+    let opened = rig
+        .ask_library("OpenPath", json!({ "path": folder }))
+        .unwrap();
+    let id = &opened["project"]["id"];
+    let open = json!({ "id": id, "autoCompile": false });
+    rig.call_to(2, "OpenProject", open.clone());
+
+    let moved = rig.library.path("Thesis moved");
+    fs::rename(&folder, &moved).unwrap();
+    let reopened = rig
+        .ask_library("OpenPath", json!({ "path": moved }))
+        .unwrap();
+    assert_eq!(&reopened["project"]["id"], id);
+    assert_eq!(
+        reopened["project"]["path"],
+        json!(fs::canonicalize(&moved).unwrap())
+    );
+
+    let refused = rig
+        .reply(rig.send(3, "OpenProject", open.clone()))
+        .unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Conflict);
+    assert_eq!(refused.message["id"], "project_open");
+    assert_eq!(rig.call_to(2, "CloseProject", json!({})), true);
+    rig.call_to(4, "OpenProject", open);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn replies_follow_the_events_sent_before_them() {
     let rig = project().await;
     let answered_after = |kind: &str, command: &str, args: Value| {
@@ -504,14 +546,14 @@ async fn search_reads_unsaved_text() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
-    let rig = Rig::open(&[("main.tex", "cat\n"), ("ch.tex", "cat cat\n")]).await;
+    let rig = Rig::open(&[("main.tex", "cat\n"), ("ch.tex", "😀cat猫cat\r\ncat cat\r\n")]).await;
     rig.open_document("main.tex");
     let replaced = rig.call("Replace", replace_cat());
     assert_eq!(
         replaced["written"],
-        json!([{ "file": "ch.tex", "count": 2 }])
+        json!([{ "file": "ch.tex", "count": 4 }])
     );
-    assert_eq!(rig.read("ch.tex"), "dog dog\n");
+    assert_eq!(rig.read("ch.tex"), "😀dog猫dog\r\ndog dog\r\n");
     assert_eq!(replaced["edits"]["path"], "main.tex");
     assert_eq!(replaced["edits"]["edits"][0]["text"], "dog");
     assert_eq!(rig.read("main.tex"), "cat\n");
@@ -1031,6 +1073,23 @@ async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
     keep["conflict"] = json!("keepBoth");
     rig.call("ImportFiles", keep);
     assert!(rig.root().join("figs/plot-2.png").is_file());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_import_cannot_replace_the_main_file_with_a_folder() {
+    let rig = project().await;
+    let incoming = rig.library.path("Incoming");
+    write(&incoming, &[("unrelated.txt", "notes"), ("main.tex/note.txt", "text")]);
+    let mut args = json!({
+        "dir": "",
+        "paths": [incoming.join("unrelated.txt"), incoming.join("main.tex")],
+    });
+    let preview = rig.call("ImportFiles", args.clone());
+    assert_eq!(names(&preview["existing"], "path"), ["main.tex"]);
+    args["conflict"] = json!("replace");
+    assert_eq!(rig.refuse("ImportFiles", args), ErrorKind::Conflict);
+    assert_eq!(rig.read("main.tex"), MAIN);
+    assert!(!rig.root().join("unrelated.txt").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
