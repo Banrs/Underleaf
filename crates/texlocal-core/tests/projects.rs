@@ -131,7 +131,7 @@ async fn a_duplicate_copies_a_linked_folder_once_even_when_a_link_loops() {
 async fn a_folder_opens_where_it_is() {
     let library = Library::new();
     let folder = library.path("Thesis");
-    write(&folder, &[("thesis.tex", "\\documentclass{article}")]);
+    write(&folder, &[("._paper.tex", "x"), ("thesis.tex", "x")]);
     let opened = library.call("OpenPath", json!({ "path": folder })).await;
     assert_eq!(opened["file"], Value::Null);
     assert_eq!(opened["project"]["opened"], true);
@@ -142,15 +142,29 @@ async fn a_folder_opens_where_it_is() {
     );
     assert!(!folder.join(".texlocal.json").exists());
     assert!(fs::read_dir(library.path("data")).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn a_folder_with_a_top_level_fragment_uses_the_nested_documents_build_settings() {
+    let library = Library::new();
     let nested = library.path("Nested");
     let thesis = [
+        ("preamble.tex", "\\newcommand{\\R}{R}"),
+        ("-drafts/paper.tex", "\\documentclass{article}"),
         ("figures/plots/plot.tex", "\\documentclass{standalone}"),
         ("src/a.tex", "x"),
-        ("src/thesis.tex", "\\documentclass{book}"),
+        (
+            "src/thesis.tex",
+            "\\documentclass{book}\n\\usepackage{fontspec,luacode}",
+        ),
     ];
     write(&nested, &thesis);
     let opened = library.call("OpenPath", json!({ "path": nested })).await;
     assert_eq!(opened["project"]["mainFile"], "src/thesis.tex");
+    let id = opened["project"]["id"].as_str().unwrap();
+    let settings = library.service.project(id).unwrap().settings;
+    let settings: Value = serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
+    assert_eq!(settings["engine"], "lualatex");
 }
 
 #[tokio::test]
