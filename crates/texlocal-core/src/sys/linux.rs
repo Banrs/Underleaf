@@ -128,44 +128,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_trash_keeps_two_items_of_one_name_apart_and_forgets_one_put_back() {
+    fn trash_keeps_both_payloads_with_or_without_the_first_record() {
         let dir = tempfile::tempdir().unwrap();
         let (trash, file) = (dir.path().join("Trash"), dir.path().join("a b.tex"));
         fs::write(&file, "first").unwrap();
         let first = trash_in(&trash, &file).unwrap();
-        fs::write(&file, "second").unwrap();
-        let second = trash_in(&trash, &file).unwrap();
         assert_eq!(first, trash.join("files/a b.tex"));
-        assert_eq!(second, trash.join("files/a b.tex.1"));
-        let info = fs::read_to_string(trash.join("info/a b.tex.1.trashinfo")).unwrap();
+        let first_info = trash.join("info/a b.tex.trashinfo");
+        let second_info = trash.join("info/a b.tex.1.trashinfo");
         let from = file.to_str().unwrap().replace(' ', "%20");
-        let said = format!("[Trash Info]\nPath={from}\nDeletionDate=");
-        assert!(info.starts_with(&said), "{info}");
-        put_back(&second, &file).unwrap();
-        assert_eq!(fs::read_to_string(&file).unwrap(), "second");
-        assert!(!trash.join("info/a b.tex.1.trashinfo").exists());
-        assert!(trash.join("info/a b.tex.trashinfo").exists());
-        let taken = put_back(&first, &file).unwrap_err();
-        assert_eq!(taken.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(fs::read_to_string(&first).unwrap(), "first");
-    }
+        let header = format!("[Trash Info]\nPath={from}\nDeletionDate=");
 
-    #[test]
-    fn trash_preserves_a_payload_without_a_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let (trash, file) = (dir.path().join("Trash"), dir.path().join("draft.tex"));
-        let orphan = trash.join("files/draft.tex");
-        fs::create_dir_all(orphan.parent().unwrap()).unwrap();
-        fs::write(&orphan, "older").unwrap();
-        fs::write(&file, "newer").unwrap();
-
-        let trashed = trash_in(&trash, &file).unwrap();
-        assert_eq!(trashed, trash.join("files/draft.tex.1"));
-        assert_eq!(fs::read_to_string(&orphan).unwrap(), "older");
-        assert_eq!(fs::read_to_string(&trashed).unwrap(), "newer");
-        assert!(!record(&trash, file.file_name().unwrap()).exists());
-        put_back(&trashed, &file).unwrap();
-        assert_eq!(fs::read_to_string(&file).unwrap(), "newer");
+        fs::write(&file, "second").unwrap();
+        for has_record in [true, false] {
+            if !has_record {
+                fs::remove_file(&first_info).unwrap();
+            }
+            let second = trash_in(&trash, &file).unwrap();
+            assert_eq!(second, trash.join("files/a b.tex.1"));
+            let info = fs::read_to_string(&second_info).unwrap();
+            assert!(info.starts_with(&header), "{info}");
+            put_back(&second, &file).unwrap();
+            assert_eq!(fs::read_to_string(&file).unwrap(), "second");
+            assert!(!second_info.exists());
+            assert_eq!(first_info.exists(), has_record);
+            let taken = put_back(&first, &file).unwrap_err();
+            assert_eq!(taken.kind(), io::ErrorKind::AlreadyExists);
+            assert_eq!(fs::read_to_string(&first).unwrap(), "first");
+        }
     }
 
     #[test]

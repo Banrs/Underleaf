@@ -44,7 +44,7 @@ impl SourceDocument {
 fn tabular(text: &str, indent: &str, booktabs: bool) -> Option<String> {
     let mut tables = ['\t', ','].into_iter().filter_map(|separator| {
         let (rows, valid_quotes) = rows(text, separator);
-        let width = widest(&rows);
+        let width = rows.iter().map(Vec::len).max().unwrap_or(0);
         (width >= 2).then_some((rows, width, valid_quotes))
     });
     let first = tables.next()?;
@@ -88,10 +88,6 @@ fn tabular(text: &str, indent: &str, booktabs: bool) -> Option<String> {
     Some(lines.join(&format!("\n{indent}")))
 }
 
-fn widest(rows: &[Vec<String>]) -> usize {
-    rows.iter().map(Vec::len).max().unwrap_or(0)
-}
-
 /// Fields may be quoted as spreadsheets and CSV files quote them, `""` standing for a quote, to hold separators and
 /// line breaks. A cell's line breaks and runs of spaces become one space, and blank rows around the table go.
 fn rows(text: &str, separator: char) -> (Vec<Vec<String>>, bool) {
@@ -121,12 +117,12 @@ fn rows(text: &str, separator: char) -> (Vec<Vec<String>>, bool) {
                 if c == '\r' {
                     chars.next_if_eq(&'\n');
                 }
-                row.push(std::mem::take(&mut cell));
+                row.push(take_cell(&mut cell));
                 rows.push(std::mem::take(&mut row));
                 true
             }
             c if c == separator => {
-                row.push(std::mem::take(&mut cell));
+                row.push(take_cell(&mut cell));
                 true
             }
             c => {
@@ -137,13 +133,9 @@ fn rows(text: &str, separator: char) -> (Vec<Vec<String>>, bool) {
         };
     }
     if !fresh || !row.is_empty() {
-        row.push(cell);
+        row.push(take_cell(&mut cell));
         rows.push(row);
     }
-    let mut rows: Vec<Vec<String>> = rows
-        .iter()
-        .map(|row| row.iter().map(|cell| words(cell)).collect())
-        .collect();
     let blank = |row: &Vec<String>| row.iter().all(String::is_empty);
     while rows.last().is_some_and(blank) {
         rows.pop();
@@ -153,8 +145,10 @@ fn rows(text: &str, separator: char) -> (Vec<Vec<String>>, bool) {
     (rows, valid_quotes && !quoted)
 }
 
-fn words(cell: &str) -> String {
-    cell.split_whitespace().collect::<Vec<_>>().join(" ")
+fn take_cell(cell: &mut String) -> String {
+    let words = cell.split_whitespace().collect::<Vec<_>>().join(" ");
+    cell.clear();
+    words
 }
 
 /// A number as a spreadsheet shows one: signed, with a currency or percent sign, grouped digits or an exponent.
@@ -172,23 +166,21 @@ fn numeric(cell: &str) -> bool {
 
 /// Cells joined by `&`, an empty one leaving no doubled space.
 fn line(row: &[String], width: usize) -> String {
-    let mut words = vec![];
+    let mut line = String::new();
     for column in 0..width {
         if column > 0 {
-            words.push("&".to_owned());
+            line.push_str("& ");
         }
-        let cell = row
-            .get(column)
-            .map_or_else(String::new, |cell| escaped(cell));
-        words.push(cell);
+        if let Some(cell) = row.get(column).filter(|cell| !cell.is_empty()) {
+            push_escaped(&mut line, cell);
+            line.push(' ');
+        }
     }
-    words.push("\\\\".to_owned());
-    words.retain(|word| !word.is_empty());
-    words.join(" ")
+    line.push_str("\\\\");
+    line
 }
 
-fn escaped(cell: &str) -> String {
-    let mut text = String::with_capacity(cell.len());
+fn push_escaped(text: &mut String, cell: &str) {
     for c in cell.chars() {
         match c {
             '&' | '%' | '$' | '#' | '_' | '{' | '}' => {
@@ -201,5 +193,4 @@ fn escaped(cell: &str) -> String {
             c => text.push(c),
         }
     }
-    text
 }
