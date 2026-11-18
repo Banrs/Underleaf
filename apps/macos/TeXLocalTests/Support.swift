@@ -15,6 +15,23 @@ func logItem(_ kind: Severity, _ text: String, file: String = "main.tex", line: 
     LogItem(kind: kind, file: file, line: line, message: Message(id: .tex, args: args, text: text), topic: topic)
 }
 
+/// NSTextFinder shares the Find pasteboard with other apps, including when tests run locally.
+func clearFindPasteboard() throws -> () -> Void {
+    let board = NSPasteboard(name: .find)
+    let saved = try (board.pasteboardItems ?? []).map { item in
+        let copy = NSPasteboardItem()
+        for type in item.types {
+            copy.setData(try #require(item.data(forType: type)), forType: type)
+        }
+        return copy
+    }
+    board.clearContents()
+    return {
+        board.clearContents()
+        if !saved.isEmpty { board.writeObjects(saved) }
+    }
+}
+
 struct TimedOut: Error {}
 
 func waitUntil(timeout: Duration = .seconds(120), _ condition: () -> Bool) async throws {

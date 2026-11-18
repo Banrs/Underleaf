@@ -216,16 +216,24 @@ struct PDFTests {
         #expect(try shown(view).page == 19)
     }
 
-    @Test func aLiveDocumentReadsAgainThePagesItDropsAsAnUndoneEditLeavesThemUnchangedInIt() async throws {
+    @Test(arguments: [false, true])
+    func aLiveDocumentRestoresAnUndoneProvisionalPageEvenWhenItsChangeListIsEmpty(_ correctionQueued: Bool) async throws {
         let (controller, view, window) = try await shownPDF()
         defer { window.close() }
         try await showLive(["one", "two"], in: controller)
+        let document = try #require(view.document)
+        let first = try #require(document.page(at: 0))
         controller.showLive(LivePage(page: 1, pdf: try typedPage()))
         await controller.feed.reading?.value
-        #expect(view.document?.page(at: 1)?.string?.contains("typed") == true)
-        controller.showLive(LivePage(page: 1, pdf: try #require(try textPDF(["two"]).dataRepresentation())))
+        #expect(document.page(at: 1)?.string?.contains("typed") == true)
+        try await waitUntil { view.find.text.pageStrings.last?.contains("typed") == true }
+        if correctionQueued {
+            controller.showLive(LivePage(page: 1, pdf: try #require(try textPDF(["two"]).dataRepresentation())))
+        }
         try await showLive(["one", "two"], in: controller)
-        #expect(view.document?.page(at: 1)?.string?.contains("two") == true)
+        #expect(view.document === document && document.page(at: 0) === first)
+        #expect(document.page(at: 1)?.string?.contains("two") == true)
+        try await waitUntil { view.find.text.pageStrings.last?.contains("two") == true }
     }
 
     @Test func coversAreDrawnForEveryPageInViewAtLowZoom() async throws {
@@ -291,9 +299,8 @@ struct PDFTests {
     }
 
     @Test func findWithNothingSelectedGoesOnFromTheTextShownWhenTheShownCornerIsInTheMargin() async throws {
-        let board = NSPasteboard(name: .find), kept = board.string(forType: .string)
-        defer { if let kept { board.clearContents(); board.setString(kept, forType: .string) } }
-        board.clearContents()
+        let restoreFindPasteboard = try clearFindPasteboard()
+        defer { restoreFindPasteboard() }
         let controller = PDFController(), view = controller.view, find = view.find
         let window = try await onScreen(view)
         defer { window.close() }
@@ -317,9 +324,8 @@ struct PDFTests {
     }
 
     @Test func findLightsItsMatchesTakesFindNextFromItsFieldAndDropsThemWhenALiveChangeAltersTheText() async throws {
-        let board = NSPasteboard(name: .find), kept = board.string(forType: .string)
-        defer { if let kept { board.clearContents(); board.setString(kept, forType: .string) } }
-        board.clearContents()
+        let restoreFindPasteboard = try clearFindPasteboard()
+        defer { restoreFindPasteboard() }
         let controller = PDFController(), view = controller.view, find = view.find
         let window = try await onScreen(view)
         defer { window.close() }

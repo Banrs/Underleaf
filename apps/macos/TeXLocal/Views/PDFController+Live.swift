@@ -4,6 +4,7 @@ import os
 struct LiveFeed {
     var document: (path: String, changed: IndexSet)?
     var pages: [Int: Data] = [:]
+    var provisional: IndexSet = []
     var reading: Task<Void, Never>?
     var follow: ForwardLoc?
     weak var shown: PDFDocument?
@@ -23,16 +24,18 @@ extension PDFController {
     func showLive(_ live: LiveDocument) {
         var changed = feed.document?.changed ?? []
         for range in live.changed { changed.insert(integersIn: range.first...range.last) }
-        // The pages waiting are taken from the document instead, as one may undo an edit shown since the last document,
-        // which leaves the page out of its changed ones.
-        changed.formUnion(IndexSet(feed.pages.keys))
+        // An undo can leave a provisional page out of the changes since the previous full PDF. Read it from this PDF
+        // whether its individual update is queued, loading or already shown.
+        changed.formUnion(feed.provisional)
         feed.document = (live.path, changed)
         feed.pages = [:]
+        feed.provisional = []
         readLive()
     }
 
     func showLive(_ live: LivePage) {
         feed.pages[live.page] = live.pdf
+        feed.provisional.insert(live.page)
         readLive()
     }
 
