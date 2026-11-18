@@ -48,18 +48,11 @@ enum Source {
 
 const MAX_UNZIPPED: u128 = 1 << 30;
 
-const ENGINE_PACKAGES: [(Engine, &[&str]); 2] = [
-    (
-        Engine::Xelatex,
-        &[
-            "fontspec",
-            "unicode-math",
-            "polyglossia",
-            "xeCJK",
-            "mathspec",
-        ],
-    ),
+// Check engine-specific packages before packages that work with either engine.
+const ENGINE_PACKAGES: [(Engine, &[&str]); 3] = [
+    (Engine::Xelatex, &["xeCJK", "mathspec"]),
     (Engine::Lualatex, &["luacode", "luatexja", "luaotfload"]),
+    (Engine::Xelatex, &["fontspec", "unicode-math", "polyglossia"]),
 ];
 
 pub(crate) fn import_files(
