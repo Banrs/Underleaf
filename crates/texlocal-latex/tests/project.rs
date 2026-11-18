@@ -78,10 +78,16 @@ fn directives_after_the_document_ends_do_not_affect_project_checks() {
         \\bibliography{missing}\n\\addbibresource{ignored.bib}\n";
     let scan = project(&[("main.tex", main), ("ignored.bib", "@book{one,}\n")], &[]);
     let items = found(&scan);
-    let messages: Vec<_> = items.iter().map(|(_, _, message)| message.as_str()).collect();
+    let messages: Vec<_> = items
+        .iter()
+        .map(|(_, _, message)| message.as_str())
+        .collect();
     assert_eq!(
         messages,
-        ["No label “missing” is defined.", "No citation “absent” is defined."]
+        [
+            "No label “missing” is defined.",
+            "No citation “absent” is defined."
+        ]
     );
     assert!(project::bibliographies(&scan, "main.tex").is_empty());
     let facts = &scan.facts["main.tex"];

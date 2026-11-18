@@ -546,7 +546,11 @@ async fn search_reads_unsaved_text() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn replace_writes_closed_files_and_answers_the_open_documents_edits() {
-    let rig = Rig::open(&[("main.tex", "cat\n"), ("ch.tex", "😀cat猫cat\r\ncat cat\r\n")]).await;
+    let rig = Rig::open(&[
+        ("main.tex", "cat\n"),
+        ("ch.tex", "😀cat猫cat\r\ncat cat\r\n"),
+    ])
+    .await;
     rig.open_document("main.tex");
     let replaced = rig.call("Replace", replace_cat());
     assert_eq!(
@@ -1079,7 +1083,10 @@ async fn files_are_imported_into_the_tree_and_a_name_taken_is_asked_about() {
 async fn an_import_cannot_replace_the_main_file_with_a_folder() {
     let rig = project().await;
     let incoming = rig.library.path("Incoming");
-    write(&incoming, &[("unrelated.txt", "notes"), ("main.tex/note.txt", "text")]);
+    write(
+        &incoming,
+        &[("unrelated.txt", "notes"), ("main.tex/note.txt", "text")],
+    );
     let mut args = json!({
         "dir": "",
         "paths": [incoming.join("unrelated.txt"), incoming.join("main.tex")],
