@@ -58,14 +58,16 @@ fn trash_in(trash: &Path, path: &Path) -> io::Result<PathBuf> {
         };
         let to = files.join(&free);
         let moved = write!(info, "[Trash Info]\nPath={from}\nDeletionDate={date}\n")
-            .and_then(|()| fs::rename(path, &to));
-        return match moved {
-            Ok(()) => Ok(to),
+            .and_then(|()| rename_exclusive(path, &to));
+        match moved {
+            Ok(()) => return Ok(to),
             Err(err) => {
                 let _ = fs::remove_file(reserved);
-                Err(err)
+                if err.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(err);
+                }
             }
-        };
+        }
     }
 }
 
@@ -100,8 +102,11 @@ pub(crate) fn copy_xattrs(from: &Path, to: &File) {
             let name = name.as_ptr().cast();
             let mut value = sized(libc::fgetxattr(from, name, std::ptr::null_mut(), 0));
             let read = libc::fgetxattr(from, name, value.as_mut_ptr().cast(), value.len());
-            if let Ok(read) = usize::try_from(read) {
-                libc::fsetxattr(to, name, value.as_ptr().cast(), read, 0);
+            // A zero-length buffer returns the current size without reading the value.
+            if let Ok(read) = usize::try_from(read)
+                && let Some(value) = value.get(..read)
+            {
+                libc::fsetxattr(to, name, value.as_ptr().cast(), value.len(), 0);
             }
         }
     }
@@ -123,26 +128,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_trash_keeps_two_items_of_one_name_apart_and_forgets_one_put_back() {
+    fn trash_keeps_both_payloads_with_or_without_the_first_record() {
         let dir = tempfile::tempdir().unwrap();
         let (trash, file) = (dir.path().join("Trash"), dir.path().join("a b.tex"));
         fs::write(&file, "first").unwrap();
         let first = trash_in(&trash, &file).unwrap();
-        fs::write(&file, "second").unwrap();
-        let second = trash_in(&trash, &file).unwrap();
         assert_eq!(first, trash.join("files/a b.tex"));
-        assert_eq!(second, trash.join("files/a b.tex.1"));
-        let info = fs::read_to_string(trash.join("info/a b.tex.1.trashinfo")).unwrap();
+        let first_info = trash.join("info/a b.tex.trashinfo");
+        let second_info = trash.join("info/a b.tex.1.trashinfo");
         let from = file.to_str().unwrap().replace(' ', "%20");
-        let said = format!("[Trash Info]\nPath={from}\nDeletionDate=");
-        assert!(info.starts_with(&said), "{info}");
-        put_back(&second, &file).unwrap();
-        assert_eq!(fs::read_to_string(&file).unwrap(), "second");
-        assert!(!trash.join("info/a b.tex.1.trashinfo").exists());
-        assert!(trash.join("info/a b.tex.trashinfo").exists());
-        let taken = put_back(&first, &file).unwrap_err();
-        assert_eq!(taken.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(fs::read_to_string(&first).unwrap(), "first");
+        let header = format!("[Trash Info]\nPath={from}\nDeletionDate=");
+
+        fs::write(&file, "second").unwrap();
+        for has_record in [true, false] {
+            if !has_record {
+                fs::remove_file(&first_info).unwrap();
+            }
+            let second = trash_in(&trash, &file).unwrap();
+            assert_eq!(second, trash.join("files/a b.tex.1"));
+            let info = fs::read_to_string(&second_info).unwrap();
+            assert!(info.starts_with(&header), "{info}");
+            put_back(&second, &file).unwrap();
+            assert_eq!(fs::read_to_string(&file).unwrap(), "second");
+            assert!(!second_info.exists());
+            assert_eq!(first_info.exists(), has_record);
+            let taken = put_back(&first, &file).unwrap_err();
+            assert_eq!(taken.kind(), io::ErrorKind::AlreadyExists);
+            assert_eq!(fs::read_to_string(&first).unwrap(), "first");
+        }
     }
 
     #[test]
@@ -165,7 +178,12 @@ mod tests {
             );
             return;
         }
+        let empty = c"user.texlocal.empty".as_ptr();
+        let set = unsafe { libc::setxattr(path.as_ptr(), empty, value.as_ptr().cast(), 0, 0) };
+        assert_eq!(set, 0);
         copy_xattrs(&from, &to);
+        let length = unsafe { libc::fgetxattr(to.as_raw_fd(), empty, std::ptr::null_mut(), 0) };
+        assert_eq!(length, 0);
         let mut read = [0_u8; 8];
         let length = unsafe {
             let read = read.as_mut_ptr().cast();

@@ -158,10 +158,10 @@ impl Service {
         let mut library = lock(&self.library);
         let project = self.project(id)?;
         let root = &project.root;
-        let overlaps = library
+        if let Some((open, at)) = library
             .iter()
-            .find(|(_, at)| at.starts_with(root) || root.starts_with(at));
-        if let Some((open, at)) = overlaps {
+            .find(|(open, at)| open == id || at.starts_with(root) || root.starts_with(at))
+        {
             return Err(CoreError::conflict(if open == id {
                 messages::project_open()
             } else {

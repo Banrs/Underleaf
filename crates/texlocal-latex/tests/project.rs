@@ -72,6 +72,30 @@ fn checks_trust_inputs_tex_has_and_skip_citations_without_their_bib() {
 }
 
 #[test]
+fn directives_after_the_document_ends_do_not_affect_project_checks() {
+    let main = "\\begin{document}\n\\ref{missing} \\cite{absent}\n\\end{document}\n\
+        \\documentclass{article}\n\\usepackage{xr}\n\\RequirePackage{lastpage}\n\
+        \\bibliography{missing}\n\\addbibresource{ignored.bib}\n";
+    let scan = project(&[("main.tex", main), ("ignored.bib", "@book{one,}\n")], &[]);
+    let items = found(&scan);
+    let messages: Vec<_> = items
+        .iter()
+        .map(|(_, _, message)| message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "No label “missing” is defined.",
+            "No citation “absent” is defined."
+        ]
+    );
+    assert!(project::bibliographies(&scan, "main.tex").is_empty());
+    let facts = &scan.facts["main.tex"];
+    assert!(facts.packages.is_empty());
+    assert_eq!(facts.new_package, None);
+}
+
+#[test]
 fn checks_find_unclosed_and_stray_groups() {
     let main = "\\begin{document}\n\\begin{itemize}\n\\item a}\n\\end{document}\n";
     let item = |line, message: &str| ("main.tex".to_owned(), line, message.to_owned());

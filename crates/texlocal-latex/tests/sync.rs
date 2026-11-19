@@ -301,6 +301,19 @@ fn an_area_joins_every_box_typeset_from_its_lines_on_their_first_page() {
 }
 
 #[test]
+fn areas_follow_page_order_when_tex_typesets_source_lines_out_of_order() {
+    let text = b"SyncTeX Version:1\nInput:1:main.tex\nOutput:pdf\n\
+        Magnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n\
+        {1\n[1,3:0,100:100,100,0\n(1,2:0,20:100,10,0\ng1,2:10,20\n)\n]\n}1\n\
+        {2\n[1,3:0,100:100,100,0\n(1,1:0,20:100,10,0\ng1,1:10,20\n)\n]\n}2\n\
+        Postamble:\n";
+    let synctex = SyncTex::read(text.to_vec()).unwrap();
+    let areas = synctex.areas(1, 1..=2, false);
+    let pages: Vec<_> = areas.iter().map(|(area, _)| area.page).collect();
+    assert_eq!(pages, [1, 2]);
+}
+
+#[test]
 fn a_paragraph_over_a_page_break_has_an_area_on_each_page_running_over_where_its_line_does() {
     // The log: Overfull \hbox (55.00122pt too wide) in paragraph at lines 5--14, the line on page 2.
     let synctex = SyncTex::read(include_bytes!("fixtures/overfull.synctex").to_vec()).unwrap();

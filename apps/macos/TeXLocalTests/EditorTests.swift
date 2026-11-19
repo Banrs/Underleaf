@@ -503,8 +503,14 @@ struct EditorTests {
         window.displayIfNeeded()
         let a = editor.textView, (text, selection, folds) = (a.string, a.selection, a.folds.ranges), top = try #require(a.shownTop)
         #expect(folds == [NSRange(location: 17, length: 16)] && selection == .caret(16))
-        editor.open(path: "b.tex", source: SourceDocument(text: (1...200).map { "b \($0)" }.joined(separator: "\n")))
-        #expect(editor.textView.undo !== undo && editor.textView.folds.isEmpty)
+        let second = (1...200).map { "b \($0)" }.joined(separator: "\n")
+        editor.open(path: "b.tex", source: SourceDocument(text: second))
+        let secondUndo = editor.textView.undo
+        #expect(secondUndo !== undo && editor.textView.folds.isEmpty)
+        secondUndo.groupsByEvent = false
+        Self.type("2", in: editor.textView)
+        while secondUndo.canUndo { secondUndo.undo() }
+        #expect(editor.textView.string == second && editor.textView.document.text == second)
         window.displayIfNeeded()
         editor.textView.scroll(toTop: editor.textView.document.lineStart(150))
         editor.textView.selection = .caret(3)
@@ -515,22 +521,6 @@ struct EditorTests {
         #expect(shown.offset == top.offset && abs(shown.below - top.below) < 0.5, "\(top) became \(shown)")
         undo.undo()
         #expect(editor.textView.string == String(text.dropFirst()) && editor.textView.document.text == editor.textView.string)
-    }
-
-    @Test func undoInOneFileNeverUndoesAnother() {
-        let (editor, window) = Self.editor("a")
-        defer { window.close() }
-        Self.type("1", in: editor.textView)
-        editor.open(path: "b.tex", source: SourceDocument(text: "b"))
-        let b = editor.textView.undo
-        b.groupsByEvent = false
-        Self.type("2", in: editor.textView)
-        while b.canUndo { b.undo() }
-        #expect(editor.textView.string == "b" && editor.textView.document.text == "b")
-        editor.open(path: "main.tex", source: SourceDocument(text: "1a"))
-        #expect(editor.textView.string == "1a" && editor.textView.undo !== b)
-        editor.textView.undo.undo()
-        #expect(editor.textView.string == "a" && editor.textView.document.text == "a")
     }
 
     @Test func aFileChangedWhileHiddenShowsItsNewTextFromTheStart() throws {

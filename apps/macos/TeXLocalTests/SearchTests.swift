@@ -32,6 +32,21 @@ struct SearchTests {
         #expect(search.groups == nil && search.chosen == nil)
     }
 
+    @Test func replacementAtTheEndSkipsMatchesOverlappingTheInsertedText() throws {
+        let search = ProjectSearch()
+        let current = groups("b.tex")
+        let hit = try #require(current.first?.hits.first)
+        search.choose(after: hit, replacingWith: "needle!", in: current)
+        #expect(search.chosen == nil)
+
+        search.choose(after: hit, replacingWith: "needle!", in: groups("a.tex") + current)
+        #expect(search.chosen == "a.tex:1:0")
+
+        let middle = SearchHit(file: "b.tex", line: 1, column: 3, length: 6, before: "nee", match: "needle", after: "")
+        search.choose(after: middle, replacingWith: "dle!", in: current)
+        #expect(search.chosen == nil)
+    }
+
     private func groups(_ file: String) -> [SearchGroup] {
         [SearchGroup(file: file, hits: [SearchHit(file: file, line: 1, column: 0, length: 6, before: "", match: "needle", after: "")])]
     }
@@ -68,6 +83,24 @@ struct SearchIntegrationTests {
         await old.value
         #expect(project.search.query == "beta" && project.search.groups == current && project.search.chosen == chosen)
         #expect(project.navigator.shown == .files && window.alert == nil)
+        #expect(await project.close().value)
+    }
+
+    @Test func replacingAResultFromARemovedLineLeavesEarlierMatchesAlone() async throws {
+        let info = try await newProject(template: .blank)
+        try "needle\nneedle".write(toFile: info.path + "/main.tex", atomically: true, encoding: .utf8)
+        let defaults = TestDefaults(), window = defaults.window()
+        let project = ProjectModel(id: info.id, window: window), views = WorkspaceViews(project: project)
+        try await project.load()
+        project.search.query = "needle"
+        project.search.replacement = "changed"
+        await project.search.run { try await project.session.call($0) }
+        project.search.chosen = try #require(project.search.groups?.first?.hits.first(where: { $0.line == 2 })?.id)
+
+        let text = views.editor.textView
+        try #require(text.apply([TextEdit(NSRange(location: 6, length: 7), "")], named: "Delete"))
+        await project.replaceChosen()
+        #expect(text.string == "needle" && text.document.text == "needle")
         #expect(await project.close().value)
     }
 

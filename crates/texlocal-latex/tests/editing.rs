@@ -744,7 +744,7 @@ fn ragged_rows_are_padded_and_empty_cells_leave_no_doubled_space() {
 
 #[test]
 fn quoted_fields_keep_their_separators_and_quotes_and_line_breaks_become_a_space() {
-    let csv = "name,note\n\"Smith, J.\",\"said \"\"hi\"\"\nthen left\"\r\nLee,\"\"\n";
+    let csv = "name,note\n\"Smith, J.\",\"said \"\"hi\"\"\nthen\tleft\"\r\nLee,\"\"\n";
     let tabular = lines(&[
         "\\begin{tabular}{ll}",
         "  \\hline",

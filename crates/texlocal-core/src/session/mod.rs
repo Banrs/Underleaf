@@ -105,6 +105,9 @@ impl Reply {
 
 impl Drop for Reply {
     fn drop(&mut self) {
+        if self.0.is_none() {
+            return;
+        }
         self.answer(Err(match std::thread::panicking() {
             true if ACTOR.get() => stopped(),
             true => failed(),

@@ -829,21 +829,18 @@ impl SyncTex {
         };
         let right = |at: Extent| self.visible_h(at.h.saturating_add(at.width));
         type Edges = (f32, f32, f32, f32);
-        let mut pages: Vec<(i32, Edges, f32)> = Vec::new();
+        let mut pages: BTreeMap<i32, (Edges, f32)> = BTreeMap::new();
         for id in boxes {
             let (shown, line) = (self.shown(id), self.node(self.settled(id)));
             let (l, t, r, b) = edges(&shown);
             let over = right(line.seen) - right(line.at);
-            match pages.iter_mut().find(|(page, ..)| *page == shown.page) {
-                Some((_, (left, top, right, bottom), most)) => {
-                    (*left, *top) = (left.min(l), top.min(t));
-                    (*right, *bottom) = (right.max(r), bottom.max(b));
-                    *most = most.max(over);
-                }
-                None => pages.push((shown.page, (l, t, r, b), over)),
-            }
+            let ((left, top, right, bottom), most) =
+                pages.entry(shown.page).or_insert(((l, t, r, b), over));
+            (*left, *top) = (left.min(l), top.min(t));
+            (*right, *bottom) = (right.max(r), bottom.max(b));
+            *most = most.max(over);
         }
-        let area = |(page, (left, top, right, bottom), over): (i32, Edges, f32)| {
+        let area = |(page, ((left, top, right, bottom), over)): (i32, (Edges, f32))| {
             let shown = Shown {
                 page,
                 h: left,

@@ -257,6 +257,7 @@ impl Visit for Reader<'_> {
         self.prose.command(name, start, name_end);
         let text = self.text;
         self.structure.command(text, name, start, name_end);
+        let active = self.structure.read(start);
         let facts = &mut self.facts;
         facts
             .uses
@@ -271,17 +272,17 @@ impl Visit for Reader<'_> {
                 let keys = keys.map(|at| named(text, SymbolKind::Citation, at));
                 self.defined.citations.extend(keys);
             }
-            "documentclass" if facts.class.is_none() => {
+            "documentclass" if active && facts.class.is_none() => {
                 facts.class = headings::class(&text.units, name_end);
                 facts.new_package = Some(after_line(text, name_end));
             }
-            "usepackage" | "RequirePackage" => {
+            "usepackage" | "RequirePackage" if active => {
                 facts.packages.extend(names(true));
                 if name == "usepackage" {
                     facts.new_package = Some(after_line(text, name_end));
                 }
             }
-            "bibliography" | "addbibresource" => {
+            "bibliography" | "addbibresource" if active => {
                 facts.bibliographies.extend(names(name == "bibliography"));
             }
             "newcommand" | "renewcommand" | "providecommand" | "DeclareMathOperator" | "def" => {

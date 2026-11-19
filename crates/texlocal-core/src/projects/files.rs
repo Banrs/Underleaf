@@ -80,12 +80,12 @@ pub(crate) fn write_all<T, D>(
     let writing = items.into_iter().try_for_each(|item| {
         if let Some(planned) = plan(item)? {
             write_creating(&planned.abs, &planned.bytes)?;
-            written.push(planned);
+            written.push((planned.abs, planned.was, planned.done));
         }
         Ok(())
     });
     if let Err(err) = writing {
-        for Planned { abs, was, .. } in &written {
+        for (abs, was, _) in &written {
             let _ = match was {
                 Some(was) => write_creating(abs, was).map(drop),
                 None => fs::remove_file(abs).map_err(CoreError::from),
@@ -93,7 +93,7 @@ pub(crate) fn write_all<T, D>(
         }
         return Err(err);
     }
-    Ok(written.into_iter().map(|planned| planned.done).collect())
+    Ok(written.into_iter().map(|(_, _, done)| done).collect())
 }
 
 fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
@@ -162,13 +162,6 @@ pub fn rename_entry(project: &Project, from: &str, to: &str) -> Result<RenameRes
         to,
         main_moved: moved_main.is_some(),
     })
-}
-
-pub(crate) fn discard_replaced(project: &Project, rel: &str) -> Result<(), CoreError> {
-    if is_under(&read_settings(&project.settings).main_file, rel) {
-        return Err(CoreError::conflict(messages::main_file_inside()));
-    }
-    sys::trash(&safe_path(&project.root, rel)?).map(drop)
 }
 
 pub(crate) fn untrash(trashed: &Path, to: &Path) -> Result<(), CoreError> {

@@ -359,15 +359,19 @@ impl SourceDocument {
         Change { edits, selections }
     }
 
+    fn wrap_edit(&self, selection: TextRange, prefix: &str, suffix: &str) -> TextEdit {
+        let (start, end) = selection.bounds();
+        let selected = String::from_utf16_lossy(&self.text.units[start..end]);
+        splice(start, end - start, format!("{prefix}{selected}{suffix}"))
+    }
+
     pub(crate) fn wrap(&self, selections: &[TextRange], template: &str) -> Change {
         let (prefix, suffix) = template.split_once("$0").unwrap_or((template, ""));
         let selections = clamped(selections, self.text.len());
-        let wrap = |selection: &TextRange| {
-            let (start, end) = selection.bounds();
-            let selected = String::from_utf16_lossy(&self.text.units[start..end]);
-            splice(start, end - start, format!("{prefix}{selected}{suffix}"))
-        };
-        let edits: Vec<TextEdit> = selections.iter().map(wrap).collect();
+        let edits: Vec<_> = selections
+            .iter()
+            .map(|&s| self.wrap_edit(s, prefix, suffix))
+            .collect();
         let into = utf16::len(prefix);
         let selections = selections
             .iter()
@@ -401,7 +405,7 @@ impl SourceDocument {
         unwraps.retain(|unwrap| !unwrap.iter().any(crosses));
         let mut edits: Vec<TextEdit> = unwraps.into_iter().flatten().collect();
         let prefix = format!("\\{command}{{");
-        edits.extend(self.wrap(&wrapping, &format!("{prefix}$0}}")).edits);
+        edits.extend(wrapping.iter().map(|&s| self.wrap_edit(s, &prefix, "}")));
         // An insertion goes before a removal at the same place, which, made back to front, would otherwise take it out.
         edits.sort_by_key(|edit| (edit.start, edit.length));
         edits.dedup();

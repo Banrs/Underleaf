@@ -154,7 +154,9 @@ impl Actor {
     pub fn set_settings(&mut self, patch: &SettingsPatch, build: bool) -> Result<(), CoreError> {
         let main = self.tree.main.clone();
         let project = &self.core.project;
-        settings::write_settings(&project.settings, patch)?;
+        if !patch.is_shell_escape_only() {
+            settings::write_settings(&project.settings, patch)?;
+        }
         let granted = patch.shell_escape.map(|on| settings::grant(project, on));
         if !self.main_file_changed(main.as_ref()) && build && self.core.auto_compile {
             self.core.later.push_back(Later::Compile(true));

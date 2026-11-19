@@ -80,10 +80,8 @@ struct EditorPDFPixelTests {
         try await write("sync-mark-\(suffix)", view)
         // The mark fades on a timer, which a slow run could see out before the next render.
         view.removeMark()
-        let board = NSPasteboard(name: .find), kept = (board.pasteboardItems ?? []).map { item in
-            item.types.reduce(into: NSPasteboardItem()) { $0.setData(item.data(forType: $1)!, forType: $1) }
-        }
-        defer { board.clearContents(); board.writeObjects(kept) }
+        let restoreFindPasteboard = try clearFindPasteboard()
+        defer { restoreFindPasteboard() }
         view.find.perform(.showFindInterface)
         let field = try #require(view.pageScrollView?.findBarView?.descendants(of: NSSearchField.self).first)
         let editor = try #require(field.currentEditor() as? NSTextView)

@@ -79,10 +79,9 @@ final class WindowModel {
     func open(_ url: URL, alone: Bool = true) async {
         guard !importing.contains(url) else { return }
         importing.append(url)
-        defer { importing.removeAll { $0 == url } }
-        guard let opening = await alerting("Couldn’t Open “\(url.lastPathComponent)”", { try await app.openPath(url) }) else { return }
-        guard alone else { return }
+        let opening = await alerting("Couldn’t Open “\(url.lastPathComponent)”") { try await app.openPath(url) }
         importing.removeAll { $0 == url }
+        guard let opening, alone else { return }
         let id = opening.project.id
         await open(id)
         if let file = opening.file, let project = app.window(showing: id)?.project { await project.open(file) }

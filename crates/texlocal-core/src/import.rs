@@ -13,11 +13,12 @@ use zip::result::ZipError;
 
 use crate::messages;
 use crate::paths::{
-    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, ui_file, within,
+    self, Project, after_entry, fold_case, in_folder, normalize_segments, rel_key, same_folded,
+    ui_file, within,
 };
 use crate::projects::{self, ProjectInfo, is_litter, walk};
 use crate::service::Service;
-use crate::settings::{Engine, SettingsPatch, copy_ui, write_settings};
+use crate::settings::{Engine, SettingsPatch, copy_ui, read_settings, write_settings};
 use crate::zipexport::{left_out, private};
 use crate::{BUILD_DIR, CoreError, SETTINGS_FILE, atomic, sys};
 
@@ -85,10 +86,18 @@ pub(crate) fn import_files(
         }
     }
     let (rels, taken) = validate(files.iter().map(|(path, _)| path.as_str()))?;
-    for rel in &rels {
-        paths::safe_write_path(project, &in_folder(dir, rel))?;
-    }
     let root = &project.root;
+    let replace = conflict == Some(ImportConflict::Replace);
+    let main = replace.then(|| read_settings(&project.settings).main_file);
+    for rel in &rels {
+        let rel = rel_key(&in_folder(dir, rel))?;
+        paths::safe_write_path(project, &rel)?;
+        if let Some(main) = &main
+            && let Some(taken) = occupant(root, &rel)
+        {
+            check_replacement(main, &taken, &rel)?;
+        }
+    }
     let existing = clashes(&root.join(rel_key(dir).unwrap_or_default()), &rels, taken);
     if conflict.is_none() && !existing.is_empty() {
         return Ok(Imported {
@@ -96,7 +105,6 @@ pub(crate) fn import_files(
             paths: Vec::new(),
         });
     }
-    let replace = conflict == Some(ImportConflict::Replace);
     let mut written = Vec::new();
     for (path, source) in files {
         let path = match conflict {
@@ -175,6 +183,16 @@ fn occupant(base: &Path, rel: &str) -> Option<String> {
     None
 }
 
+fn check_replacement(main: &str, taken: &str, incoming: &str) -> Result<(), CoreError> {
+    match after_entry(main, taken) {
+        Some(rest) if !rest.is_empty() => Err(CoreError::conflict(messages::main_file_inside())),
+        Some(_) if !same_folded(taken, incoming) => {
+            Err(CoreError::conflict(messages::main_file_trash()))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<(), CoreError> {
     let root = &project.root;
     let abs = paths::safe_write_path(project, rel)?;
@@ -184,11 +202,13 @@ fn save(project: &Project, rel: &str, source: &Path, replace: bool) -> Result<()
     io::copy(&mut origin, &mut file)?;
     file.sync_all()?;
     drop(file);
-    if let Some(taken) = occupant(root, &rel_key(rel)?) {
+    let rel = rel_key(rel)?;
+    if let Some(taken) = occupant(root, &rel) {
         if !replace {
             return Err(CoreError::conflict(messages::exists_already(taken)));
         }
-        projects::discard_replaced(project, &taken)?;
+        check_replacement(&read_settings(&project.settings).main_file, &taken, &rel)?;
+        sys::trash(&root.join(taken))?;
     }
     fs::create_dir_all(abs.parent().unwrap_or(root))?;
     sys::rename_exclusive(&temp, &abs)?;
@@ -412,4 +432,16 @@ pub(crate) fn duplicate_project(
     })?;
     copy_ui(&source, &ui_file(&service.state_dir, &copy.id));
     Ok(copy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replacement_can_write_the_main_file_but_cannot_replace_its_ancestor() {
+        let main = "chapters/main.tex";
+        assert!(check_replacement(main, main, main).is_ok());
+        assert!(check_replacement(main, "chapters", "chapters").is_err());
+    }
 }

@@ -108,6 +108,13 @@ fn update<T: DeserializeOwned + Default + Serialize>(
     change(&mut value)?;
     let bytes = serde_json::to_vec_pretty(&value)
         .map_err(|e| CoreError::internal(messages::unexpected(e)))?;
+    if bytes.len() as u64 > MAX_FILE {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        return Err(CoreError::bad_request(messages::not_saved(
+            name,
+            messages::over_one_mb(),
+        )));
+    }
     atomic::write(path, &bytes, Flush::Full)?;
     Ok(())
 }
@@ -204,6 +211,20 @@ pub struct SettingsPatch {
     pub engine: Option<Engine>,
     pub stop_on_first_error: Option<bool>,
     pub shell_escape: Option<bool>,
+}
+
+impl SettingsPatch {
+    pub(crate) fn is_shell_escape_only(&self) -> bool {
+        matches!(
+            self,
+            Self {
+                main_file: None,
+                engine: None,
+                stop_on_first_error: None,
+                shell_escape: Some(_),
+            }
+        )
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -396,5 +417,29 @@ pub(crate) fn move_ui(file: &Path, moved: impl Fn(&str) -> Option<String>) {
             *saved = state;
             Ok(())
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_ui_patch_leaves_the_device_file_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("P.json");
+        let patch = |heading| UiPatch {
+            expanded_folders: None,
+            folded_headings: Some(vec![heading]),
+            place: None,
+        };
+        write_ui(&file, patch("main.tex\tIntro".into())).unwrap();
+        let before = fs::read(&file).unwrap();
+        let error = write_ui(&file, patch("x".repeat(MAX_FILE as usize))).unwrap_err();
+        assert_eq!(error.kind, crate::ErrorKind::Invalid);
+        assert_eq!(fs::read(&file).unwrap(), before);
+
+        write_ui(&file, patch("main.tex\tNext".into())).unwrap();
+        assert_eq!(read_ui(&file).folded_headings, ["main.tex\tNext"]);
     }
 }

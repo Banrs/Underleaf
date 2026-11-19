@@ -54,8 +54,10 @@ final class ProjectSearch {
         let lines = text.components(separatedBy: "\n")
         let line = hit.line + lines.count - 1
         let column = (lines.count == 1 ? hit.column : 0) + (lines.last?.utf16.count ?? 0)
+        let start = (hit.file, hit.line, hit.column), end = (hit.file, line, column)
         let hits = shown.flatMap(\.hits)
-        chosen = (hits.first { ($0.file, $0.line, $0.column) >= (hit.file, line, column) } ?? hits.last)?.id
+        let next = hits.first { ($0.file, $0.line, $0.column) >= end }
+        chosen = (next ?? hits.last { ($0.file, $0.line, $0.column + $0.length) <= start })?.id
     }
 
     func step(_ step: Int, in shown: [SearchGroup]) -> Bool {
