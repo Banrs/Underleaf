@@ -41,11 +41,7 @@ extension SourceTextView {
         guard editedMask.contains(.editedCharacters), !loading else { return }
         foldCache = nil
         let edits = sync.edited(edited, delta: delta, in: textStorage.mutableString, of: document)
-        var unfolded = false
-        for edit in edits {
-            if folds.edited(edit.range, delta: edit.text.utf16.count - edit.length) { unfolded = true }
-        }
-        if unfolded { Task { self.relayOutFolds() } }
+        if edits.reduce(false, { folds.edited($1.range, delta: $1.text.utf16.count - $1.length) || $0 }) { Task { self.relayOutFolds() } }
         staleColours = min(staleColours ?? edited.location, edited.location)
         if gutter.digits != EditorGutter.digits(document.lineCount) { Task { self.updateGutterWidth() } }
     }

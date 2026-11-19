@@ -78,14 +78,15 @@ pub(crate) fn write_all<T, D>(
 ) -> Result<Vec<D>, CoreError> {
     let mut written = Vec::new();
     let writing = items.into_iter().try_for_each(|item| {
-        if let Some(planned) = plan(item)? {
+        if let Some(mut planned) = plan(item)? {
             write_creating(&planned.abs, &planned.bytes)?;
-            written.push((planned.abs, planned.was, planned.done));
+            planned.bytes = Vec::new(); // A rollback needs only what they replaced.
+            written.push(planned);
         }
         Ok(())
     });
     if let Err(err) = writing {
-        for (abs, was, _) in &written {
+        for Planned { abs, was, .. } in &written {
             let _ = match was {
                 Some(was) => write_creating(abs, was).map(drop),
                 None => fs::remove_file(abs).map_err(CoreError::from),
@@ -93,7 +94,7 @@ pub(crate) fn write_all<T, D>(
         }
         return Err(err);
     }
-    Ok(written.into_iter().map(|(_, _, done)| done).collect())
+    Ok(written.into_iter().map(|planned| planned.done).collect())
 }
 
 fn write_error(abs: &Path, err: std::io::Error) -> CoreError {
