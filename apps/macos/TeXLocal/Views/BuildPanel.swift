@@ -65,6 +65,7 @@ struct BuildPanelBar: View {
         }
         .font(.subheadline)
         .padding(.horizontal, 7)
-        .padding(.vertical, 8)
+        .padding(.bottom, 8)
+        .frame(height: BarMetrics.height, alignment: .bottom)
     }
 }
